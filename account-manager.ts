@@ -203,10 +203,7 @@ class AccountManager {
     if (this.pollInterval) clearInterval(this.pollInterval)
     this.pollInterval = setInterval(async () => {
       await this.checkAllAccountsForNewEmails()
-    }, 10000)
-    if (typeof this.pollInterval.unref === 'function') {
-      this.pollInterval.unref()
-    }
+    }, 5000)
   }
 
   public async checkAllAccountsForNewEmails(): Promise<void> {
@@ -232,10 +229,8 @@ class AccountManager {
 
           for (const msg of newMessages) {
             console.log(`[AccountManager] Novo e-mail detectado: ${msg.subject} (UID: ${msg.uid})`)
-            const full = await fetchFullMessage(acc, msg.uid, 'INBOX')
-            const toEmit = full || msg
             if (this.onNewEmailCallback) {
-              this.onNewEmailCallback({ accountId: accId, email: toEmit })
+              this.onNewEmailCallback({ accountId: accId, email: msg })
             }
           }
         }

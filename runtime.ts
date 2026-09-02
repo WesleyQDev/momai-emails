@@ -104,15 +104,13 @@ setInterval(() => {
   safeSend({ type: 'heartbeat', timestamp: Date.now() })
 }, 30000)
 
-// Initialize manager on startup
-accountManager.initialize()
-  .then(() => {
-    safeSend({ type: 'ready' })
-  })
-  .catch((err: any) => {
-    console.error('[runtime:momai-emails] Init failed:', err)
-    safeSend({ type: 'ready' })
-  })
+// Immediately emit ready to host-manager so the persistent worker is marked active without delay
+safeSend({ type: 'ready' })
+
+// Initialize manager on startup in background
+accountManager.initialize().catch((err: any) => {
+  console.error('[runtime:momai-emails] Init failed:', err)
+})
 
 /**
  * Tool & Command Dispatcher
