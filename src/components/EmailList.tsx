@@ -1,7 +1,7 @@
 // src/components/EmailList.tsx
-// Message list view following Gmail layout and interactions
+// Message list view with infinite scroll and server-side search
 
-import React, { useState } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import {
   StarIcon as StarSolid,
   ArrowPathIcon,
@@ -31,6 +31,9 @@ interface EmailListProps {
   onDelete: (id: string) => void
   onBatchDelete: (ids: string[]) => void
   onBatchMarkRead: (ids: string[]) => void
+  hasMore?: boolean
+  loadingMore?: boolean
+  onLoadMore?: () => void
 }
 
 export const EmailList: React.FC<EmailListProps> = ({
@@ -48,10 +51,32 @@ export const EmailList: React.FC<EmailListProps> = ({
   onMarkUnread,
   onDelete,
   onBatchDelete,
-  onBatchMarkRead
+  onBatchMarkRead,
+  hasMore = false,
+  loadingMore = false,
+  onLoadMore
 }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [unreadOnly, setUnreadOnly] = useState(false)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const sentinelRef = useRef<HTMLDivElement>(null)
+
+  // Infinite scroll: IntersectionObserver on sentinel at bottom of list
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    if (!sentinel || !onLoadMore) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !loadingMore && !loading) {
+          onLoadMore()
+        }
+      },
+      { root: scrollRef.current, rootMargin: '200px', threshold: 0 }
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [hasMore, loadingMore, loading, onLoadMore])
 
   const toggleSelectAll = () => {
     if (selectedIds.size === messages.length) {
@@ -69,15 +94,8 @@ export const EmailList: React.FC<EmailListProps> = ({
     setSelectedIds(next)
   }
 
-  const filteredMessages = messages.filter((m) => {
-    if (unreadOnly && m.read) return false
-    if (!searchQuery.trim()) return true
-    const q = searchQuery.toLowerCase()
-    const sender = (m.from.name || m.from.address).toLowerCase()
-    const subject = m.subject.toLowerCase()
-    const snippet = m.snippet.toLowerCase()
-    return sender.includes(q) || subject.includes(q) || snippet.includes(q)
-  })
+  // Filter only by unreadOnly toggle; search is now server-side
+  const filteredMessages = unreadOnly ? messages.filter((m) => !m.read) : messages
 
   const formatDate = (dateStr: string, timestamp: number) => {
     if (!timestamp) return ''
@@ -185,7 +203,7 @@ export const EmailList: React.FC<EmailListProps> = ({
       )}
 
       {/* Message List */}
-      <div className="flex-1 overflow-y-auto divide-y divide-border/40">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto divide-y divide-border/40">
         {loading && messages.length === 0 ? (
           <div className="p-8 flex flex-col items-center justify-center text-text-muted space-y-3">
             <ArrowPathIcon className="w-6 h-6 animate-spin text-accent" />
@@ -311,6 +329,26 @@ export const EmailList: React.FC<EmailListProps> = ({
               </div>
             )
           })
+        )}
+
+        {/* Infinite scroll sentinel + loading indicator */}
+        {hasMore && (
+          <div ref={sentinelRef} className="flex items-center justify-center py-4 text-xs text-text-muted">
+            {loadingMore ? (
+              <div className="flex items-center gap-2">
+                <ArrowPathIcon className="w-4 h-4 animate-spin text-accent" />
+                <span>Carregando mais e-mails...</span>
+              </div>
+            ) : (
+              <span className="opacity-50">Rolar para carregar mais</span>
+            )}
+          </div>
+        )}
+
+        {!hasMore && messages.length > 0 && !loading && (
+          <div className="flex items-center justify-center py-3 text-[11px] text-text-muted opacity-50">
+            Todos os e-mails foram carregados
+          </div>
         )}
       </div>
     </div>

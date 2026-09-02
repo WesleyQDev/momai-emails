@@ -29,12 +29,12 @@ export const emailApi = {
 
   // Folders & Messages
   listFolders: (accountId?: string) => executeCommand<{ ok: boolean; folders: any[] }>('list_folders', { accountId }),
-  listEmails: (folder = 'INBOX', accountId?: string, limit = 30, unreadOnly = false) =>
-    executeCommand<{ ok: boolean; messages: any[]; folder: string }>('list_emails', { folder, accountId, limit, unreadOnly }),
+  listEmails: (folder = 'INBOX', accountId?: string, limit = 50, unreadOnly = false, offset = 0) =>
+    executeCommand<{ ok: boolean; messages: any[]; folder: string; hasMore?: boolean; total?: number }>('list_emails', { folder, accountId, limit, unreadOnly, offset }),
   readEmail: (messageId: string, folder = 'INBOX', accountId?: string) =>
     executeCommand<{ ok: boolean; email: any }>('read_email', { messageId, folder, accountId }, 20000),
-  searchEmails: (query: string, folder = 'INBOX', accountId?: string) =>
-    executeCommand<{ ok: boolean; messages: any[]; query: string }>('search_emails', { query, folder, accountId }),
+  searchEmails: (query: string, folder = 'INBOX', accountId?: string, limit = 200) =>
+    executeCommand<{ ok: boolean; messages: any[]; query: string; total?: number }>('search_emails', { query, folder, accountId, limit }, 30000),
 
   // Actions
   sendEmail: (payload: any) => executeCommand<{ ok: boolean; messageId?: string; error?: string }>('send_email', payload, 30000),

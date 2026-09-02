@@ -131,6 +131,13 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
   }, [isActive])
 
   // 3. Load emails with SWR (0ms instant display from memory + localStorage cache, background refresh with cancellation)
+  const [hasMoreMessages, setHasMoreMessages] = useState(false)
+  const [loadingMoreMessages, setLoadingMoreMessages] = useState(false)
+  const [isSearchMode, setIsSearchMode] = useState(false)
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const PAGE_SIZE = 50
+
   const loadEmails = useCallback(async (folder = 'INBOX', accId = activeAccountId, silent = false) => {
     if (!accId) return
     const reqSeq = ++currentReqSeqRef.current
@@ -148,9 +155,10 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
       setLoadingMessages(true)
     }
     setMessagesError(null)
+    setIsSearchMode(false)
 
     try {
-      const res = await emailApi.listEmails(folder, accId)
+      const res = await emailApi.listEmails(folder, accId, PAGE_SIZE, false, 0)
       // Discard if user already switched to another folder
       if (reqSeq !== currentReqSeqRef.current) return
 
@@ -158,6 +166,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
         folderCacheRef.current.set(cacheKey, res.messages)
         emailStorageCache.setFolderEmails(accId, folder, res.messages)
         setMessages(res.messages)
+        setHasMoreMessages(Boolean(res.hasMore))
 
         // Background pre-fetch top email body so opening is instantaneous
         const topMsg = res.messages[0]
@@ -187,8 +196,76 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
     }
   }, [activeAccountId])
 
+  // Load more messages (next page) — appends to current list
+  const loadMoreEmails = useCallback(async () => {
+    if (!activeAccountId || loadingMoreMessages || !hasMoreMessages || isSearchMode) return
+    setLoadingMoreMessages(true)
+    try {
+      const offset = messages.length
+      const res = await emailApi.listEmails(activeFolder, activeAccountId, PAGE_SIZE, false, offset)
+      if (res && res.ok && Array.isArray(res.messages) && res.messages.length > 0) {
+        // Deduplicate by id before appending
+        const existingIds = new Set(messages.map((m) => m.id))
+        const newMsgs = res.messages.filter((m) => !existingIds.has(m.id))
+        if (newMsgs.length > 0) {
+          const merged = [...messages, ...newMsgs]
+          setMessages(merged)
+          // Update cache with merged list
+          const cacheKey = `${activeAccountId}:${activeFolder}`
+          folderCacheRef.current.set(cacheKey, merged)
+          emailStorageCache.setFolderEmails(activeAccountId, activeFolder, merged)
+        }
+        setHasMoreMessages(Boolean(res.hasMore))
+      } else {
+        setHasMoreMessages(false)
+      }
+    } catch {
+      // Silently fail on load more — user can scroll again to retry
+    } finally {
+      setLoadingMoreMessages(false)
+    }
+  }, [activeAccountId, activeFolder, messages, loadingMoreMessages, hasMoreMessages, isSearchMode])
+
+  // Server-side IMAP search (debounced)
+  const handleSearchChange = useCallback((query: string) => {
+    setSearchQuery(query)
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+
+    if (!query.trim()) {
+      // Exit search mode — restore normal folder emails
+      setIsSearchMode(false)
+      const cacheKey = `${activeAccountId}:${activeFolder}`
+      const cached = folderCacheRef.current.get(cacheKey) || emailStorageCache.getFolderEmails(activeAccountId || '', activeFolder)
+      if (cached) setMessages(cached)
+      setHasMoreMessages(true)
+      return
+    }
+
+    // Debounce 500ms before hitting IMAP server
+    searchTimerRef.current = setTimeout(async () => {
+      if (!activeAccountId) return
+      setIsSearchMode(true)
+      setLoadingMessages(true)
+      setHasMoreMessages(false)
+      try {
+        const res = await emailApi.searchEmails(query.trim(), activeFolder, activeAccountId)
+        if (res && res.ok && Array.isArray(res.messages)) {
+          setMessages(res.messages)
+        } else {
+          setMessages([])
+        }
+      } catch {
+        setMessages([])
+      } finally {
+        setLoadingMessages(false)
+      }
+    }, 500)
+  }, [activeAccountId, activeFolder])
+
   useEffect(() => {
     if (activeAccountId) {
+      setSearchQuery('')
+      setIsSearchMode(false)
       loadEmails(activeFolder, activeAccountId)
     }
   }, [activeAccountId, activeFolder, loadEmails])
@@ -538,7 +615,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
             activeFolder={activeFolder}
             selectedEmailId={selectedEmail ? (selectedEmail as EmailMessage).id : null}
             searchQuery={searchQuery}
-            onSearchChange={setSearchQuery}
+            onSearchChange={handleSearchChange}
             onRefresh={() => loadEmails(activeFolder, activeAccountId || undefined)}
             onSelectEmail={handleSelectEmail}
             onToggleStarred={handleToggleStarred}
@@ -547,6 +624,9 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
             onDelete={handleDelete}
             onBatchDelete={handleBatchDelete}
             onBatchMarkRead={handleBatchMarkRead}
+            hasMore={hasMoreMessages}
+            loadingMore={loadingMoreMessages}
+            onLoadMore={loadMoreEmails}
           />
         )}
       </div>

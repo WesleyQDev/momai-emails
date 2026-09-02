@@ -193,19 +193,21 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail encontrada.' }
       try {
         const folder = args.folder || 'INBOX'
-        const limit = typeof args.limit === 'number' ? args.limit : 25
+        const limit = typeof args.limit === 'number' ? args.limit : 50
+        const offset = typeof args.offset === 'number' ? args.offset : 0
         const unreadOnly = Boolean(args.unreadOnly)
-        const messages = await fetchMessages(account, folder, limit, unreadOnly)
+        const result = await fetchMessages(account, folder, limit, unreadOnly, offset)
         return {
           ok: true,
           folder,
-          messages,
-          total: messages.length,
-          instruction: `Encontrados ${messages.length} e-mails na pasta ${folder}.`,
-          directResponse: messages.length === 0
+          messages: result.messages,
+          total: result.total,
+          hasMore: result.hasMore,
+          instruction: `Encontrados ${result.messages.length} e-mails na pasta ${folder} (total: ${result.total}).`,
+          directResponse: result.messages.length === 0
             ? `Nenhum e-mail recente na pasta ${folder}.`
-            : `Aqui estão os ${messages.length} e-mails mais recentes de ${account.email}:\n` +
-              messages.slice(0, 5).map((m: any) => `- De: ${m.from?.name || m.from?.address} | Assunto: "${m.subject}"`).join('\n')
+            : `Aqui estão os ${result.messages.length} e-mails mais recentes de ${account.email}:\n` +
+              result.messages.slice(0, 5).map((m: any) => `- De: ${m.from?.name || m.from?.address} | Assunto: "${m.subject}"`).join('\n')
         }
       } catch (err: any) {
         return { ok: false, error: err?.message || String(err) }
@@ -241,18 +243,18 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
       try {
         const query = args.query || ''
         const folder = args.folder || 'INBOX'
-        const limit = typeof args.limit === 'number' ? args.limit : 15
-        const messages = await searchMessages(account, query, folder, limit)
+        const limit = typeof args.limit === 'number' ? args.limit : 200
+        const result = await searchMessages(account, query, folder, limit)
         return {
           ok: true,
           query,
-          messages,
-          total: messages.length,
-          instruction: `Busca por "${query}" retornou ${messages.length} e-mail(s).`,
-          directResponse: messages.length === 0
+          messages: result.messages,
+          total: result.total,
+          instruction: `Busca por "${query}" retornou ${result.total} e-mail(s).`,
+          directResponse: result.total === 0
             ? `Nenhum e-mail encontrado para o termo "${query}".`
-            : `Encontrados ${messages.length} e-mails para "${query}":\n` +
-              messages.map((m: any) => `- De: ${m.from?.name || m.from?.address} | Assunto: "${m.subject}"`).join('\n')
+            : `Encontrados ${result.total} e-mails para "${query}":\n` +
+              result.messages.slice(0, 10).map((m: any) => `- De: ${m.from?.name || m.from?.address} | Assunto: "${m.subject}"`).join('\n')
         }
       } catch (err: any) {
         return { ok: false, error: err?.message || String(err) }

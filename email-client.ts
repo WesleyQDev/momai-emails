@@ -194,21 +194,23 @@ async function listMailboxes(account: any) {
 
 /**
  * Fetch messages list from a mailbox using warm connection.
+ * Supports offset-based pagination for infinite scroll.
  */
-async function fetchMessages(account: any, folder = 'INBOX', limit = 25, unreadOnly = false) {
+async function fetchMessages(account: any, folder = 'INBOX', limit = 50, unreadOnly = false, offset = 0) {
   const client = await getConnectedImapClient(account)
   const messages: any[] = []
   const lock = await client.getMailboxLock(folder)
   try {
     const mailbox = client.mailbox
     const count = mailbox.exists || 0
-    if (count === 0) return []
+    if (count === 0) return { messages: [], hasMore: false, total: 0 }
 
     if (unreadOnly) {
       const uids = await client.search({ seen: false }, { uid: true })
-      if (!uids || uids.length === 0) return []
+      if (!uids || uids.length === 0) return { messages: [], hasMore: false, total: 0 }
       uids.sort((a: number, b: number) => b - a)
-      const targetUids = uids.slice(0, limit)
+      const targetUids = uids.slice(offset, offset + limit)
+      const hasMore = (offset + limit) < uids.length
       for await (const msg of client.fetch(
         targetUids.join(','),
         { uid: true, envelope: true, flags: true, bodyStructure: false, size: true },
@@ -232,9 +234,15 @@ async function fetchMessages(account: any, folder = 'INBOX', limit = 25, unreadO
           snippet: ''
         })
       }
+      messages.sort((a, b) => b.timestamp - a.timestamp)
+      return { messages, hasMore, total: uids.length }
     } else {
-      const startSeq = Math.max(1, count - limit + 1)
-      const range = `${startSeq}:*`
+      // Calculate range accounting for offset (newest messages first)
+      const endSeq = count - offset
+      const startSeq = Math.max(1, endSeq - limit + 1)
+      if (endSeq < 1) return { messages: [], hasMore: false, total: count }
+
+      const range = `${startSeq}:${endSeq}`
       for await (const msg of client.fetch(
         range,
         { uid: true, envelope: true, flags: true, bodyStructure: false, size: true },
@@ -258,13 +266,13 @@ async function fetchMessages(account: any, folder = 'INBOX', limit = 25, unreadO
           snippet: ''
         })
       }
+      const hasMore = startSeq > 1
+      messages.sort((a, b) => b.timestamp - a.timestamp)
+      return { messages, hasMore, total: count }
     }
   } finally {
     lock.release()
   }
-
-  messages.sort((a, b) => b.timestamp - a.timestamp)
-  return messages
 }
 
 /**
@@ -335,9 +343,9 @@ async function fetchFullMessage(account: any, uidOrMessageId: string | number, f
 }
 
 /**
- * Search emails by query.
+ * Search emails by query on the IMAP server (server-side, searches ALL messages).
  */
-async function searchMessages(account: any, query: string, folder = 'INBOX', limit = 20) {
+async function searchMessages(account: any, query: string, folder = 'INBOX', limit = 200) {
   const client = await getConnectedImapClient(account)
   const messages: any[] = []
   const lock = await client.getMailboxLock(folder)
@@ -347,7 +355,7 @@ async function searchMessages(account: any, query: string, folder = 'INBOX', lim
       or: [{ subject: q }, { from: q }, { to: q }, { body: q }]
     }
     const uids = await client.search(searchCriteria, { uid: true })
-    if (!uids || uids.length === 0) return []
+    if (!uids || uids.length === 0) return { messages: [], total: 0 }
 
     uids.sort((a: number, b: number) => b - a)
     const targetUids = uids.slice(0, limit)
@@ -379,7 +387,7 @@ async function searchMessages(account: any, query: string, folder = 'INBOX', lim
     lock.release()
   }
   messages.sort((a, b) => b.timestamp - a.timestamp)
-  return messages
+  return { messages, total: messages.length }
 }
 
 /**
