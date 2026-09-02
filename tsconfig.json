@@ -1,0 +1,38 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "momai:registry": [
+        "../../momai/apps/momai/src/renderer/src/components/chat/SkillResponseRegistry.ts",
+        "../momai/apps/momai/src/renderer/src/components/chat/SkillResponseRegistry.ts"
+      ],
+      "momai:events": [
+        "../../momai/apps/momai/src/renderer/src/hooks/useExtensionEvents.ts",
+        "../momai/apps/momai/src/renderer/src/hooks/useExtensionEvents.ts"
+      ],
+      "momai:api": [
+        "../../momai/apps/momai/src/renderer/src/services/api.ts",
+        "../momai/apps/momai/src/renderer/src/services/api.ts"
+      ],
+      "momai:constants": [
+        "../../momai/apps/momai/src/renderer/src/constants.ts",
+        "../momai/apps/momai/src/renderer/src/constants.ts"
+      ],
+      "momai:sdk": ["src/types/momai-sdk.d.ts"]
+    }
+  },
+  "include": ["src/**/*", "runtime-shim.d.ts"]
+}

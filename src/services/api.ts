@@ -1,0 +1,53 @@
+// src/services/api.ts
+// Frontend API client to communicate with the momai-emails backend worker
+
+import sdk from 'momai:sdk'
+
+export async function executeCommand<T = any>(toolName: string, args: Record<string, any> = {}, timeoutMs = 15000): Promise<T> {
+  try {
+    const res = await sdk.api.post('/extensions/momai-emails/command', {
+      toolName,
+      args,
+      timeoutMs
+    })
+    return res?.data ?? res
+  } catch (err: any) {
+    console.error(`[momai-emails:api] Command ${toolName} failed:`, err)
+    throw err
+  }
+}
+
+export const emailApi = {
+  // Accounts
+  listAccounts: () => executeCommand<{ ok: boolean; accounts: any[] }>('list_accounts'),
+  addAccount: (data: any) => executeCommand<{ ok: boolean; account?: any; error?: string }>('add_account', data, 25000),
+  removeAccount: (accountId: string) => executeCommand<{ ok: boolean }>('remove_account', { accountId }),
+  setActiveAccount: (accountId: string) => executeCommand<{ ok: boolean }>('set_active_account', { accountId }),
+  testAccount: (data: any) => executeCommand<{ ok: boolean; error?: string }>('test_account', data, 20000),
+
+  // Folders & Messages
+  listFolders: (accountId?: string) => executeCommand<{ ok: boolean; folders: any[] }>('list_folders', { accountId }),
+  listEmails: (folder = 'INBOX', accountId?: string, limit = 30, unreadOnly = false) =>
+    executeCommand<{ ok: boolean; messages: any[]; folder: string }>('list_emails', { folder, accountId, limit, unreadOnly }),
+  readEmail: (messageId: string, folder = 'INBOX', accountId?: string) =>
+    executeCommand<{ ok: boolean; email: any }>('read_email', { messageId, folder, accountId }, 20000),
+  searchEmails: (query: string, folder = 'INBOX', accountId?: string) =>
+    executeCommand<{ ok: boolean; messages: any[]; query: string }>('search_emails', { query, folder, accountId }),
+
+  // Actions
+  sendEmail: (payload: any) => executeCommand<{ ok: boolean; messageId?: string; error?: string }>('send_email', payload, 30000),
+  replyEmail: (payload: any) => executeCommand<{ ok: boolean; messageId?: string; error?: string }>('reply_email', payload, 30000),
+  forwardEmail: (payload: any) => executeCommand<{ ok: boolean; messageId?: string; error?: string }>('forward_email', payload, 30000),
+  markAsRead: (messageId: string, folder = 'INBOX', accountId?: string) =>
+    executeCommand<{ ok: boolean }>('mark_as_read', { messageId, folder, accountId }),
+  markAsUnread: (messageId: string, folder = 'INBOX', accountId?: string) =>
+    executeCommand<{ ok: boolean }>('mark_as_unread', { messageId, folder, accountId }),
+  toggleStarred: (messageId: string, starred: boolean, folder = 'INBOX', accountId?: string) =>
+    executeCommand<{ ok: boolean }>('toggle_starred', { messageId, starred, folder, accountId }),
+  deleteEmail: (messageId: string, folder = 'INBOX', accountId?: string) =>
+    executeCommand<{ ok: boolean }>('delete_email', { messageId, folder, accountId }),
+  moveEmail: (messageId: string, toFolder: string, fromFolder = 'INBOX', accountId?: string) =>
+    executeCommand<{ ok: boolean }>('move_email', { messageId, toFolder, fromFolder, accountId }),
+
+  sync: () => executeCommand<{ ok: boolean }>('sync')
+}

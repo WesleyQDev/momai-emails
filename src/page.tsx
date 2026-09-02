@@ -1,0 +1,383 @@
+// src/page.tsx
+// Main application page for MomAI E-mails extension
+
+import React, { useState, useEffect, useCallback, useTransition } from 'react'
+import sdk from 'momai:sdk'
+import { useExtensionEvents } from 'momai:events'
+import { emailApi } from './services/api'
+import type { PublicEmailAccount, EmailFolder, EmailMessage, SendEmailPayload } from './services/types'
+import { AccountTabs } from './components/AccountTabs'
+import { AccountModal } from './components/AccountModal'
+import { Sidebar } from './components/Sidebar'
+import { EmailList } from './components/EmailList'
+import { EmailReader } from './components/EmailReader'
+import { EmailComposer } from './components/EmailComposer'
+
+export const EmailsPage: React.FC = () => {
+  const [, startTransition] = useTransition()
+
+  // Accounts state
+  const [accounts, setAccounts] = useState<PublicEmailAccount[]>([])
+  const [activeAccountId, setActiveAccountId] = useState<string | null>(null)
+  const [isAddAccountModalOpen, setIsAddAccountModalOpen] = useState(false)
+
+  // Folders state
+  const [folders, setFolders] = useState<EmailFolder[]>([])
+  const [activeFolder, setActiveFolder] = useState('INBOX')
+
+  // Messages state
+  const [messages, setMessages] = useState<EmailMessage[]>([])
+  const [loadingMessages, setLoadingMessages] = useState(false)
+  const [messagesError, setMessagesError] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+
+  // Selected email / Reader state
+  const [selectedEmail, setSelectedEmail] = useState<EmailMessage | null>(null)
+  const [loadingEmailContent, setLoadingEmailContent] = useState(false)
+
+  // Composer state
+  const [isComposeOpen, setIsComposeOpen] = useState(false)
+  const [composeInitialData, setComposeInitialData] = useState<Partial<SendEmailPayload> | undefined>(undefined)
+
+  // 1. Load accounts on startup
+  const loadAccounts = useCallback(async () => {
+    try {
+      const res = await emailApi.listAccounts()
+      if (res && Array.isArray(res.accounts)) {
+        startTransition(() => {
+          setAccounts(res.accounts)
+          const active = res.accounts.find((a) => a.active) || res.accounts[0]
+          if (active) {
+            setActiveAccountId(active.id)
+          }
+        })
+      }
+    } catch (err) {
+      console.error('[momai-emails] Error loading accounts:', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadAccounts()
+  }, [loadAccounts])
+
+  // 2. Load folders when active account changes
+  const loadFolders = useCallback(async (accId?: string) => {
+    if (!accId) return
+    try {
+      const res = await emailApi.listFolders(accId)
+      if (res && res.ok && Array.isArray(res.folders)) {
+        setFolders(res.folders)
+      }
+    } catch (err) {
+      console.error('[momai-emails] Error loading folders:', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (activeAccountId) {
+      loadFolders(activeAccountId)
+    } else {
+      setFolders([])
+      setMessages([])
+      setSelectedEmail(null)
+    }
+  }, [activeAccountId, loadFolders])
+
+  // 3. Load emails when active folder or account changes
+  const loadEmails = useCallback(async (folder = 'INBOX', accId = activeAccountId) => {
+    if (!accId) return
+    setLoadingMessages(true)
+    setMessagesError(null)
+    try {
+      const res = await emailApi.listEmails(folder, accId)
+      if (res && res.ok) {
+        setMessages(res.messages || [])
+      } else {
+        setMessagesError('Não foi possível carregar as mensagens.')
+      }
+    } catch (err: any) {
+      setMessagesError(err?.message || 'Erro de conexão ao carregar e-mails.')
+    } finally {
+      setLoadingMessages(false)
+    }
+  }, [activeAccountId])
+
+  useEffect(() => {
+    if (activeAccountId) {
+      loadEmails(activeFolder, activeAccountId)
+    }
+  }, [activeAccountId, activeFolder, loadEmails])
+
+  // 4. Real-time updates: listen to new incoming emails
+  useExtensionEvents({
+    eventType: 'new_email',
+    onEvent: (event) => {
+      const { accountId, messageId, subject, from } = event.data || {}
+      console.log(`[momai-emails] Novo e-mail recebido: ${subject} de ${from}`)
+
+      // If the incoming email belongs to the active account and we are in INBOX, refresh
+      if (accountId === activeAccountId && activeFolder.toUpperCase() === 'INBOX') {
+        loadEmails(activeFolder, activeAccountId)
+      }
+      // Update folders counters
+      if (activeAccountId) {
+        loadFolders(activeAccountId)
+      }
+    }
+  })
+
+  // 5. Account operations
+  const handleSelectAccount = async (id: string) => {
+    setActiveAccountId(id)
+    setSelectedEmail(null)
+    await emailApi.setActiveAccount(id)
+  }
+
+  const handleSaveAccount = async (data: any) => {
+    const res = await emailApi.addAccount(data)
+    if (res.ok) {
+      await loadAccounts()
+      if (res.account?.id) {
+        setActiveAccountId(res.account.id)
+      }
+    }
+    return res
+  }
+
+  const handleRemoveAccount = async (id: string) => {
+    const res = await emailApi.removeAccount(id)
+    if (res.ok) {
+      await loadAccounts()
+    }
+  }
+
+  // 6. Message actions
+  const handleSelectEmail = async (msg: EmailMessage) => {
+    setSelectedEmail(msg)
+    setLoadingEmailContent(true)
+    try {
+      const res = await emailApi.readEmail(msg.id, activeFolder, activeAccountId || undefined)
+      if (res.ok && res.email) {
+        setSelectedEmail(res.email)
+        // Mark as read in local list state
+        setMessages((prev) =>
+          prev.map((m) => (m.id === msg.id ? { ...m, read: true } : m))
+        )
+      }
+    } catch (err) {
+      console.error('[momai-emails] Error loading full email:', err)
+    } finally {
+      setLoadingEmailContent(false)
+    }
+  }
+
+  const handleToggleStarred = async (id: string, currentStarred: boolean) => {
+    const newStarred = !currentStarred
+    setMessages((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, starred: newStarred } : m))
+    )
+    if (selectedEmail?.id === id) {
+      setSelectedEmail({ ...selectedEmail, starred: newStarred })
+    }
+    await emailApi.toggleStarred(id, newStarred, activeFolder, activeAccountId || undefined)
+  }
+
+  const handleMarkRead = async (id: string) => {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, read: true } : m))
+    )
+    if (selectedEmail?.id === id) {
+      setSelectedEmail({ ...selectedEmail, read: true })
+    }
+    await emailApi.markAsRead(id, activeFolder, activeAccountId || undefined)
+  }
+
+  const handleMarkUnread = async (id: string) => {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, read: false } : m))
+    )
+    if (selectedEmail?.id === id) {
+      setSelectedEmail({ ...selectedEmail, read: false })
+      setSelectedEmail(null) // Return to list if marked unread from reader
+    }
+    await emailApi.markAsUnread(id, activeFolder, activeAccountId || undefined)
+  }
+
+  const handleDelete = async (id: string) => {
+    setMessages((prev) => prev.filter((m) => m.id !== id))
+    if (selectedEmail?.id === id) {
+      setSelectedEmail(null)
+    }
+    await emailApi.deleteEmail(id, activeFolder, activeAccountId || undefined)
+  }
+
+  const handleBatchDelete = async (ids: string[]) => {
+    const idSet = new Set(ids)
+    setMessages((prev) => prev.filter((m) => !idSet.has(m.id)))
+    if (selectedEmail && idSet.has(selectedEmail.id)) {
+      setSelectedEmail(null)
+    }
+    for (const id of ids) {
+      await emailApi.deleteEmail(id, activeFolder, activeAccountId || undefined)
+    }
+  }
+
+  const handleBatchMarkRead = async (ids: string[]) => {
+    const idSet = new Set(ids)
+    setMessages((prev) =>
+      prev.map((m) => (idSet.has(m.id) ? { ...m, read: true } : m))
+    )
+    for (const id of ids) {
+      await emailApi.markAsRead(id, activeFolder, activeAccountId || undefined)
+    }
+  }
+
+  // 7. Compose & Reply actions
+  const handleOpenCompose = () => {
+    setComposeInitialData(undefined)
+    setIsComposeOpen(true)
+  }
+
+  const handleReply = (email: EmailMessage, replyAll = false) => {
+    const replySubject = email.subject.startsWith('Re:') ? email.subject : `Re: ${email.subject}`
+    const replyTo = email.replyTo?.[0]?.address || email.from.address
+    let replyCc = ''
+    if (replyAll && email.cc && email.cc.length > 0) {
+      replyCc = email.cc.map((c) => c.address).join(', ')
+    }
+
+    setComposeInitialData({
+      accountId: activeAccountId || undefined,
+      to: replyTo,
+      cc: replyCc,
+      subject: replySubject,
+      inReplyTo: email.messageId,
+      references: email.messageId,
+      body: `\n\nEm ${email.date}, ${email.from.name || email.from.address} escreveu:\n> ${email.text || email.snippet}`
+    })
+    setIsComposeOpen(true)
+  }
+
+  const handleForward = (email: EmailMessage) => {
+    const forwardSubject = email.subject.startsWith('Fwd:') || email.subject.startsWith('Enc:')
+      ? email.subject
+      : `Fwd: ${email.subject}`
+
+    setComposeInitialData({
+      accountId: activeAccountId || undefined,
+      subject: forwardSubject,
+      body: `\n\n---------- Mensagem Encaminhada ----------\nDe: ${email.from.name || email.from.address}\nData: ${email.date}\nAssunto: ${email.subject}\nPara: ${email.to.map((t) => t.address).join(', ')}\n\n${email.text || email.snippet}`
+    })
+    setIsComposeOpen(true)
+  }
+
+  const handleSendEmail = async (payload: SendEmailPayload) => {
+    const res = await emailApi.sendEmail(payload)
+    if (res.ok) {
+      // Refresh current folder if in sent folder
+      if (activeFolder.toLowerCase().includes('sent') || activeFolder.toLowerCase().includes('enviad')) {
+        loadEmails(activeFolder, activeAccountId || undefined)
+      }
+    }
+    return res
+  }
+
+  const handleQuickSendReply = async (body: string): Promise<boolean> => {
+    if (!selectedEmail) return false
+    const replySubject = selectedEmail.subject.startsWith('Re:')
+      ? selectedEmail.subject
+      : `Re: ${selectedEmail.subject}`
+
+    const res = await emailApi.sendEmail({
+      accountId: activeAccountId || undefined,
+      to: selectedEmail.replyTo?.[0]?.address || selectedEmail.from.address,
+      subject: replySubject,
+      body,
+      inReplyTo: selectedEmail.messageId,
+      references: selectedEmail.messageId
+    })
+    return Boolean(res.ok)
+  }
+
+  return (
+    <div className="w-full h-full flex flex-col bg-bg text-text overflow-hidden font-sans">
+      {/* 1. Account Tabs Bar */}
+      <AccountTabs
+        accounts={accounts}
+        activeAccountId={activeAccountId}
+        onSelectAccount={handleSelectAccount}
+        onOpenAddModal={() => setIsAddAccountModalOpen(true)}
+        onRemoveAccount={handleRemoveAccount}
+      />
+
+      {/* 2. Main Workspace */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Sidebar */}
+        <Sidebar
+          folders={folders}
+          activeFolder={activeFolder}
+          onSelectFolder={(folderPath) => {
+            setActiveFolder(folderPath)
+            setSelectedEmail(null)
+          }}
+          onOpenCompose={handleOpenCompose}
+        />
+
+        {/* Content View: EmailList or EmailReader */}
+        {selectedEmail ? (
+          <EmailReader
+            email={selectedEmail}
+            loading={loadingEmailContent}
+            onBack={() => setSelectedEmail(null)}
+            onReply={handleReply}
+            onForward={handleForward}
+            onDelete={handleDelete}
+            onMarkUnread={handleMarkUnread}
+            onQuickSendReply={handleQuickSendReply}
+          />
+        ) : (
+          <EmailList
+            messages={messages}
+            loading={loadingMessages}
+            error={messagesError}
+            activeFolder={activeFolder}
+            selectedEmailId={selectedEmail ? (selectedEmail as EmailMessage).id : null}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            onRefresh={() => loadEmails(activeFolder, activeAccountId || undefined)}
+            onSelectEmail={handleSelectEmail}
+            onToggleStarred={handleToggleStarred}
+            onMarkRead={handleMarkRead}
+            onMarkUnread={handleMarkUnread}
+            onDelete={handleDelete}
+            onBatchDelete={handleBatchDelete}
+            onBatchMarkRead={handleBatchMarkRead}
+          />
+        )}
+      </div>
+
+      {/* 3. Add Account Modal */}
+      <AccountModal
+        isOpen={isAddAccountModalOpen || accounts.length === 0}
+        onClose={() => setIsAddAccountModalOpen(false)}
+        onSave={handleSaveAccount}
+      />
+
+      {/* 4. Compose Floating Modal */}
+      <EmailComposer
+        isOpen={isComposeOpen}
+        accounts={accounts}
+        activeAccountId={activeAccountId}
+        initialData={composeInitialData}
+        onClose={() => setIsComposeOpen(false)}
+        onSend={handleSendEmail}
+      />
+    </div>
+  )
+}
+
+// Register renderer with MomAI platform
+sdk.registry.registerRenderer('momai-emails-page', EmailsPage)
+
+export default EmailsPage

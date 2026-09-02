@@ -1,0 +1,35 @@
+{
+  "name": "momai-emails",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Extensão completa de e-mails via SMTP/IMAP para MomAI",
+  "author": "WesleyQDev",
+  "license": "MIT",
+  "main": "runtime.ts",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.runtime.json"
+  },
+  "dependencies": {
+    "dompurify": "^3.2.4",
+    "imapflow": "^1.0.170",
+    "mailparser": "^3.7.2",
+    "nodemailer": "^6.10.0"
+  },
+  "devDependencies": {
+    "@heroicons/react": "^2.2.0",
+    "@types/dompurify": "^3.2.0",
+    "@types/mailparser": "^3.4.5",
+    "@types/node": "^22.0.0",
+    "@types/nodemailer": "^6.4.17",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.8.0"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}
