@@ -1,44 +1,23 @@
-// src/services/account-manager.ts
+// account-manager.ts
 // Manages multi-account persistence, encryption, active account state, and new email monitoring
+// Pure CommonJS + erasable TypeScript
+
+'use strict'
 
 const fs = require('node:fs')
 const path = require('node:path')
-const bridgePath = [
-  path.resolve(__dirname, '../../secure-storage-bridge.ts'),
-  path.resolve(__dirname, '../secure-storage-bridge.ts'),
-  path.resolve(__dirname, 'secure-storage-bridge.ts'),
-  path.resolve(process.cwd(), 'secure-storage-bridge.ts')
-].find((p) => fs.existsSync(p)) || path.resolve(__dirname, 'secure-storage-bridge.ts')
-
-const providersPath = [
-  path.resolve(__dirname, 'providers.ts'),
-  path.resolve(__dirname, 'src/services/providers.ts'),
-  path.resolve(process.cwd(), 'src/services/providers.ts')
-].find((p) => fs.existsSync(p)) || path.resolve(__dirname, 'providers.ts')
-
-const emailClientPath = [
-  path.resolve(__dirname, 'email-client.ts'),
-  path.resolve(__dirname, 'src/services/email-client.ts'),
-  path.resolve(process.cwd(), 'src/services/email-client.ts')
-].find((p) => fs.existsSync(p)) || path.resolve(__dirname, 'email-client.ts')
-
-const { encryptForStorage, decryptFromStorage } = require(bridgePath)
-const { PROVIDERS, detectProviderFromEmail } = require(providersPath)
-const { testAccountConnection, fetchMessages, fetchFullMessage } = require(emailClientPath)
-
-type EmailAccountConfig = import('./types').EmailAccountConfig
-type PublicEmailAccount = import('./types').PublicEmailAccount
-type EmailMessage = import('./types').EmailMessage
-type ProviderId = import('./providers').ProviderId
+const { encryptForStorage, decryptFromStorage } = require('./secure-storage-bridge.ts')
+const { PROVIDERS, detectProviderFromEmail } = require('./providers-data.ts')
+const { testAccountConnection, fetchMessages, fetchFullMessage } = require('./email-client.ts')
 
 class AccountManager {
   private storageDir: string
   private accountsFile: string
-  private accounts: Map<string, EmailAccountConfig> = new Map()
+  private accounts: Map<string, any> = new Map()
   private activeAccountId: string | null = null
   private pollInterval: any = null
   private lastSeenUids: Map<string, number> = new Map()
-  private onNewEmailCallback?: (event: { accountId: string; email: EmailMessage }) => void
+  private onNewEmailCallback?: (event: { accountId: string; email: any }) => void
 
   constructor(storageDir?: string) {
     const defaultDataDir = process.env.MOMAI_NODE_CORE_DATA_DIR || process.env.MOMAI_DATA_DIR || path.join(process.cwd(), 'data')
@@ -47,7 +26,7 @@ class AccountManager {
     fs.mkdirSync(this.storageDir, { recursive: true })
   }
 
-  public setOnNewEmail(callback: (event: { accountId: string; email: EmailMessage }) => void) {
+  public setOnNewEmail(callback: (event: { accountId: string; email: any }) => void) {
     this.onNewEmailCallback = callback
   }
 
@@ -67,7 +46,7 @@ class AccountManager {
       const decrypted = await decryptFromStorage(rawEnc)
       if (!decrypted) return
 
-      const list: EmailAccountConfig[] = JSON.parse(decrypted)
+      const list: any[] = JSON.parse(decrypted)
       this.accounts.clear()
       for (const acc of list) {
         this.accounts.set(acc.id, acc)
@@ -95,7 +74,7 @@ class AccountManager {
     }
   }
 
-  public getPublicAccounts(): PublicEmailAccount[] {
+  public getPublicAccounts(): any[] {
     return Array.from(this.accounts.values()).map((acc) => {
       const { password, ...rest } = acc
       return {
@@ -105,7 +84,7 @@ class AccountManager {
     })
   }
 
-  public getAccount(id?: string): EmailAccountConfig | null {
+  public getAccount(id?: string): any | null {
     if (id && this.accounts.has(id)) {
       return this.accounts.get(id)!
     }
@@ -136,16 +115,15 @@ class AccountManager {
     provider?: string
     imap?: { host: string; port: number; secure: boolean; user?: string }
     smtp?: { host: string; port: number; secure: boolean; requireTLS?: boolean; user?: string }
-  }): Promise<{ ok: boolean; account?: PublicEmailAccount; error?: string }> {
+  }): Promise<{ ok: boolean; account?: any; error?: string }> {
     const email = data.email.trim()
     const password = data.password.replace(/\s+/g, '') // remove spaces from 16-digit app passwords
     const detected = detectProviderFromEmail(email)
-    const providerCandidate = ((data.provider || detected) as ProviderId)
-    const providerId: ProviderId = (providerCandidate in PROVIDERS) ? providerCandidate : 'custom'
-    const preset = PROVIDERS[providerId] || PROVIDERS.custom
+    const providerId = (data.provider || detected) as string
+    const preset = (PROVIDERS as any)[providerId] || PROVIDERS.custom
 
     const id = data.id || `acc_${Buffer.from(email).toString('hex').slice(0, 10)}_${Date.now()}`
-    const accountConfig: EmailAccountConfig = {
+    const accountConfig: any = {
       id,
       name: data.name || email.split('@')[0],
       email,
@@ -203,7 +181,6 @@ class AccountManager {
    */
   private startBackgroundPoller(): void {
     if (this.pollInterval) clearInterval(this.pollInterval)
-    // Check every 60s for new emails in active accounts
     this.pollInterval = setInterval(async () => {
       await this.checkAllAccountsForNewEmails()
     }, 60000)
@@ -218,7 +195,7 @@ class AccountManager {
         const messages = await fetchMessages(acc, 'INBOX', 5, false)
         if (messages.length === 0) continue
 
-        const latestUid = Math.max(...messages.map((m: EmailMessage) => m.uid))
+        const latestUid = Math.max(...messages.map((m: any) => m.uid))
         const prevSeen = this.lastSeenUids.get(accId)
 
         if (prevSeen === undefined) {
@@ -227,8 +204,7 @@ class AccountManager {
         }
 
         if (latestUid > prevSeen) {
-          // We have new incoming messages!
-          const newMessages = messages.filter((m: EmailMessage) => m.uid > prevSeen)
+          const newMessages = messages.filter((m: any) => m.uid > prevSeen)
           this.lastSeenUids.set(accId, latestUid)
 
           for (const msg of newMessages) {
@@ -246,10 +222,6 @@ class AccountManager {
   }
 }
 
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { AccountManager }
+module.exports = {
+  AccountManager
 }
-
-export { AccountManager }
-
-

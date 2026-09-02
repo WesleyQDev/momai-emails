@@ -3,17 +3,19 @@
 
 import sdk from 'momai:sdk'
 
-export async function executeCommand<T = any>(toolName: string, args: Record<string, any> = {}, timeoutMs = 15000): Promise<T> {
+export async function executeCommand<T = any>(toolName: string, args: Record<string, any> = {}, timeoutMs = 25000): Promise<T> {
   try {
     const res = await sdk.api.post('/extensions/momai-emails/command', {
       toolName,
       args,
       timeoutMs
     })
-    return res?.data ?? res
+    const data = res?.data !== undefined ? res.data : res
+    return data as T
   } catch (err: any) {
-    console.error(`[momai-emails:api] Command ${toolName} failed:`, err)
-    throw err
+    const serverError = err?.response?.data?.error || err?.response?.data?.message || err?.message || String(err)
+    console.error(`[momai-emails:api] Command ${toolName} failed:`, serverError)
+    return { ok: false, error: serverError } as T
   }
 }
 

@@ -14,6 +14,9 @@
   },
   "include": [
     "runtime.ts",
+    "account-manager.ts",
+    "email-client.ts",
+    "providers-data.ts",
     "secure-storage-bridge.ts",
     "runtime-shim.d.ts"
   ]

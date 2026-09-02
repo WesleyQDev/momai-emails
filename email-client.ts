@@ -1,14 +1,12 @@
-// src/services/email-client.ts
+// email-client.ts
 // Handles real SMTP (nodemailer) and IMAP (imapflow) operations with mailparser
+// Pure CommonJS + erasable TypeScript
+
+'use strict'
 
 const { ImapFlow } = require('imapflow')
 const nodemailer = require('nodemailer')
 const { simpleParser } = require('mailparser')
-
-type EmailAccountConfig = import('./types').EmailAccountConfig
-type EmailMessage = import('./types').EmailMessage
-type EmailFolder = import('./types').EmailFolder
-type SendEmailPayload = import('./types').SendEmailPayload
 
 interface ConnectionTestResult {
   ok: boolean
@@ -20,8 +18,8 @@ interface ConnectionTestResult {
 /**
  * Creates an ImapFlow client instance for the specified account.
  */
-function createImapClient(account: EmailAccountConfig, logger = false) {
-  const username = account.imap.user || account.email
+function createImapClient(account: any, logger = false) {
+  const username = account.imap?.user || account.email
   const password = account.password || ''
   return new ImapFlow({
     host: account.imap.host,
@@ -42,8 +40,8 @@ function createImapClient(account: EmailAccountConfig, logger = false) {
 /**
  * Creates a Nodemailer transporter for the specified account.
  */
-function createSmtpTransporter(account: EmailAccountConfig) {
-  const username = account.smtp.user || account.email
+function createSmtpTransporter(account: any) {
+  const username = account.smtp?.user || account.email
   const password = account.password || ''
   return nodemailer.createTransport({
     host: account.smtp.host,
@@ -62,7 +60,7 @@ function createSmtpTransporter(account: EmailAccountConfig) {
 /**
  * Test both IMAP and SMTP connections for an account.
  */
-async function testAccountConnection(account: EmailAccountConfig): Promise<ConnectionTestResult> {
+async function testAccountConnection(account: any): Promise<ConnectionTestResult> {
   let imapOk = false
   let smtpOk = false
   let errorMsg = ''
@@ -74,7 +72,7 @@ async function testAccountConnection(account: EmailAccountConfig): Promise<Conne
     imapOk = true
     await client.logout().catch(() => {})
   } catch (err: any) {
-    errorMsg = `Falha IMAP (${account.imap.host}:${account.imap.port}): ${err?.message || err}`
+    errorMsg = `Falha IMAP (${account.imap?.host}:${account.imap?.port}): ${err?.message || err}`
     return { ok: false, imapOk: false, smtpOk: false, error: errorMsg }
   }
 
@@ -84,7 +82,7 @@ async function testAccountConnection(account: EmailAccountConfig): Promise<Conne
     await transporter.verify()
     smtpOk = true
   } catch (err: any) {
-    errorMsg = `Falha SMTP (${account.smtp.host}:${account.smtp.port}): ${err?.message || err}`
+    errorMsg = `Falha SMTP (${account.smtp?.host}:${account.smtp?.port}): ${err?.message || err}`
     return { ok: false, imapOk, smtpOk: false, error: errorMsg }
   }
 
@@ -94,15 +92,15 @@ async function testAccountConnection(account: EmailAccountConfig): Promise<Conne
 /**
  * List folders/mailboxes for an account.
  */
-async function listMailboxes(account: EmailAccountConfig): Promise<EmailFolder[]> {
+async function listMailboxes(account: any) {
   const client = createImapClient(account)
   await client.connect()
   try {
     const list = await client.list()
-    const folders: EmailFolder[] = []
+    const folders: any[] = []
     for (const item of list) {
       if (item.flags && item.flags.has('\\Noselect')) continue
-      let role: EmailFolder['role'] = 'custom'
+      let role = 'custom'
       const special = item.specialUse || ''
       const pathLower = item.path.toLowerCase()
       if (special === '\\Inbox' || pathLower === 'inbox') role = 'inbox'
@@ -125,7 +123,6 @@ async function listMailboxes(account: EmailAccountConfig): Promise<EmailFolder[]
         totalCount: status.messages || 0
       })
     }
-    // Ensure INBOX is first if present
     folders.sort((a, b) => {
       if (a.role === 'inbox') return -1
       if (b.role === 'inbox') return 1
@@ -140,15 +137,10 @@ async function listMailboxes(account: EmailAccountConfig): Promise<EmailFolder[]
 /**
  * Fetch messages list from a mailbox.
  */
-async function fetchMessages(
-  account: EmailAccountConfig,
-  folder = 'INBOX',
-  limit = 25,
-  unreadOnly = false
-): Promise<EmailMessage[]> {
+async function fetchMessages(account: any, folder = 'INBOX', limit = 25, unreadOnly = false) {
   const client = createImapClient(account)
   await client.connect()
-  const messages: EmailMessage[] = []
+  const messages: any[] = []
   try {
     const lock = await client.getMailboxLock(folder)
     try {
@@ -159,13 +151,11 @@ async function fetchMessages(
       const uids = await client.search(searchCriteria, { uid: true })
       if (!uids || uids.length === 0) return []
 
-      // Sort descending (latest first) and slice by limit
       uids.sort((a: number, b: number) => b - a)
       const targetUids = uids.slice(0, limit)
 
       if (targetUids.length === 0) return []
 
-      // Fetch envelope and body structure
       for await (const msg of client.fetch(targetUids, {
         uid: true,
         envelope: true,
@@ -198,7 +188,6 @@ async function fetchMessages(
       lock.release()
     }
 
-    // Sort latest first
     messages.sort((a, b) => b.timestamp - a.timestamp)
     return messages
   } finally {
@@ -209,11 +198,7 @@ async function fetchMessages(
 /**
  * Fetch full message details including parsed body (HTML/Text) and attachments.
  */
-async function fetchFullMessage(
-  account: EmailAccountConfig,
-  uidOrMessageId: string | number,
-  folder = 'INBOX'
-): Promise<EmailMessage | null> {
+async function fetchFullMessage(account: any, uidOrMessageId: string | number, folder = 'INBOX') {
   const client = createImapClient(account)
   await client.connect()
   try {
@@ -223,13 +208,11 @@ async function fetchFullMessage(
       let resolvedUid = targetUid
 
       if (isNaN(resolvedUid)) {
-        // Search by header Message-ID
         const found = await client.search({ header: ['message-id', uidOrMessageId] }, { uid: true })
         if (found && found.length > 0) resolvedUid = found[0]
         else return null
       }
 
-      // Download source RFC822 and parse with mailparser
       const download = await client.download(resolvedUid, undefined, { uid: true })
       if (!download || !download.content) return null
 
@@ -239,7 +222,6 @@ async function fetchFullMessage(
       const ccAddrs = (parsed.cc?.value || []).map((c: any) => ({ name: c.name || '', address: c.address || '' }))
       const bccAddrs = (parsed.bcc?.value || []).map((b: any) => ({ name: b.name || '', address: b.address || '' }))
 
-      // Fetch flags for read/starred status
       let isRead = false
       let isStarred = false
       for await (const msg of client.fetch(resolvedUid, { uid: true, flags: true })) {
@@ -286,28 +268,18 @@ async function fetchFullMessage(
 }
 
 /**
- * Search emails by query (from, to, subject, body).
+ * Search emails by query.
  */
-async function searchMessages(
-  account: EmailAccountConfig,
-  query: string,
-  folder = 'INBOX',
-  limit = 20
-): Promise<EmailMessage[]> {
+async function searchMessages(account: any, query: string, folder = 'INBOX', limit = 20) {
   const client = createImapClient(account)
   await client.connect()
-  const messages: EmailMessage[] = []
+  const messages: any[] = []
   try {
     const lock = await client.getMailboxLock(folder)
     try {
       const q = query.trim()
       const searchCriteria: any = {
-        or: [
-          { subject: q },
-          { from: q },
-          { to: q },
-          { body: q }
-        ]
+        or: [{ subject: q }, { from: q }, { to: q }, { body: q }]
       }
       const uids = await client.search(searchCriteria, { uid: true })
       if (!uids || uids.length === 0) return []
@@ -351,10 +323,7 @@ async function searchMessages(
 /**
  * Send an email via SMTP.
  */
-async function sendEmail(
-  account: EmailAccountConfig,
-  payload: SendEmailPayload
-): Promise<{ ok: boolean; messageId?: string; error?: string }> {
+async function sendEmail(account: any, payload: any) {
   const transporter = createSmtpTransporter(account)
   try {
     const fromAddress = account.name ? `"${account.name}" <${account.email}>` : account.email
@@ -388,12 +357,7 @@ async function sendEmail(
 /**
  * Mark a message as read or unread.
  */
-async function setMessageReadStatus(
-  account: EmailAccountConfig,
-  uid: number,
-  read: boolean,
-  folder = 'INBOX'
-): Promise<boolean> {
+async function setMessageReadStatus(account: any, uid: number, read: boolean, folder = 'INBOX') {
   const client = createImapClient(account)
   await client.connect()
   try {
@@ -416,12 +380,7 @@ async function setMessageReadStatus(
 /**
  * Toggle starred flag on a message.
  */
-async function setMessageStarredStatus(
-  account: EmailAccountConfig,
-  uid: number,
-  starred: boolean,
-  folder = 'INBOX'
-): Promise<boolean> {
+async function setMessageStarredStatus(account: any, uid: number, starred: boolean, folder = 'INBOX') {
   const client = createImapClient(account)
   await client.connect()
   try {
@@ -442,19 +401,14 @@ async function setMessageStarredStatus(
 }
 
 /**
- * Delete a message (move to Trash if available, otherwise add \\Deleted flag).
+ * Delete a message.
  */
-async function deleteMessage(
-  account: EmailAccountConfig,
-  uid: number,
-  folder = 'INBOX'
-): Promise<boolean> {
+async function deleteMessage(account: any, uid: number, folder = 'INBOX') {
   const client = createImapClient(account)
   await client.connect()
   try {
     const lock = await client.getMailboxLock(folder)
     try {
-      // Find trash mailbox
       const list = await client.list()
       const trashBox = list.find((m: any) => m.specialUse === '\\Trash' || m.path.toLowerCase().includes('trash') || m.path.toLowerCase().includes('lixeir'))
 
@@ -475,12 +429,7 @@ async function deleteMessage(
 /**
  * Move message between mailboxes.
  */
-async function moveMessage(
-  account: EmailAccountConfig,
-  uid: number,
-  fromFolder: string,
-  toFolder: string
-): Promise<boolean> {
+async function moveMessage(account: any, uid: number, fromFolder: string, toFolder: string) {
   const client = createImapClient(account)
   await client.connect()
   try {
@@ -496,24 +445,7 @@ async function moveMessage(
   }
 }
 
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    createImapClient,
-    createSmtpTransporter,
-    testAccountConnection,
-    listMailboxes,
-    fetchMessages,
-    fetchFullMessage,
-    searchMessages,
-    sendEmail,
-    setMessageReadStatus,
-    setMessageStarredStatus,
-    deleteMessage,
-    moveMessage
-  }
-}
-
-export {
+module.exports = {
   createImapClient,
   createSmtpTransporter,
   testAccountConnection,
@@ -527,4 +459,3 @@ export {
   deleteMessage,
   moveMessage
 }
-

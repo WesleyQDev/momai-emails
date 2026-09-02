@@ -20,7 +20,7 @@ process.on('unhandledRejection', (reason) => {
   console.error('[runtime:momai-emails] Unhandled rejection:', reason)
 })
 
-const { AccountManager } = require(path.join(__dirname, 'src', 'services', 'account-manager.ts'))
+const { AccountManager } = require('./account-manager.ts')
 const {
   testAccountConnection,
   listMailboxes,
@@ -32,7 +32,7 @@ const {
   setMessageStarredStatus,
   deleteMessage,
   moveMessage
-} = require(path.join(__dirname, 'src', 'services', 'email-client.ts'))
+} = require('./email-client.ts')
 
 const accountManager = new AccountManager()
 
