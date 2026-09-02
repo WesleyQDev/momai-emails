@@ -13,12 +13,13 @@ import { EmailList } from './components/EmailList'
 import { EmailReader } from './components/EmailReader'
 import { EmailComposer } from './components/EmailComposer'
 
-export const EmailsPage: React.FC = () => {
+export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => {
   const [, startTransition] = useTransition()
 
   // In-memory SWR caches for 0ms transitions
   const folderCacheRef = useRef<Map<string, EmailMessage[]>>(new Map())
   const emailBodyCacheRef = useRef<Map<string, EmailMessage>>(new Map())
+  const notifiedEmailsRef = useRef<Set<string>>(new Set())
 
   // Accounts state
   const [accounts, setAccounts] = useState<PublicEmailAccount[]>([])
@@ -88,22 +89,12 @@ export const EmailsPage: React.FC = () => {
     }
   }, [activeAccountId, loadFolders])
 
-  // Clear sidebar unread badge whenever this extension page is opened or focused (like mobile notifications)
+  // Clear sidebar unread badge ONLY when user is actively viewing this extension page
   useEffect(() => {
-    sdk.badge.clear('momai-emails')
-
-    const handleClear = () => {
-      if (!document.hidden) {
-        sdk.badge.clear('momai-emails')
-      }
+    if (isActive) {
+      sdk.badge.clear('momai-emails')
     }
-    window.addEventListener('focus', handleClear)
-    document.addEventListener('visibilitychange', handleClear)
-    return () => {
-      window.removeEventListener('focus', handleClear)
-      document.removeEventListener('visibilitychange', handleClear)
-    }
-  }, [])
+  }, [isActive])
 
   // 3. Load emails with SWR (0ms instant display from cache, background refresh)
   const loadEmails = useCallback(async (folder = 'INBOX', accId = activeAccountId, silent = false) => {
@@ -160,14 +151,7 @@ export const EmailsPage: React.FC = () => {
   useExtensionEvents({
     onEvent: (event: any) => {
       if (!event || event.eventType !== 'new_email') return
-      const { accountId, subject, from } = event.data || {}
-      console.log(`[momai-emails] Novo e-mail recebido: ${subject} de ${from}`)
-
-      // Check notification preferences (default unchecked unless user opted in)
-      const isNotifGloballyEnabled = localStorage.getItem('momai_emails_notifications_enabled') === 'true'
-      const isNotifAccountEnabled = accountId
-        ? localStorage.getItem(`momai_emails_notify_${accountId}`) === 'true'
-        : false
+      const { accountId, subject, from, messageId } = event.data || {}
 
       // Extrai apenas o nome do remetente limpo para a notificação
       let senderName = 'Novo e-mail'
@@ -177,6 +161,30 @@ export const EmailsPage: React.FC = () => {
         const match = from.match(/^([^<]+)<.*>$/)
         senderName = match ? match[1].trim().replace(/^["']|["']$/g, '') : from
       }
+
+      // Deduplicação rigorosa para evitar notificações ou logs repetidos
+      const dedupeKey =
+        messageId ||
+        event.data?.uid ||
+        `${accountId || ''}:${senderName}:${subject || ''}:${event.data?.date || ''}`
+      if (dedupeKey) {
+        if (notifiedEmailsRef.current.has(dedupeKey)) {
+          return
+        }
+        notifiedEmailsRef.current.add(dedupeKey)
+        if (notifiedEmailsRef.current.size > 200) {
+          const first = notifiedEmailsRef.current.values().next().value
+          if (first) notifiedEmailsRef.current.delete(first)
+        }
+      }
+
+      console.log(`[momai-emails] Novo e-mail recebido: ${subject} de ${from}`)
+
+      // Check notification preferences (default unchecked unless user opted in)
+      const isNotifGloballyEnabled = localStorage.getItem('momai_emails_notifications_enabled') === 'true'
+      const isNotifAccountEnabled = accountId
+        ? localStorage.getItem(`momai_emails_notify_${accountId}`) === 'true'
+        : false
 
       if (isNotifGloballyEnabled || isNotifAccountEnabled) {
         sdk.notifications.send({
@@ -195,11 +203,7 @@ export const EmailsPage: React.FC = () => {
       }
 
       // Increment sidebar badge ONLY if the user is not actively viewing the emails page
-      const isActivelyViewing =
-        !document.hidden &&
-        window.location.pathname.startsWith('/extensions/momai-emails')
-
-      if (!isActivelyViewing) {
+      if (!isActive) {
         sdk.badge.set((prev: number) => prev + 1, 'momai-emails')
       }
     }
