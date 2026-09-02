@@ -14,6 +14,7 @@ import {
   FolderIcon
 } from '@heroicons/react/24/outline'
 import type { EmailFolder } from '../services/types'
+import { formatFolderName } from '../services/i18n'
 
 interface SidebarProps {
   folders: EmailFolder[]
@@ -28,7 +29,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectFolder,
   onOpenCompose
 }) => {
-  const getFolderIcon = (role?: string) => {
+  const getFolderIcon = (role?: string, name?: string) => {
+    const clean = (name || '').toLowerCase()
+    if (clean.includes('starred') || clean.includes('estrela') || role === 'starred') return StarIcon
+    if (clean.includes('important') || clean.includes('importante') || role === 'important') return ExclamationCircleIcon
+    if (clean.includes('all mail') || clean.includes('todos') || role === 'all') return ArchiveBoxIcon
+    if (clean.includes('sent') || clean.includes('enviad') || role === 'sent') return PaperAirplaneIcon
+    if (clean.includes('draft') || clean.includes('rascunh') || role === 'drafts') return DocumentDuplicateIcon
+    if (clean.includes('trash') || clean.includes('lixeir') || role === 'trash') return TrashIcon
+    if (clean.includes('junk') || clean.includes('spam') || role === 'junk') return ExclamationCircleIcon
+    if (clean.includes('archive') || clean.includes('arquivo') || role === 'archive') return ArchiveBoxIcon
+    if (clean.includes('inbox') || role === 'inbox') return InboxIcon
+
     switch (role) {
       case 'inbox':
         return InboxIcon
@@ -72,7 +84,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="px-3 py-2 text-xs text-text-muted italic">Carregando pastas...</div>
           ) : (
             folders.map((f) => {
-              const Icon = getFolderIcon(f.role)
+              const Icon = getFolderIcon(f.role, f.name)
+              const displayName = formatFolderName(f.name, f.role)
               const isActive = activeFolder.toLowerCase() === f.path.toLowerCase()
 
               return (
@@ -88,7 +101,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 >
                   <div className="flex items-center gap-2.5 truncate">
                     <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-accent' : 'text-text-muted'}`} />
-                    <span className="truncate">{f.name}</span>
+                    <span className="truncate">{displayName}</span>
                   </div>
 
                   {f.unreadCount > 0 && (

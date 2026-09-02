@@ -161,14 +161,14 @@ export const EmailList: React.FC<EmailListProps> = ({
         </div>
 
         {/* Right: Search box */}
-        <div className="flex-1 max-w-sm relative">
-          <MagnifyingGlassIcon className="w-4 h-4 text-text-muted absolute left-3 top-1/2 -translate-y-1/2" />
+        <div className="flex-1 max-w-sm flex items-center gap-2.5 px-3 py-1.5 rounded-lg bg-input border border-border focus-within:border-accent transition-colors">
+          <MagnifyingGlassIcon className="w-4 h-4 text-text-muted shrink-0 pointer-events-none" />
           <input
             type="text"
             placeholder="Pesquisar e-mails..."
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            className="w-full pl-9 pr-3 py-1.5 rounded-lg bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-hidden focus:border-accent"
+            className="w-full bg-transparent border-0 p-0 text-xs text-text placeholder:text-text-muted focus:outline-hidden"
           />
         </div>
       </div>
