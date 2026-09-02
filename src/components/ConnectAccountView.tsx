@@ -1,14 +1,17 @@
 // src/components/ConnectAccountView.tsx
-// Full-page provider selection and account connection view
+// Full-page provider selection and account connection view with autocomplete and right-click deletion
 
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import {
   ArrowLeftIcon,
   CheckCircleIcon,
   ExclamationCircleIcon,
   ArrowTopRightOnSquareIcon,
   EyeIcon,
-  EyeSlashIcon
+  EyeSlashIcon,
+  TrashIcon,
+  UserIcon,
+  KeyIcon
 } from '@heroicons/react/24/outline'
 import { GmailIcon, OutlookIcon, YahooIcon, CustomMailIcon } from './ProviderIcons'
 import { PROVIDERS, ProviderId, detectProviderFromEmail } from '../services/providers'
@@ -17,6 +20,58 @@ interface ConnectAccountViewProps {
   onSave: (data: any) => Promise<{ ok: boolean; error?: string }>
   onCancel?: () => void
   canCancel?: boolean
+}
+
+interface AutofillProfile {
+  id: string
+  email: string
+  password?: string
+  name?: string
+  provider: ProviderId
+  imap?: any
+  smtp?: any
+  savedAt: number
+}
+
+const AUTOFILL_KEY = 'momai_emails_autofill_v1'
+
+function getSavedProfiles(): AutofillProfile[] {
+  try {
+    const raw = localStorage.getItem(AUTOFILL_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function saveAutofillProfile(profile: Omit<AutofillProfile, 'id' | 'savedAt'>): AutofillProfile[] {
+  try {
+    const existing = getSavedProfiles()
+    const filtered = existing.filter((p) => p.email.toLowerCase() !== profile.email.toLowerCase())
+    const newEntry: AutofillProfile = {
+      ...profile,
+      id: `af_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      savedAt: Date.now()
+    }
+    const updated = [newEntry, ...filtered].slice(0, 10)
+    localStorage.setItem(AUTOFILL_KEY, JSON.stringify(updated))
+    return updated
+  } catch {
+    return []
+  }
+}
+
+function deleteAutofillProfile(id: string): AutofillProfile[] {
+  try {
+    const existing = getSavedProfiles()
+    const updated = existing.filter((p) => p.id !== id)
+    localStorage.setItem(AUTOFILL_KEY, JSON.stringify(updated))
+    return updated
+  } catch {
+    return []
+  }
 }
 
 export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
@@ -46,6 +101,34 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
 
+  // Autocomplete / autofill states
+  const [savedProfiles, setSavedProfiles] = useState<AutofillProfile[]>([])
+  const [showAutofill, setShowAutofill] = useState(false)
+  const [contextMenu, setContextMenu] = useState<{ visible: boolean; x: number; y: number; profileId: string } | null>(null)
+  const emailInputRef = useRef<HTMLInputElement>(null)
+  const autofillRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    setSavedProfiles(getSavedProfiles())
+  }, [])
+
+  // Close autofill and context menu on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        autofillRef.current &&
+        !autofillRef.current.contains(e.target as Node) &&
+        emailInputRef.current &&
+        !emailInputRef.current.contains(e.target as Node)
+      ) {
+        setShowAutofill(false)
+      }
+      setContextMenu(null)
+    }
+    document.addEventListener('click', handleClickOutside)
+    return () => document.removeEventListener('click', handleClickOutside)
+  }, [])
+
   const handleSelectProvider = (provId: ProviderId) => {
     setSelectedProvider(provId)
     setError(null)
@@ -63,6 +146,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
 
   const handleEmailChange = (newEmail: string) => {
     setEmail(newEmail)
+    setShowAutofill(true)
     if (selectedProvider === 'custom') {
       const detected = detectProviderFromEmail(newEmail)
       if (detected && detected !== 'custom') {
@@ -75,6 +159,48 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
         }
       }
     }
+  }
+
+  // Handle selecting an autocomplete suggestion
+  const handleSelectSuggestion = (profile: AutofillProfile) => {
+    setEmail(profile.email)
+    if (profile.password) setPassword(profile.password)
+    if (profile.name) setName(profile.name)
+    if (profile.imap) {
+      if (profile.imap.host) setImapHost(profile.imap.host)
+      if (profile.imap.port) setImapPort(profile.imap.port)
+      if (typeof profile.imap.secure === 'boolean') setImapSecure(profile.imap.secure)
+    }
+    if (profile.smtp) {
+      if (profile.smtp.host) setSmtpHost(profile.smtp.host)
+      if (profile.smtp.port) setSmtpPort(profile.smtp.port)
+      if (typeof profile.smtp.secure === 'boolean') setSmtpSecure(profile.smtp.secure)
+      if (typeof profile.smtp.requireTLS === 'boolean') setSmtpRequireTLS(profile.smtp.requireTLS)
+    }
+    setShowAutofill(false)
+  }
+
+  // Handle right-click on an autofill item to show context menu
+  const handleItemContextMenu = (e: React.MouseEvent, profileId: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setContextMenu({
+      visible: true,
+      x: e.clientX,
+      y: e.clientY,
+      profileId
+    })
+  }
+
+  // Delete autofill entry
+  const handleDeleteSuggestion = (id: string, e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation()
+      e.preventDefault()
+    }
+    const updated = deleteAutofillProfile(id)
+    setSavedProfiles(updated)
+    setContextMenu(null)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -110,6 +236,18 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
       if (!res.ok) {
         setError(res.error || 'Falha ao conectar à conta de e-mail. Verifique suas credenciais.')
       } else {
+        // Save to autofill if rememberCredentials is on
+        if (rememberCredentials) {
+          const updated = saveAutofillProfile({
+            email: email.trim(),
+            password: password.trim(),
+            name: name.trim(),
+            provider: selectedProvider,
+            imap: selectedProvider === 'custom' ? payload.imap : undefined,
+            smtp: selectedProvider === 'custom' ? payload.smtp : undefined
+          })
+          setSavedProfiles(updated)
+        }
         setSuccess(true)
       }
     } catch (err: any) {
@@ -216,8 +354,21 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
     custom: 'Outro Provedor (SMTP / IMAP)'
   }
 
+  // Filter autofill suggestions for email input
+  const suggestions = savedProfiles.filter((p) => {
+    if (selectedProvider && selectedProvider !== 'custom' && p.provider !== selectedProvider) {
+      const detected = detectProviderFromEmail(p.email)
+      if (detected !== selectedProvider) return false
+    }
+    if (!email.trim()) return true
+    return (
+      p.email.toLowerCase().includes(email.toLowerCase()) ||
+      (p.name && p.name.toLowerCase().includes(email.toLowerCase()))
+    )
+  })
+
   return (
-    <div className="w-full h-full flex flex-col bg-bg text-text overflow-y-auto p-6 md:p-10 animate-fade-in">
+    <div className="w-full h-full flex flex-col bg-bg text-text overflow-y-auto p-6 md:p-10 animate-fade-in relative">
       <div className="w-full max-w-2xl mx-auto flex-1 flex flex-col justify-start space-y-6">
         {/* Top Header & Navigation */}
         <div className="flex items-center justify-between pb-4 border-b border-border">
@@ -277,14 +428,16 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
 
         {/* Form: 1. Email -> 2. Password -> 3. Display Name */}
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* 1. Email */}
-          <div>
+          {/* 1. Email with Autocomplete Dropdown */}
+          <div className="relative">
             <label className="block text-xs font-semibold text-text mb-1.5">
               Endereço de E-mail *
             </label>
             <input
+              ref={emailInputRef}
               type="email"
               required
+              autoComplete="off"
               placeholder={
                 selectedProvider === 'gmail'
                   ? 'seuemail@gmail.com'
@@ -295,12 +448,63 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
                       : 'voce@seudominio.com'
               }
               value={email}
+              onFocus={() => setShowAutofill(true)}
               onChange={(e) => handleEmailChange(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-hidden focus:border-accent"
+              className="w-full px-4 py-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-hidden focus:border-accent"
             />
+
+            {/* Autocomplete Dropdown */}
+            {showAutofill && suggestions.length > 0 && (
+              <div
+                ref={autofillRef}
+                className="absolute left-0 right-0 top-full mt-1.5 z-50 bg-card border border-border rounded-xl shadow-glass-lg overflow-hidden py-1 max-h-56 overflow-y-auto animate-fade-in"
+              >
+                <div className="px-3 py-1 text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border/40 flex justify-between items-center">
+                  <span>Contas salvas</span>
+                  <span className="text-[9px] opacity-70">Clique direito para excluir</span>
+                </div>
+                {suggestions.map((item) => (
+                  <div
+                    key={item.id}
+                    onClick={() => handleSelectSuggestion(item)}
+                    onContextMenu={(e) => handleItemContextMenu(e, item.id)}
+                    className="flex items-center justify-between px-3.5 py-2.5 cursor-pointer hover:bg-input transition-colors group text-xs select-none"
+                  >
+                    <div className="flex items-center gap-2.5 truncate">
+                      <div className="w-6 h-6 rounded-full bg-sidebar flex items-center justify-center shrink-0 border border-border/60">
+                        <UserIcon className="w-3.5 h-3.5 text-text-muted" />
+                      </div>
+                      <div className="truncate">
+                        <span className="font-medium text-text block truncate">{item.email}</span>
+                        {item.name && (
+                          <span className="text-[10px] text-text-muted block truncate">{item.name}</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      {item.password && (
+                        <span className="text-[10px] text-accent flex items-center gap-1 font-mono">
+                          <KeyIcon className="w-3 h-3" />
+                          <span>••••</span>
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={(e) => handleDeleteSuggestion(item.id, e)}
+                        title="Excluir do preenchimento automático"
+                        className="p-1 rounded-md text-text-muted hover:text-accent hover:bg-sidebar transition-colors opacity-0 group-hover:opacity-100"
+                      >
+                        <TrashIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* 2. Password */}
+          {/* 2. Password with generous left padding */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="block text-xs font-semibold text-text">
@@ -329,12 +533,12 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
                 }
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-3.5 pr-10 py-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-hidden focus:border-accent font-mono"
+                className="w-full pl-4 pr-11 py-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-hidden focus:border-accent font-mono"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text"
+                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text p-1"
               >
                 {showPassword ? <EyeSlashIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />}
               </button>
@@ -351,7 +555,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
               placeholder="Ex: Trabalho, Pessoal"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-hidden focus:border-accent"
+              className="w-full px-4 py-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-hidden focus:border-accent"
             />
           </div>
 
@@ -372,7 +576,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
                     value={imapHost}
                     onChange={(e) => setImapHost(e.target.value)}
                     required
-                    className="w-full px-3 py-2 rounded-lg bg-input border border-border text-xs text-text"
+                    className="w-full px-4 py-2 rounded-lg bg-input border border-border text-xs text-text"
                   />
                   <div className="flex items-center gap-3">
                     <input
@@ -403,7 +607,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
                     value={smtpHost}
                     onChange={(e) => setSmtpHost(e.target.value)}
                     required
-                    className="w-full px-3 py-2 rounded-lg bg-input border border-border text-xs text-text"
+                    className="w-full px-4 py-2 rounded-lg bg-input border border-border text-xs text-text"
                   />
                   <div className="flex items-center gap-3">
                     <input
@@ -551,6 +755,24 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* Right-click Context Menu for Autocomplete Deletion */}
+      {contextMenu && contextMenu.visible && (
+        <div
+          className="fixed z-60 bg-card border border-border rounded-xl shadow-glass-lg py-1 px-1 text-xs text-text animate-fade-in"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => handleDeleteSuggestion(contextMenu.profileId)}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-accent hover:bg-input text-left font-medium transition-colors"
+          >
+            <TrashIcon className="w-3.5 h-3.5" />
+            <span>Excluir do preenchimento automático</span>
+          </button>
+        </div>
+      )}
     </div>
   )
 }
