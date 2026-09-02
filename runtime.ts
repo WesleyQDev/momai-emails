@@ -78,6 +78,22 @@ accountManager.setOnNewEmail(({ accountId, email }: any) => {
         count: true
       }
     })
+
+    // 4. Emit native OS notification directly from background worker
+    const senderName =
+      email.from && typeof email.from === 'object'
+        ? email.from.name || email.from.address || 'Novo e-mail'
+        : email.from || 'Novo e-mail'
+
+    safeSend({
+      type: 'event',
+      eventType: 'notification',
+      data: {
+        title: senderName,
+        body: email.subject || '(Sem assunto)',
+        action: 'momai-emails:open'
+      }
+    })
   } catch (err: any) {
     console.warn('[runtime:momai-emails] Failed to emit email event:', err?.message || err)
   }

@@ -32,7 +32,27 @@ class AccountManager {
 
   public async initialize(): Promise<void> {
     await this.loadAccounts()
+    await this.primeInitialUids()
     this.startBackgroundPoller()
+  }
+
+  private async primeInitialUids(): Promise<void> {
+    for (const [accId, acc] of this.accounts.entries()) {
+      try {
+        const messages = await fetchMessages(acc, 'INBOX', 5, false)
+        if (messages && messages.length > 0) {
+          const uids = messages.map((m: any) => m.uid || 0).filter((u: number) => u > 0)
+          const latestUid = uids.length > 0 ? Math.max(...uids) : 0
+          this.lastSeenUids.set(accId, latestUid)
+          console.log(`[AccountManager] Account ${acc.email} primed with UID: ${latestUid}`)
+        } else {
+          this.lastSeenUids.set(accId, 0)
+        }
+      } catch (err: any) {
+        console.warn(`[AccountManager] Failed to prime UID for ${acc.email}:`, err?.message || err)
+        this.lastSeenUids.set(accId, 0)
+      }
+    }
   }
 
   public async loadAccounts(): Promise<void> {
@@ -183,7 +203,7 @@ class AccountManager {
     if (this.pollInterval) clearInterval(this.pollInterval)
     this.pollInterval = setInterval(async () => {
       await this.checkAllAccountsForNewEmails()
-    }, 60000)
+    }, 10000)
     if (typeof this.pollInterval.unref === 'function') {
       this.pollInterval.unref()
     }
@@ -193,9 +213,12 @@ class AccountManager {
     for (const [accId, acc] of this.accounts.entries()) {
       try {
         const messages = await fetchMessages(acc, 'INBOX', 5, false)
-        if (messages.length === 0) continue
+        if (!messages || messages.length === 0) continue
 
-        const latestUid = Math.max(...messages.map((m: any) => m.uid))
+        const validUids = messages.map((m: any) => m.uid || 0).filter((u: number) => u > 0)
+        if (validUids.length === 0) continue
+
+        const latestUid = Math.max(...validUids)
         const prevSeen = this.lastSeenUids.get(accId)
 
         if (prevSeen === undefined) {
@@ -204,10 +227,11 @@ class AccountManager {
         }
 
         if (latestUid > prevSeen) {
-          const newMessages = messages.filter((m: any) => m.uid > prevSeen)
+          const newMessages = messages.filter((m: any) => (m.uid || 0) > prevSeen)
           this.lastSeenUids.set(accId, latestUid)
 
           for (const msg of newMessages) {
+            console.log(`[AccountManager] Novo e-mail detectado: ${msg.subject} (UID: ${msg.uid})`)
             const full = await fetchFullMessage(acc, msg.uid, 'INBOX')
             const toEmit = full || msg
             if (this.onNewEmailCallback) {

@@ -180,20 +180,6 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
 
       console.log(`[momai-emails] Novo e-mail recebido: ${subject} de ${from}`)
 
-      // Check notification preferences (default unchecked unless user opted in)
-      const isNotifGloballyEnabled = localStorage.getItem('momai_emails_notifications_enabled') === 'true'
-      const isNotifAccountEnabled = accountId
-        ? localStorage.getItem(`momai_emails_notify_${accountId}`) === 'true'
-        : false
-
-      if (isNotifGloballyEnabled || isNotifAccountEnabled) {
-        sdk.notifications.send({
-          title: senderName,
-          body: subject || '(Sem assunto)',
-          action: 'momai-emails:open'
-        }).catch(() => {})
-      }
-
       // If the incoming email belongs to the active account, refresh inbox silently
       if (accountId === activeAccountId) {
         if (activeFolder.toUpperCase() === 'INBOX') {
