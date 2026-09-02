@@ -1,18 +1,18 @@
 // src/components/EmailsHeader.tsx
-// Top navigation header showing provider SVG on the left and active account profile dropdown on the right
+// Top navigation header: provider SVG on the left, circular profile avatar on the right with account switcher
 
 import React, { useState, useRef, useEffect } from 'react'
 import {
-  ChevronDownIcon,
   PlusIcon,
   TrashIcon,
   CheckCircleIcon,
-  ExclamationTriangleIcon,
-  UserCircleIcon
+  CameraIcon
 } from '@heroicons/react/24/outline'
 import { GmailIcon, OutlookIcon, YahooIcon, CustomMailIcon } from './ProviderIcons'
 import { detectProviderFromEmail, PROVIDERS, ProviderId } from '../services/providers'
 import type { PublicEmailAccount } from '../services/types'
+// @ts-ignore - handled by esbuild dataurl loader
+import defaultAvatarImg from '../assets/user-avatar.png'
 
 interface EmailsHeaderProps {
   accounts: PublicEmailAccount[]
@@ -31,6 +31,7 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
 }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const activeAccount = accounts.find((a) => a.id === activeAccountId) || accounts[0]
   const providerId: ProviderId = activeAccount
@@ -38,6 +39,27 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
     : 'custom'
 
   const providerConfig = PROVIDERS[providerId] || PROVIDERS.custom
+
+  // Profile avatar for active account (supports custom uploaded avatar or default bundled Google avatar)
+  const [customAvatar, setCustomAvatar] = useState<string | null>(() => {
+    if (!activeAccount) return null
+    try {
+      return localStorage.getItem(`momai_emails_avatar_${activeAccount.id}`) || null
+    } catch {
+      return null
+    }
+  })
+
+  // Sync avatar when active account changes
+  useEffect(() => {
+    if (!activeAccount) return
+    try {
+      const saved = localStorage.getItem(`momai_emails_avatar_${activeAccount.id}`)
+      setCustomAvatar(saved || null)
+    } catch {
+      setCustomAvatar(null)
+    }
+  }, [activeAccount?.id])
 
   // Close dropdown on click outside
   useEffect(() => {
@@ -54,6 +76,21 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
     }
   }, [dropdownOpen])
 
+  // Handle local avatar upload
+  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !activeAccount) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const base64 = reader.result as string
+      setCustomAvatar(base64)
+      try {
+        localStorage.setItem(`momai_emails_avatar_${activeAccount.id}`, base64)
+      } catch {}
+    }
+    reader.readAsDataURL(file)
+  }
+
   const renderProviderIcon = (sizeClass = 'w-6 h-6') => {
     switch (providerId) {
       case 'gmail':
@@ -68,11 +105,12 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
     }
   }
 
-  const activeInitial = activeAccount?.email ? activeAccount.email.charAt(0).toUpperCase() : '?'
+  // Active avatar image priority: custom uploaded > default user avatar
+  const activeAvatarSrc = customAvatar || defaultAvatarImg
 
   return (
     <header className="flex items-center justify-between border-b border-border bg-sidebar/70 backdrop-blur-xs px-5 py-2.5 select-none relative z-30">
-      {/* 1. Left: Provider SVG & Brand Title */}
+      {/* 1. Left: Provider SVG & Platform Title */}
       <div className="flex items-center gap-3">
         <div className="flex items-center justify-center shrink-0 drop-shadow-xs">
           {renderProviderIcon('w-6 h-6')}
@@ -94,54 +132,53 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
         </div>
       </div>
 
-      {/* 2. Right: Active Profile Button & Switcher Dropdown */}
+      {/* 2. Right: ONLY the circular Profile Avatar (like Gmail app) */}
       <div className="relative" ref={dropdownRef}>
         <button
           type="button"
           onClick={() => setDropdownOpen((prev) => !prev)}
-          className={`flex items-center gap-2.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
-            dropdownOpen
-              ? 'bg-card border-accent shadow-xs text-text'
-              : 'bg-input/40 hover:bg-input border-border/80 text-text hover:border-accent/40'
-          }`}
-          title="Alternar conta de e-mail"
+          className="relative rounded-full focus:outline-hidden group cursor-pointer transition-transform active:scale-95 block"
+          title={`${activeAccount?.name || activeAccount?.email || 'Perfil'} (Clique para alternar contas)`}
         >
-          {/* Avatar circle with online indicator */}
-          <div className="relative shrink-0">
-            <div className="w-7 h-7 rounded-full bg-accent/20 border border-accent/40 text-accent font-bold text-xs flex items-center justify-center shadow-xs">
-              {activeInitial}
-            </div>
-            {activeAccount?.status === 'connected' && (
-              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-accent ring-2 ring-card" />
-            )}
-          </div>
-
-          {/* Account name & Chevron */}
-          <div className="flex flex-col text-left hidden sm:flex">
-            <span className="text-xs font-semibold text-text truncate max-w-[130px] leading-tight">
-              {activeAccount?.name || activeAccount?.email?.split('@')[0] || 'Conta'}
-            </span>
-            <span className="text-[10px] text-text-muted truncate max-w-[130px]">
-              Alternar conta
-            </span>
-          </div>
-
-          <ChevronDownIcon
-            className={`w-3.5 h-3.5 text-text-muted transition-transform duration-200 ${
-              dropdownOpen ? 'rotate-180 text-accent' : ''
-            }`}
+          <img
+            src={activeAvatarSrc}
+            alt="Perfil"
+            className="w-8 h-8 rounded-full object-cover border-2 border-border group-hover:border-accent shadow-xs transition-all"
           />
+          {activeAccount?.status === 'connected' && (
+            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-card" />
+          )}
         </button>
 
         {/* Profile Dropdown Popover */}
         {dropdownOpen && (
-          <div className="absolute right-0 top-full mt-2 w-80 rounded-2xl bg-card border border-border shadow-2xl p-3 z-50 text-xs space-y-3 animate-in fade-in zoom-in-95 duration-100">
+          <div className="absolute right-0 top-full mt-2.5 w-80 rounded-2xl bg-card border border-border shadow-2xl p-3.5 z-50 text-xs space-y-3 animate-in fade-in zoom-in-95 duration-100">
             {/* Active Account Info Card */}
             {activeAccount && (
-              <div className="p-3 rounded-xl bg-input/40 border border-border flex items-center gap-3">
-                <div className="w-11 h-11 rounded-full bg-accent/20 border border-accent/40 text-accent font-bold text-base flex items-center justify-center shrink-0">
-                  {activeInitial}
+              <div className="p-3 rounded-xl bg-input/40 border border-border flex items-center gap-3 relative group/avatar">
+                {/* Clickable avatar with change photo icon */}
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  className="relative cursor-pointer shrink-0"
+                  title="Alterar foto de perfil"
+                >
+                  <img
+                    src={activeAvatarSrc}
+                    alt="Perfil"
+                    className="w-12 h-12 rounded-full object-cover border-2 border-accent/40 shadow-xs"
+                  />
+                  <div className="absolute inset-0 bg-black/40 rounded-full opacity-0 group-hover/avatar:opacity-100 flex items-center justify-center transition-opacity text-white">
+                    <CameraIcon className="w-4 h-4" />
+                  </div>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleAvatarChange}
+                    accept="image/*"
+                    className="hidden"
+                  />
                 </div>
+
                 <div className="flex-1 min-w-0">
                   <div className="font-bold text-text truncate text-sm">
                     {activeAccount.name || activeAccount.email}
@@ -149,9 +186,9 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
                   <div className="text-[11px] text-text-muted truncate">
                     {activeAccount.email}
                   </div>
-                  <div className="mt-1 flex items-center gap-1.5 text-[10px] text-accent font-medium">
+                  <div className="mt-1 flex items-center gap-1.5 text-[10px] text-emerald-500 font-medium">
                     <CheckCircleIcon className="w-3.5 h-3.5" />
-                    <span>Conta ativa</span>
+                    <span>Conectado</span>
                   </div>
                 </div>
               </div>
@@ -178,7 +215,7 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
                           className="group flex items-center justify-between p-2 rounded-xl hover:bg-input border border-transparent hover:border-border cursor-pointer transition-colors"
                         >
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <div className="w-7 h-7 rounded-full bg-input border border-border text-text font-bold text-xs flex items-center justify-center shrink-0">
+                            <div className="w-8 h-8 rounded-full bg-input border border-border text-text font-bold text-xs flex items-center justify-center shrink-0">
                               {initial}
                             </div>
                             <div className="flex flex-col min-w-0 text-left">
@@ -225,7 +262,7 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
                 <span>Adicionar outra conta</span>
               </button>
 
-              {/* Option to remove active account if needed */}
+              {/* Option to disconnect active account */}
               {activeAccount && (
                 <button
                   type="button"

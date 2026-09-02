@@ -1,5 +1,5 @@
 // src/components/EmailAvatar.tsx
-// Sender avatar supporting domain logos (Google Favicon 128px) and stylized initials fallback
+// Sender avatar with authentic Gmail Material colors and domain logo resolution (Correios, Google, etc.)
 
 import React, { useState } from 'react'
 
@@ -10,29 +10,95 @@ interface EmailAvatarProps {
   className?: string
 }
 
-// Consistent color generation based on sender string
-function getAvatarColor(str: string): { bg: string; text: string } {
-  let hash = 0
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  const colors = [
-    { bg: 'bg-accent/20', text: 'text-accent border-accent/40' },
-    { bg: 'bg-input/80', text: 'text-text border-border' },
-    { bg: 'bg-sidebar/80', text: 'text-text border-accent/30' },
-    { bg: 'bg-card border', text: 'text-text-muted border-border' }
-  ]
-  const index = Math.abs(hash) % colors.length
-  return colors[index]
+// Authentic Gmail Material color palette per letter (exact match with Gmail mobile & web)
+const GMAIL_PALETTE: Record<string, string> = {
+  A: '#1A73E8', // Blue
+  B: '#0288D1', // Cyan
+  C: '#E8710A', // Orange (exact Indeed / Candidate-se in Gmail)
+  D: '#7B1FA2', // Purple
+  E: '#D93025', // Red
+  F: '#C2185B', // Deep Pink
+  G: '#1E8E3E', // Green
+  H: '#F29900', // Amber
+  I: '#00897B', // Teal
+  J: '#8E24AA', // Violet
+  K: '#5C6BC0', // Indigo
+  L: '#0288D1', // Light Blue
+  M: '#F9AB00', // Yellow / Gold (exact "eu, Mail" in Gmail)
+  N: '#00897B', // Teal (exact "noreply" in Gmail)
+  O: '#E8710A', // Orange
+  P: '#C2185B', // Pink
+  Q: '#7B1FA2', // Purple
+  R: '#D93025', // Red
+  S: '#1A73E8', // Blue
+  T: '#1E8E3E', // Green
+  U: '#F29900', // Amber
+  V: '#00897B', // Teal
+  W: '#5C6BC0', // Indigo
+  X: '#8E24AA', // Violet
+  Y: '#F9AB00', // Gold
+  Z: '#E8710A'  // Orange
 }
 
-// Extract clean domain from email address
+// Extract domain from address
 function extractDomain(address?: string): string | null {
   if (!address) return null
   const clean = address.trim().toLowerCase()
   const atIndex = clean.lastIndexOf('@')
   if (atIndex === -1) return null
   return clean.slice(atIndex + 1).replace(/>/g, '').trim()
+}
+
+// Detect if sender is a known company or service
+function detectCompanyDomain(name?: string, address?: string): string | null {
+  const n = (name || '').toLowerCase()
+  const a = (address || '').toLowerCase()
+  const domain = extractDomain(address)
+
+  if (n.includes('correios') || a.includes('correios')) {
+    return 'correios.com.br'
+  }
+  if (n.includes('computrabajo') || a.includes('computrabajo')) {
+    return 'computrabajo.com'
+  }
+  if (n.includes('indeed') || a.includes('indeed')) {
+    return 'indeed.com'
+  }
+  if (n.includes('nubank') || a.includes('nubank')) {
+    return 'nubank.com.br'
+  }
+  if (n.includes('mercado livre') || a.includes('mercadolivre')) {
+    return 'mercadolivre.com.br'
+  }
+  if (n.includes('facebook') || a.includes('facebook')) {
+    return 'facebook.com'
+  }
+  if (n.includes('instagram') || a.includes('instagram')) {
+    return 'instagram.com'
+  }
+  if (n.includes('github') || a.includes('github')) {
+    return 'github.com'
+  }
+  if (n.includes('google') || a.includes('google')) {
+    return 'google.com'
+  }
+
+  // If domain is not a generic personal webmail, try fetching domain favicon
+  if (
+    domain &&
+    domain !== 'gmail.com' &&
+    domain !== 'googlemail.com' &&
+    domain !== 'outlook.com' &&
+    domain !== 'hotmail.com' &&
+    domain !== 'live.com' &&
+    domain !== 'yahoo.com' &&
+    domain !== 'yahoo.com.br' &&
+    domain !== 'icloud.com'
+  ) {
+    return domain
+  }
+
+  return null
 }
 
 export const EmailAvatar: React.FC<EmailAvatarProps> = ({
@@ -45,42 +111,26 @@ export const EmailAvatar: React.FC<EmailAvatarProps> = ({
 
   const displayName = name?.trim() || address?.trim() || '?'
   const initial = displayName.charAt(0).toUpperCase()
-  const domain = extractDomain(address)
-
-  // Determine if domain is a known entity/company (Correios, Google, Gov, Bank, etc.)
-  // or a general personal webmail provider
-  const isPersonalWebmail =
-    domain === 'gmail.com' ||
-    domain === 'googlemail.com' ||
-    domain === 'outlook.com' ||
-    domain === 'hotmail.com' ||
-    domain === 'live.com' ||
-    domain === 'yahoo.com' ||
-    domain === 'yahoo.com.br' ||
-    domain === 'icloud.com'
-
-  // If it's a domain like correios.com.br, amazon.com, etc., or even if it has a favicon
-  const hasFaviconCandidate = Boolean(domain && !isPersonalWebmail)
-  const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=128` : null
+  const companyDomain = detectCompanyDomain(name, address)
 
   const sizeClasses = {
-    sm: 'w-6 h-6 text-[10px]',
+    sm: 'w-7 h-7 text-xs',
     md: 'w-8 h-8 text-xs',
     lg: 'w-10 h-10 text-sm'
   }[size]
 
-  const colorStyle = getAvatarColor(displayName)
-
-  if (hasFaviconCandidate && faviconUrl && !imageError) {
+  // If company logo is available and hasn't failed to load
+  if (companyDomain && !imageError) {
+    const faviconUrl = `https://www.google.com/s2/favicons?domain=${companyDomain}&sz=128`
     return (
       <div
-        className={`${sizeClasses} rounded-full overflow-hidden shrink-0 flex items-center justify-center bg-card border border-border/80 shadow-xs ${className}`}
-        title={`${displayName} (${address})`}
+        className={`${sizeClasses} rounded-full overflow-hidden shrink-0 flex items-center justify-center bg-card border border-border shadow-xs ${className}`}
+        title={`${displayName} (${address || ''})`}
       >
         <img
           src={faviconUrl}
           alt={displayName}
-          className="w-full h-full object-contain p-1 rounded-full"
+          className="w-full h-full object-contain p-0.5 rounded-full"
           onError={() => setImageError(true)}
           loading="lazy"
         />
@@ -88,12 +138,16 @@ export const EmailAvatar: React.FC<EmailAvatarProps> = ({
     )
   }
 
+  // Exact Gmail Material solid color circle with white bold letter
+  const bgColor = GMAIL_PALETTE[initial] || '#1A73E8'
+
   return (
     <div
-      className={`${sizeClasses} rounded-full shrink-0 flex items-center justify-center font-bold border ${colorStyle.bg} ${colorStyle.text} select-none ${className}`}
-      title={`${displayName} (${address})`}
+      className={`${sizeClasses} rounded-full shrink-0 flex items-center justify-center font-bold text-white select-none shadow-xs ${className}`}
+      style={{ backgroundColor: bgColor }}
+      title={`${displayName} (${address || ''})`}
     >
-      {initial}
+      <span>{initial}</span>
     </div>
   )
 }

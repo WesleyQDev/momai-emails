@@ -61,6 +61,11 @@ const options = {
   sourcemap: true,
   outdir: 'dist',
   logLevel: 'info',
+  loader: {
+    '.png': 'dataurl',
+    '.jpg': 'dataurl',
+    '.svg': 'dataurl'
+  },
   nodePaths: [path.join(__dirname, 'node_modules')],
   plugins: [makeHostGlobalsPlugin],
   alias: {
