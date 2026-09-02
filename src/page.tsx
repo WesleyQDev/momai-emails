@@ -627,6 +627,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
             hasMore={hasMoreMessages}
             loadingMore={loadingMoreMessages}
             onLoadMore={loadMoreEmails}
+            totalCount={folders.find((f) => f.path.toLowerCase() === activeFolder.toLowerCase())?.totalCount || messages.length}
           />
         )}
       </div>

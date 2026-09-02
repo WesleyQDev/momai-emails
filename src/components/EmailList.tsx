@@ -13,7 +13,9 @@ import {
   TagIcon,
   UserGroupIcon,
   InformationCircleIcon,
-  CheckCircleIcon
+  CheckCircleIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon
 } from '@heroicons/react/24/outline'
 import { StarIcon as StarOutline } from '@heroicons/react/24/outline'
 import type { EmailMessage } from '../services/types'
@@ -39,6 +41,7 @@ interface EmailListProps {
   hasMore?: boolean
   loadingMore?: boolean
   onLoadMore?: () => void
+  totalCount?: number
 }
 
 export const EmailList: React.FC<EmailListProps> = ({
@@ -59,7 +62,8 @@ export const EmailList: React.FC<EmailListProps> = ({
   onBatchMarkRead,
   hasMore = false,
   loadingMore = false,
-  onLoadMore
+  onLoadMore,
+  totalCount
 }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [unreadOnly, setUnreadOnly] = useState(false)
@@ -225,22 +229,57 @@ export const EmailList: React.FC<EmailListProps> = ({
           )}
         </div>
 
-        {/* Right: Search box */}
-        <div className="flex-1 max-w-sm flex items-center gap-2.5 px-3 py-1.5 rounded-lg bg-input border border-border focus-within:border-accent transition-colors">
-          <MagnifyingGlassIcon className="w-4 h-4 text-text-muted shrink-0 pointer-events-none" />
-          <input
-            type="text"
-            placeholder="Pesquisar e-mails..."
-            value={searchQuery}
-            onChange={(e) => onSearchChange(e.target.value)}
-            className="w-full bg-transparent border-0 p-0 text-xs text-text placeholder:text-text-muted focus:outline-hidden"
-          />
+        {/* Right: Search box + Gmail pagination counter */}
+        <div className="flex items-center gap-3">
+          <div className="w-60 max-w-sm flex items-center gap-2.5 px-3 py-1.5 rounded-lg bg-input border border-border focus-within:border-accent transition-colors">
+            <MagnifyingGlassIcon className="w-4 h-4 text-text-muted shrink-0 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Pesquisar e-mails..."
+              value={searchQuery}
+              onChange={(e) => onSearchChange(e.target.value)}
+              className="w-full bg-transparent border-0 p-0 text-xs text-text placeholder:text-text-muted focus:outline-hidden"
+            />
+          </div>
+
+          {/* Gmail Pagination Counter (e.g. 1-50 de 5.989) */}
+          <div className="flex items-center gap-1.5 text-xs text-text-muted select-none pl-1">
+            <span className="font-mono text-[11px] whitespace-nowrap">
+              {messages.length === 0
+                ? '0 de 0'
+                : `1–${messages.length} de ${(totalCount && totalCount > messages.length ? totalCount : messages.length).toLocaleString('pt-BR')}`}
+            </span>
+            <div className="flex items-center">
+              <button
+                type="button"
+                disabled={messages.length <= 50}
+                onClick={() => {
+                  if (scrollRef.current) scrollRef.current.scrollTop = 0
+                }}
+                className="p-1 rounded hover:bg-input text-text-muted hover:text-text disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                title="Voltar ao início"
+              >
+                <ChevronLeftIcon className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                disabled={!hasMore || loadingMore}
+                onClick={() => {
+                  if (onLoadMore && hasMore && !loadingMore) onLoadMore()
+                }}
+                className="p-1 rounded hover:bg-input text-text-muted hover:text-text disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                title="Carregar mais 50 e-mails"
+              >
+                <ChevronRightIcon className={`w-3.5 h-3.5 ${loadingMore ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
       {/* Gmail Category Tabs: Principal, Promoções, Social, Atualizações (only in INBOX) */}
       {isInbox && (
-        <div className="flex items-center border-b border-border bg-sidebar/20 select-none overflow-x-auto">
+        <div className="w-full flex items-stretch border-b border-border bg-transparent select-none">
           {([
             { id: 'primary' as const, Icon: InboxIcon },
             { id: 'promotions' as const, Icon: TagIcon },
@@ -256,22 +295,25 @@ export const EmailList: React.FC<EmailListProps> = ({
                 type="button"
                 onClick={() => setActiveCategory(id)}
                 title={info.description}
-                className={`flex items-center gap-2.5 px-6 py-3 text-xs font-medium border-b-2 transition-all relative shrink-0 ${
+                className={`flex-1 max-w-[240px] h-12 flex items-center gap-3 px-5 text-xs font-semibold cursor-pointer relative transition-colors ${
                   isActive
-                    ? 'border-accent text-accent font-semibold bg-accent/5'
-                    : 'border-transparent text-text-muted hover:text-text hover:bg-input/40'
+                    ? 'text-accent'
+                    : 'text-text-muted hover:text-text hover:bg-input/20'
                 }`}
               >
-                <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-accent' : 'text-text-muted'}`} />
-                <span>{info.label}</span>
+                <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-accent stroke-2' : 'text-text-muted'}`} />
+                <span className="truncate">{info.label}</span>
                 {unreadCount > 0 && (
                   <span
-                    className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold shrink-0 ${
-                      isActive ? 'bg-accent/20 text-accent' : 'bg-input text-text-muted'
+                    className={`text-[10px] px-2 py-0.5 rounded-full font-bold shrink-0 ${
+                      isActive ? 'bg-accent/15 text-accent' : 'bg-input text-text-muted'
                     }`}
                   >
                     {unreadCount}
                   </span>
+                )}
+                {isActive && (
+                  <span className="absolute bottom-0 left-0 right-0 h-[3px] bg-accent rounded-t-sm" />
                 )}
               </button>
             )
