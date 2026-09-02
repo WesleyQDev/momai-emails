@@ -145,44 +145,63 @@ async function fetchMessages(account: any, folder = 'INBOX', limit = 25, unreadO
     const lock = await client.getMailboxLock(folder)
     try {
       const mailbox = client.mailbox
-      if (!mailbox || mailbox.exists === 0) return []
+      const count = mailbox.exists || 0
+      if (count === 0) return []
 
-      const searchCriteria: any = unreadOnly ? { seen: false } : { all: true }
-      const uids = await client.search(searchCriteria, { uid: true })
-      if (!uids || uids.length === 0) return []
-
-      uids.sort((a: number, b: number) => b - a)
-      const targetUids = uids.slice(0, limit)
-
-      if (targetUids.length === 0) return []
-
-      for await (const msg of client.fetch(targetUids, {
-        uid: true,
-        envelope: true,
-        flags: true,
-        bodyStructure: true,
-        size: true
-      })) {
-        const env = msg.envelope || {}
-        const fromAddr = env.from?.[0] || { name: '', address: 'desconhecido@email.com' }
-        const toAddrs = (env.to || []).map((t: any) => ({ name: t.name || '', address: t.address || '' }))
-        const isRead = msg.flags ? msg.flags.has('\\Seen') : false
-        const isStarred = msg.flags ? msg.flags.has('\\Flagged') : false
-
-        messages.push({
-          id: String(msg.uid),
-          uid: msg.uid,
-          messageId: env.messageId || String(msg.uid),
-          folder,
-          subject: env.subject || '(Sem assunto)',
-          from: { name: fromAddr.name || fromAddr.address, address: fromAddr.address },
-          to: toAddrs,
-          date: env.date ? new Date(env.date).toISOString() : new Date().toISOString(),
-          timestamp: env.date ? new Date(env.date).getTime() : Date.now(),
-          read: isRead,
-          starred: isStarred,
-          snippet: ''
-        })
+      if (unreadOnly) {
+        const uids = await client.search({ seen: false }, { uid: true })
+        if (!uids || uids.length === 0) return []
+        uids.sort((a: number, b: number) => b - a)
+        const targetUids = uids.slice(0, limit)
+        for await (const msg of client.fetch(
+          targetUids.join(','),
+          { uid: true, envelope: true, flags: true, bodyStructure: true, size: true },
+          { uid: true }
+        )) {
+          const env = msg.envelope || {}
+          const fromAddr = env.from?.[0] || { name: '', address: 'desconhecido@email.com' }
+          const toAddrs = (env.to || []).map((t: any) => ({ name: t.name || '', address: t.address || '' }))
+          messages.push({
+            id: String(msg.uid || msg.seq),
+            uid: msg.uid || msg.seq,
+            messageId: env.messageId || String(msg.uid || msg.seq),
+            folder,
+            subject: env.subject || '(Sem assunto)',
+            from: { name: fromAddr.name || fromAddr.address, address: fromAddr.address },
+            to: toAddrs,
+            date: env.date ? new Date(env.date).toISOString() : new Date().toISOString(),
+            timestamp: env.date ? new Date(env.date).getTime() : Date.now(),
+            read: msg.flags ? msg.flags.has('\\Seen') : false,
+            starred: msg.flags ? msg.flags.has('\\Flagged') : false,
+            snippet: ''
+          })
+        }
+      } else {
+        const startSeq = Math.max(1, count - limit + 1)
+        const range = `${startSeq}:*`
+        for await (const msg of client.fetch(
+          range,
+          { uid: true, envelope: true, flags: true, bodyStructure: true, size: true },
+          { uid: false }
+        )) {
+          const env = msg.envelope || {}
+          const fromAddr = env.from?.[0] || { name: '', address: 'desconhecido@email.com' }
+          const toAddrs = (env.to || []).map((t: any) => ({ name: t.name || '', address: t.address || '' }))
+          messages.push({
+            id: String(msg.uid || msg.seq),
+            uid: msg.uid || msg.seq,
+            messageId: env.messageId || String(msg.uid || msg.seq),
+            folder,
+            subject: env.subject || '(Sem assunto)',
+            from: { name: fromAddr.name || fromAddr.address, address: fromAddr.address },
+            to: toAddrs,
+            date: env.date ? new Date(env.date).toISOString() : new Date().toISOString(),
+            timestamp: env.date ? new Date(env.date).getTime() : Date.now(),
+            read: msg.flags ? msg.flags.has('\\Seen') : false,
+            starred: msg.flags ? msg.flags.has('\\Flagged') : false,
+            snippet: ''
+          })
+        }
       }
     } finally {
       lock.release()
@@ -224,7 +243,7 @@ async function fetchFullMessage(account: any, uidOrMessageId: string | number, f
 
       let isRead = false
       let isStarred = false
-      for await (const msg of client.fetch(resolvedUid, { uid: true, flags: true })) {
+      for await (const msg of client.fetch(String(resolvedUid), { flags: true }, { uid: true })) {
         if (msg.flags) {
           isRead = msg.flags.has('\\Seen')
           isStarred = msg.flags.has('\\Flagged')
@@ -287,11 +306,11 @@ async function searchMessages(account: any, query: string, folder = 'INBOX', lim
       uids.sort((a: number, b: number) => b - a)
       const targetUids = uids.slice(0, limit)
 
-      for await (const msg of client.fetch(targetUids, {
-        uid: true,
-        envelope: true,
-        flags: true
-      })) {
+      for await (const msg of client.fetch(
+        targetUids.join(','),
+        { uid: true, envelope: true, flags: true },
+        { uid: true }
+      )) {
         const env = msg.envelope || {}
         const fromAddr = env.from?.[0] || { name: '', address: '' }
         const toAddrs = (env.to || []).map((t: any) => ({ name: t.name || '', address: t.address || '' }))
