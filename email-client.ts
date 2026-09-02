@@ -193,6 +193,24 @@ async function listMailboxes(account: any) {
 }
 
 /**
+ * Get mailbox status (message counts and uidNext) without mailbox lock.
+ */
+async function getMailboxStatus(account: any, folder = 'INBOX') {
+  const client = await getConnectedImapClient(account)
+  try {
+    const status = await client.status(folder, { messages: true, unseen: true, uidNext: true })
+    return {
+      ok: true,
+      messages: status.messages || 0,
+      unseen: status.unseen || 0,
+      uidNext: status.uidNext || 0
+    }
+  } catch (err: any) {
+    return { ok: false, error: err?.message || String(err), messages: 0, unseen: 0, uidNext: 0 }
+  }
+}
+
+/**
  * Fetch messages list from a mailbox using warm connection.
  * Supports offset-based pagination for infinite scroll.
  */
@@ -201,6 +219,8 @@ async function fetchMessages(account: any, folder = 'INBOX', limit = 50, unreadO
   const messages: any[] = []
   const lock = await client.getMailboxLock(folder)
   try {
+    // Sincroniza com o servidor IMAP para garantir que client.mailbox.exists reflita mensagens recém-chegadas
+    await client.noop().catch(() => {})
     const mailbox = client.mailbox
     const count = mailbox.exists || 0
     if (count === 0) return { messages: [], hasMore: false, total: 0 }
@@ -502,6 +522,7 @@ module.exports = {
   releaseImapClient,
   testAccountConnection,
   listMailboxes,
+  getMailboxStatus,
   fetchMessages,
   fetchFullMessage,
   searchMessages,

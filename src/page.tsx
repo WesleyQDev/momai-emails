@@ -313,7 +313,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
 
       // Increment sidebar badge ONLY if the user is not actively viewing the emails page
       if (!isActive) {
-        sdk.badge.set((prev: number) => prev + 1, 'momai-emails')
+        sdk.badge.set(true, 'momai-emails')
       }
     }
   })

@@ -163,11 +163,11 @@ export const EmailList: React.FC<EmailListProps> = ({
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-card overflow-hidden select-none">
+    <div className="flex-1 min-w-0 flex flex-col bg-card overflow-hidden select-none">
       {/* Top Toolbar */}
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-sidebar/30 gap-3">
+      <div className="flex items-center justify-between px-3 sm:px-4 py-2.5 border-b border-border bg-sidebar/30 gap-2 sm:gap-3">
         {/* Left: Checkbox & Batch Actions or Search */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <input
             type="checkbox"
             checked={messages.length > 0 && selectedIds.size === messages.length}
@@ -230,8 +230,8 @@ export const EmailList: React.FC<EmailListProps> = ({
         </div>
 
         {/* Right: Search box + Gmail pagination counter */}
-        <div className="flex items-center gap-3">
-          <div className="w-60 max-w-sm flex items-center gap-2.5 px-3 py-1.5 rounded-lg bg-input border border-border focus-within:border-accent transition-colors">
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <div className="w-36 sm:w-52 md:w-60 flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-lg bg-input border border-border focus-within:border-accent transition-all">
             <MagnifyingGlassIcon className="w-4 h-4 text-text-muted shrink-0 pointer-events-none" />
             <input
               type="text"
@@ -279,7 +279,7 @@ export const EmailList: React.FC<EmailListProps> = ({
 
       {/* Gmail Category Tabs: Principal, Promoções, Social, Atualizações (only in INBOX) */}
       {isInbox && (
-        <div className="w-full flex items-stretch border-b border-border bg-transparent select-none">
+        <div className="w-full flex items-stretch border-b border-border bg-transparent select-none overflow-x-auto no-scrollbar">
           {([
             { id: 'primary' as const, Icon: InboxIcon },
             { id: 'promotions' as const, Icon: TagIcon },
@@ -295,7 +295,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                 type="button"
                 onClick={() => setActiveCategory(id)}
                 title={info.description}
-                className={`flex-1 max-w-[240px] h-12 flex items-center gap-3 px-5 text-xs font-semibold cursor-pointer relative transition-colors ${
+                className={`flex-1 min-w-fit max-w-[240px] h-11 sm:h-12 flex items-center justify-center sm:justify-start gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 text-xs font-semibold cursor-pointer relative transition-colors whitespace-nowrap shrink-0 sm:shrink ${
                   isActive
                     ? 'text-accent'
                     : 'text-text-muted hover:text-text hover:bg-input/20'
@@ -305,11 +305,11 @@ export const EmailList: React.FC<EmailListProps> = ({
                 <span className="truncate">{info.label}</span>
                 {unreadCount > 0 && (
                   <span
-                    className={`text-[10px] px-2 py-0.5 rounded-full font-bold shrink-0 ${
+                    className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0 tabular-nums leading-none ${
                       isActive ? 'bg-accent/15 text-accent' : 'bg-input text-text-muted'
                     }`}
                   >
-                    {unreadCount}
+                    {unreadCount > 999 ? '999+' : unreadCount}
                   </span>
                 )}
                 {isActive && (

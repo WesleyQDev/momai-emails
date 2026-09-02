@@ -37,7 +37,7 @@ const {
 const accountManager = new AccountManager()
 
 // Setup event emission on new emails
-accountManager.setOnNewEmail(({ accountId, email }: any) => {
+accountManager.setOnNewEmail(({ accountId, email, totalUnread }: any) => {
   try {
     const fromStr = email.from ? (email.from.name ? `${email.from.name} <${email.from.address}>` : email.from.address) : 'Desconhecido'
     const toStr = Array.isArray(email.to) ? email.to.map((t: any) => t.address || t.name).join(', ') : ''
@@ -69,7 +69,7 @@ accountManager.setOnNewEmail(({ accountId, email }: any) => {
       }
     })
 
-    // 3. Emit badge_update so sidebar lights up even when extension UI is not open
+    // 3. Emit badge_update so sidebar lights up with clean red dot (no numbers)
     safeSend({
       type: 'event',
       eventType: 'badge_update',
@@ -380,6 +380,16 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
       if (!account) return { ok: false, error: 'Conta não encontrada.' }
       const uid = parseInt(args.messageId || args.uid, 10)
       const ok = await setMessageReadStatus(account, uid, true, args.folder || 'INBOX')
+      if (ok) {
+        accountManager.checkAllAccountsForNewEmails().catch(() => {})
+        const currentUnread = accountManager.getTotalUnreadCount()
+        const hasUnread = currentUnread > 1
+        safeSend({
+          type: 'event',
+          eventType: 'badge_update',
+          data: { extensionId: 'momai-emails', count: hasUnread }
+        })
+      }
       return { ok, instruction: 'E-mail marcado como lido.' }
     }
 
@@ -388,6 +398,14 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
       if (!account) return { ok: false, error: 'Conta não encontrada.' }
       const uid = parseInt(args.messageId || args.uid, 10)
       const ok = await setMessageReadStatus(account, uid, false, args.folder || 'INBOX')
+      if (ok) {
+        accountManager.checkAllAccountsForNewEmails().catch(() => {})
+        safeSend({
+          type: 'event',
+          eventType: 'badge_update',
+          data: { extensionId: 'momai-emails', count: true }
+        })
+      }
       return { ok, instruction: 'E-mail marcado como não lido.' }
     }
 

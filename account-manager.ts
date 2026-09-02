@@ -8,7 +8,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { encryptForStorage, decryptFromStorage } = require('./secure-storage-bridge.ts')
 const { PROVIDERS, detectProviderFromEmail } = require('./providers-data.ts')
-const { testAccountConnection, fetchMessages, fetchFullMessage } = require('./email-client.ts')
+const { testAccountConnection, fetchMessages, fetchFullMessage, getMailboxStatus } = require('./email-client.ts')
 
 class AccountManager {
   private storageDir: string
@@ -17,7 +17,10 @@ class AccountManager {
   private activeAccountId: string | null = null
   private pollInterval: any = null
   private lastSeenUids: Map<string, number> = new Map()
-  private onNewEmailCallback?: (event: { accountId: string; email: any }) => void
+  private seenUids: Map<string, Set<number>> = new Map()
+  private unreadCounts: Map<string, number> = new Map()
+  private isChecking = false
+  private onNewEmailCallback?: (event: { accountId: string; email: any; totalUnread: number }) => void
 
   constructor(storageDir?: string) {
     const defaultDataDir = process.env.MOMAI_NODE_CORE_DATA_DIR || process.env.MOMAI_DATA_DIR || path.join(process.cwd(), 'data')
@@ -26,8 +29,16 @@ class AccountManager {
     fs.mkdirSync(this.storageDir, { recursive: true })
   }
 
-  public setOnNewEmail(callback: (event: { accountId: string; email: any }) => void) {
+  public setOnNewEmail(callback: (event: { accountId: string; email: any; totalUnread: number }) => void) {
     this.onNewEmailCallback = callback
+  }
+
+  public getTotalUnreadCount(): number {
+    let total = 0
+    for (const count of this.unreadCounts.values()) {
+      total += count
+    }
+    return total
   }
 
   public async initialize(): Promise<void> {
@@ -39,13 +50,19 @@ class AccountManager {
   private async primeInitialUids(): Promise<void> {
     for (const [accId, acc] of this.accounts.entries()) {
       try {
-        const res = await fetchMessages(acc, 'INBOX', 5, false)
+        if (!this.seenUids.has(accId)) this.seenUids.set(accId, new Set())
+        const status = await getMailboxStatus(acc, 'INBOX')
+        if (status.ok) {
+          this.unreadCounts.set(accId, status.unseen || 0)
+        }
+        const res = await fetchMessages(acc, 'INBOX', 10, false)
         const messages = Array.isArray(res) ? res : (res?.messages || [])
         if (messages && messages.length > 0) {
           const uids = messages.map((m: any) => m.uid || 0).filter((u: number) => u > 0)
+          for (const u of uids) this.seenUids.get(accId)!.add(u)
           const latestUid = uids.length > 0 ? Math.max(...uids) : 0
           this.lastSeenUids.set(accId, latestUid)
-          console.log(`[AccountManager] Account ${acc.email} primed with UID: ${latestUid}`)
+          console.log(`[AccountManager] Account ${acc.email} primed with UID: ${latestUid}, unread: ${status.unseen || 0}`)
         } else {
           this.lastSeenUids.set(accId, 0)
         }
@@ -204,41 +221,70 @@ class AccountManager {
     if (this.pollInterval) clearInterval(this.pollInterval)
     this.pollInterval = setInterval(async () => {
       await this.checkAllAccountsForNewEmails()
-    }, 5000)
+    }, 15000)
   }
 
   public async checkAllAccountsForNewEmails(): Promise<void> {
-    for (const [accId, acc] of this.accounts.entries()) {
-      try {
-        const res = await fetchMessages(acc, 'INBOX', 5, false)
-        const messages = Array.isArray(res) ? res : (res?.messages || [])
-        if (!messages || messages.length === 0) continue
+    if (this.isChecking) return
+    this.isChecking = true
+    try {
+      for (const [accId, acc] of this.accounts.entries()) {
+        try {
+          if (!this.seenUids.has(accId)) this.seenUids.set(accId, new Set())
+          const accountSeen = this.seenUids.get(accId)!
 
-        const validUids = messages.map((m: any) => m.uid || 0).filter((u: number) => u > 0)
-        if (validUids.length === 0) continue
-
-        const latestUid = Math.max(...validUids)
-        const prevSeen = this.lastSeenUids.get(accId)
-
-        if (prevSeen === undefined) {
-          this.lastSeenUids.set(accId, latestUid)
-          continue
-        }
-
-        if (latestUid > prevSeen) {
-          const newMessages = messages.filter((m: any) => (m.uid || 0) > prevSeen)
-          this.lastSeenUids.set(accId, latestUid)
-
-          for (const msg of newMessages) {
-            console.log(`[AccountManager] Novo e-mail detectado: ${msg.subject} (UID: ${msg.uid})`)
-            if (this.onNewEmailCallback) {
-              this.onNewEmailCallback({ accountId: accId, email: msg })
-            }
+          // Status check: rápido, obtém contagem de não lidos atualizada sem bloquear a caixa
+          const status = await getMailboxStatus(acc, 'INBOX')
+          if (status.ok) {
+            this.unreadCounts.set(accId, status.unseen || 0)
           }
+
+          const prevSeen = this.lastSeenUids.get(accId) ?? 0
+
+          // Busca as mensagens mais recentes (o fetchMessages agora força client.noop() internamente)
+          const res = await fetchMessages(acc, 'INBOX', 10, false)
+          const messages = Array.isArray(res) ? res : (res?.messages || [])
+          if (!messages || messages.length === 0) continue
+
+          const validUids = messages.map((m: any) => m.uid || 0).filter((u: number) => u > 0)
+          if (validUids.length === 0) continue
+
+          const latestUid = Math.max(...validUids)
+
+          if (latestUid > prevSeen) {
+            const newMessages = messages.filter((m: any) => {
+              const uid = m.uid || 0
+              return uid > prevSeen && !accountSeen.has(uid)
+            })
+
+            this.lastSeenUids.set(accId, latestUid)
+
+            for (const msg of newMessages) {
+              const uid = msg.uid || 0
+              accountSeen.add(uid)
+              if (accountSeen.size > 500) {
+                const first = accountSeen.values().next().value
+                if (first !== undefined) accountSeen.delete(first)
+              }
+
+              console.log(`[AccountManager] Novo e-mail detectado: ${msg.subject} (UID: ${uid})`)
+              if (this.onNewEmailCallback) {
+                this.onNewEmailCallback({
+                  accountId: accId,
+                  email: msg,
+                  totalUnread: this.getTotalUnreadCount()
+                })
+              }
+            }
+          } else {
+            for (const u of validUids) accountSeen.add(u)
+          }
+        } catch (err: any) {
+          console.warn(`[AccountManager] Background check error for ${acc.email}:`, err?.message || err)
         }
-      } catch (err: any) {
-        console.warn(`[AccountManager] Background check error for ${acc.email}:`, err?.message || err)
       }
+    } finally {
+      this.isChecking = false
     }
   }
 }
