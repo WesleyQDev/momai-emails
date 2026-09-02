@@ -1,18 +1,45 @@
 // src/components/EmailsHeader.tsx
-// Top navigation header: provider SVG on the left, circular profile avatar on the right with account switcher
+// Top navigation header: provider SVG on the left, clean circular profile avatar on the right with account switcher
 
 import React, { useState, useRef, useEffect } from 'react'
 import {
   PlusIcon,
   TrashIcon,
-  CheckCircleIcon,
   CameraIcon
 } from '@heroicons/react/24/outline'
 import { GmailIcon, OutlookIcon, YahooIcon, CustomMailIcon } from './ProviderIcons'
 import { detectProviderFromEmail, PROVIDERS, ProviderId } from '../services/providers'
 import type { PublicEmailAccount } from '../services/types'
-// @ts-ignore - handled by esbuild dataurl loader
-import defaultAvatarImg from '../assets/user-avatar.png'
+
+// Authentic Gmail Material color palette per letter
+const GMAIL_PALETTE: Record<string, string> = {
+  A: '#1A73E8',
+  B: '#0288D1',
+  C: '#E8710A',
+  D: '#7B1FA2',
+  E: '#D93025',
+  F: '#C2185B',
+  G: '#1E8E3E',
+  H: '#F29900',
+  I: '#00897B',
+  J: '#8E24AA',
+  K: '#5C6BC0',
+  L: '#0288D1',
+  M: '#F9AB00',
+  N: '#00897B',
+  O: '#E8710A',
+  P: '#C2185B',
+  Q: '#7B1FA2',
+  R: '#D93025',
+  S: '#1A73E8',
+  T: '#1E8E3E',
+  U: '#F29900',
+  V: '#00897B',
+  W: '#5C6BC0',
+  X: '#8E24AA',
+  Y: '#F9AB00',
+  Z: '#E8710A'
+}
 
 interface EmailsHeaderProps {
   accounts: PublicEmailAccount[]
@@ -40,7 +67,7 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
 
   const providerConfig = PROVIDERS[providerId] || PROVIDERS.custom
 
-  // Profile avatar for active account (supports custom uploaded avatar or default bundled Google avatar)
+  // User avatar state (loaded from storage if user uploaded, otherwise dynamic Gmail Material initial)
   const [customAvatar, setCustomAvatar] = useState<string | null>(() => {
     if (!activeAccount) return null
     try {
@@ -105,8 +132,8 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
     }
   }
 
-  // Active avatar image priority: custom uploaded > default user avatar
-  const activeAvatarSrc = customAvatar || defaultAvatarImg
+  const activeInitial = activeAccount?.email ? activeAccount.email.charAt(0).toUpperCase() : '?'
+  const avatarBg = GMAIL_PALETTE[activeInitial] || '#1A73E8'
 
   return (
     <header className="flex items-center justify-between border-b border-border bg-sidebar/70 backdrop-blur-xs px-5 py-2.5 select-none relative z-30">
@@ -132,7 +159,7 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
         </div>
       </div>
 
-      {/* 2. Right: ONLY the circular Profile Avatar (like Gmail app) */}
+      {/* 2. Right: ONLY the circular Profile Avatar (no green/purple status dots) */}
       <div className="relative" ref={dropdownRef}>
         <button
           type="button"
@@ -140,13 +167,19 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
           className="relative rounded-full focus:outline-hidden group cursor-pointer transition-transform active:scale-95 block"
           title={`${activeAccount?.name || activeAccount?.email || 'Perfil'} (Clique para alternar contas)`}
         >
-          <img
-            src={activeAvatarSrc}
-            alt="Perfil"
-            className="w-8 h-8 rounded-full object-cover border-2 border-border group-hover:border-accent shadow-xs transition-all"
-          />
-          {activeAccount?.status === 'connected' && (
-            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-card" />
+          {customAvatar ? (
+            <img
+              src={customAvatar}
+              alt="Perfil"
+              className="w-8 h-8 rounded-full object-cover shadow-xs"
+            />
+          ) : (
+            <div
+              className="w-8 h-8 rounded-full font-bold text-white text-xs flex items-center justify-center select-none shadow-xs"
+              style={{ backgroundColor: avatarBg }}
+            >
+              {activeInitial}
+            </div>
           )}
         </button>
 
@@ -160,13 +193,22 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
                 <div
                   onClick={() => fileInputRef.current?.click()}
                   className="relative cursor-pointer shrink-0"
-                  title="Alterar foto de perfil"
+                  title="Carregar foto personalizada de perfil"
                 >
-                  <img
-                    src={activeAvatarSrc}
-                    alt="Perfil"
-                    className="w-12 h-12 rounded-full object-cover border-2 border-accent/40 shadow-xs"
-                  />
+                  {customAvatar ? (
+                    <img
+                      src={customAvatar}
+                      alt="Perfil"
+                      className="w-12 h-12 rounded-full object-cover shadow-xs"
+                    />
+                  ) : (
+                    <div
+                      className="w-12 h-12 rounded-full font-bold text-white text-base flex items-center justify-center select-none shadow-xs"
+                      style={{ backgroundColor: avatarBg }}
+                    >
+                      {activeInitial}
+                    </div>
+                  )}
                   <div className="absolute inset-0 bg-black/40 rounded-full opacity-0 group-hover/avatar:opacity-100 flex items-center justify-center transition-opacity text-white">
                     <CameraIcon className="w-4 h-4" />
                   </div>
@@ -186,10 +228,6 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
                   <div className="text-[11px] text-text-muted truncate">
                     {activeAccount.email}
                   </div>
-                  <div className="mt-1 flex items-center gap-1.5 text-[10px] text-emerald-500 font-medium">
-                    <CheckCircleIcon className="w-3.5 h-3.5" />
-                    <span>Conectado</span>
-                  </div>
                 </div>
               </div>
             )}
@@ -205,6 +243,7 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
                     .filter((a) => a.id !== activeAccountId)
                     .map((acc) => {
                       const initial = acc.email.charAt(0).toUpperCase()
+                      const accBg = GMAIL_PALETTE[initial] || '#1A73E8'
                       return (
                         <div
                           key={acc.id}
@@ -215,7 +254,10 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
                           className="group flex items-center justify-between p-2 rounded-xl hover:bg-input border border-transparent hover:border-border cursor-pointer transition-colors"
                         >
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <div className="w-8 h-8 rounded-full bg-input border border-border text-text font-bold text-xs flex items-center justify-center shrink-0">
+                            <div
+                              className="w-8 h-8 rounded-full font-bold text-white text-xs flex items-center justify-center shrink-0 shadow-xs"
+                              style={{ backgroundColor: accBg }}
+                            >
                               {initial}
                             </div>
                             <div className="flex flex-col min-w-0 text-left">
