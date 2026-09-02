@@ -39,7 +39,8 @@ class AccountManager {
   private async primeInitialUids(): Promise<void> {
     for (const [accId, acc] of this.accounts.entries()) {
       try {
-        const messages = await fetchMessages(acc, 'INBOX', 5, false)
+        const res = await fetchMessages(acc, 'INBOX', 5, false)
+        const messages = Array.isArray(res) ? res : (res?.messages || [])
         if (messages && messages.length > 0) {
           const uids = messages.map((m: any) => m.uid || 0).filter((u: number) => u > 0)
           const latestUid = uids.length > 0 ? Math.max(...uids) : 0
@@ -209,7 +210,8 @@ class AccountManager {
   public async checkAllAccountsForNewEmails(): Promise<void> {
     for (const [accId, acc] of this.accounts.entries()) {
       try {
-        const messages = await fetchMessages(acc, 'INBOX', 5, false)
+        const res = await fetchMessages(acc, 'INBOX', 5, false)
+        const messages = Array.isArray(res) ? res : (res?.messages || [])
         if (!messages || messages.length === 0) continue
 
         const validUids = messages.map((m: any) => m.uid || 0).filter((u: number) => u > 0)
