@@ -288,10 +288,6 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
                 ref={toAutofillRef}
                 className="absolute left-16 right-4 top-full mt-1 z-50 bg-card border border-border rounded-xl shadow-glass-lg overflow-hidden py-1 max-h-48 overflow-y-auto animate-fade-in"
               >
-                <div className="px-3 py-1 text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border/40 flex justify-between items-center">
-                  <span>Destinatários frequentes</span>
-                  <span className="text-[9px] opacity-70">Clique direito para excluir</span>
-                </div>
                 {filteredRecipients.map((item) => (
                   <div
                     key={item.email}

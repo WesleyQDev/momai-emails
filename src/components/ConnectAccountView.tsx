@@ -459,10 +459,6 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
                 ref={autofillRef}
                 className="absolute left-0 right-0 top-full mt-1.5 z-50 bg-card border border-border rounded-xl shadow-glass-lg overflow-hidden py-1 max-h-56 overflow-y-auto animate-fade-in"
               >
-                <div className="px-3 py-1 text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border/40 flex justify-between items-center">
-                  <span>Contas salvas</span>
-                  <span className="text-[9px] opacity-70">Clique direito para excluir</span>
-                </div>
                 {suggestions.map((item) => (
                   <div
                     key={item.id}
