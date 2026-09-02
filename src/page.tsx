@@ -72,6 +72,18 @@ export const EmailsPage: React.FC = () => {
       const res = await emailApi.listFolders(accId)
       if (res && res.ok && Array.isArray(res.folders)) {
         setFolders(res.folders)
+        // Calculate unread count in inbox to update sidebar badge
+        const inbox = res.folders.find(
+          (f: any) => f.role === 'inbox' || f.path.toUpperCase() === 'INBOX'
+        )
+        const unread = inbox
+          ? inbox.unreadCount
+          : res.folders.reduce((acc: number, f: any) => acc + (f.unreadCount || 0), 0)
+        if (unread > 0) {
+          sdk.badge.set(unread)
+        } else {
+          sdk.badge.clear()
+        }
       }
     } catch (err) {
       console.error('[momai-emails] Error loading folders:', err)
@@ -85,6 +97,7 @@ export const EmailsPage: React.FC = () => {
       setFolders([])
       setMessages([])
       setSelectedEmail(null)
+      sdk.badge.clear()
     }
   }, [activeAccountId, loadFolders])
 
@@ -98,6 +111,11 @@ export const EmailsPage: React.FC = () => {
     if (cached && cached.length > 0) {
       setMessages(cached)
       setLoadingMessages(false)
+      if (folder.toUpperCase() === 'INBOX') {
+        const unread = cached.filter((m) => !m.read).length
+        if (unread > 0) sdk.badge.set(unread)
+        else sdk.badge.clear()
+      }
     } else if (!silent) {
       setLoadingMessages(true)
     }
@@ -108,6 +126,12 @@ export const EmailsPage: React.FC = () => {
       if (res && res.ok && Array.isArray(res.messages)) {
         folderCacheRef.current.set(cacheKey, res.messages)
         setMessages(res.messages)
+
+        if (folder.toUpperCase() === 'INBOX') {
+          const unread = res.messages.filter((m) => !m.read).length
+          if (unread > 0) sdk.badge.set(unread)
+          else sdk.badge.clear()
+        }
 
         // Background pre-fetch top 2 emails so opening them is instantaneous (0ms)
         const toPrefetch = res.messages.slice(0, 2)
@@ -139,12 +163,30 @@ export const EmailsPage: React.FC = () => {
     }
   }, [activeAccountId, activeFolder, loadEmails])
 
-  // 4. Real-time updates: listen to new incoming emails
+  // 4. Real-time updates: listen to new incoming emails and dispatch native OS notification
   useExtensionEvents({
     onEvent: (event: any) => {
       if (!event || event.eventType !== 'new_email') return
       const { accountId, subject, from } = event.data || {}
       console.log(`[momai-emails] Novo e-mail recebido: ${subject} de ${from}`)
+
+      // Check notification preferences (default unchecked unless user opted in)
+      const isNotifGloballyEnabled = localStorage.getItem('momai_emails_notifications_enabled') === 'true'
+      const isNotifAccountEnabled = accountId
+        ? localStorage.getItem(`momai_emails_notify_${accountId}`) === 'true'
+        : false
+      const fromStr =
+        typeof from === 'object'
+          ? from?.name || from?.address || 'Novo remetente'
+          : from || 'Novo remetente'
+
+      if (isNotifGloballyEnabled || isNotifAccountEnabled) {
+        sdk.notifications.send({
+          title: `Novo e-mail de ${fromStr}`,
+          body: subject || '(Sem assunto)',
+          action: 'momai-emails:open'
+        }).catch(() => {})
+      }
 
       // If the incoming email belongs to the active account, refresh inbox silently
       if (accountId === activeAccountId) {
@@ -152,6 +194,9 @@ export const EmailsPage: React.FC = () => {
           loadEmails(activeFolder, activeAccountId, true)
         }
         loadFolders(activeAccountId || undefined)
+      } else {
+        // Increment badge if incoming for another account or background
+        sdk.badge.set((prev: any) => (typeof prev === 'number' ? prev + 1 : 1))
       }
     }
   })
@@ -240,6 +285,11 @@ export const EmailsPage: React.FC = () => {
     if (selectedEmail?.id === id) {
       setSelectedEmail({ ...selectedEmail, read: true })
     }
+    if (activeFolder.toUpperCase() === 'INBOX') {
+      const remaining = messages.filter((m) => m.id !== id && !m.read).length
+      if (remaining > 0) sdk.badge.set(remaining)
+      else sdk.badge.clear()
+    }
     // Update folder cache
     const cacheKey = `${activeAccountId}:${activeFolder}`
     const cached = folderCacheRef.current.get(cacheKey)
@@ -257,6 +307,10 @@ export const EmailsPage: React.FC = () => {
       setSelectedEmail({ ...selectedEmail, read: false })
       setSelectedEmail(null) // Return to list if marked unread from reader
     }
+    if (activeFolder.toUpperCase() === 'INBOX') {
+      const remaining = messages.filter((m) => m.id === id || !m.read).length
+      sdk.badge.set(remaining)
+    }
     // Update folder cache
     const cacheKey = `${activeAccountId}:${activeFolder}`
     const cached = folderCacheRef.current.get(cacheKey)
@@ -270,6 +324,11 @@ export const EmailsPage: React.FC = () => {
     setMessages((prev) => prev.filter((m) => m.id !== id))
     if (selectedEmail?.id === id) {
       setSelectedEmail(null)
+    }
+    if (activeFolder.toUpperCase() === 'INBOX') {
+      const remaining = messages.filter((m) => m.id !== id && !m.read).length
+      if (remaining > 0) sdk.badge.set(remaining)
+      else sdk.badge.clear()
     }
     // Update folder cache
     const cacheKey = `${activeAccountId}:${activeFolder}`

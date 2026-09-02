@@ -87,6 +87,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
   const [name, setName] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [rememberCredentials, setRememberCredentials] = useState(true)
+  const [notifyOnNewEmails, setNotifyOnNewEmails] = useState(false)
 
   // Custom IMAP/SMTP fields
   const [imapHost, setImapHost] = useState('')
@@ -248,6 +249,13 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
           })
           setSavedProfiles(updated)
         }
+
+        // Save notification preference for new incoming emails
+        try {
+          localStorage.setItem('momai_emails_notifications_enabled', notifyOnNewEmails ? 'true' : 'false')
+          localStorage.setItem(`momai_emails_notify_${email.trim().toLowerCase()}`, notifyOnNewEmails ? 'true' : 'false')
+        } catch {}
+
         setSuccess(true)
       }
     } catch (err: any) {
@@ -637,8 +645,8 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
             </div>
           )}
 
-          {/* Checklist simples à esquerda para guardar a senha */}
-          <div className="pt-1 pb-1">
+          {/* Checklists à esquerda */}
+          <div className="pt-1 pb-1 space-y-2">
             <label className="flex items-center gap-2.5 text-xs text-text cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -647,6 +655,16 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
                 className="w-4 h-4 rounded border-border text-accent focus:ring-accent accent-accent"
               />
               <span>Guardar senha com segurança para reconexão automática</span>
+            </label>
+
+            <label className="flex items-center gap-2.5 text-xs text-text cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={notifyOnNewEmails}
+                onChange={(e) => setNotifyOnNewEmails(e.target.checked)}
+                className="w-4 h-4 rounded border-border text-accent focus:ring-accent accent-accent"
+              />
+              <span>Receber notificações no sistema ao chegar novos e-mails</span>
             </label>
           </div>
 

@@ -9,6 +9,13 @@ declare module 'momai:sdk' {
     registry: {
       registerRenderer: (type: string, component: any) => void
     }
+    notifications: {
+      send: (opts: { title: string; body?: string; action?: string }) => Promise<void>
+    }
+    badge: {
+      set: (countOrOpts: any, extId?: string) => void
+      clear: (extId?: string) => void
+    }
     [key: string]: any
   }
   export default sdk
