@@ -1,7 +1,7 @@
 // src/page.tsx
 // Main application page for MomAI E-mails extension
 
-import React, { useState, useEffect, useCallback, useTransition } from 'react'
+import React, { useState, useEffect, useCallback, useTransition, useRef } from 'react'
 import sdk from 'momai:sdk'
 import { useExtensionEvents } from 'momai:events'
 import { emailApi } from './services/api'
@@ -15,6 +15,10 @@ import { EmailComposer } from './components/EmailComposer'
 
 export const EmailsPage: React.FC = () => {
   const [, startTransition] = useTransition()
+
+  // In-memory SWR caches for 0ms transitions
+  const folderCacheRef = useRef<Map<string, EmailMessage[]>>(new Map())
+  const emailBodyCacheRef = useRef<Map<string, EmailMessage>>(new Map())
 
   // Accounts state
   const [accounts, setAccounts] = useState<PublicEmailAccount[]>([])
@@ -84,20 +88,46 @@ export const EmailsPage: React.FC = () => {
     }
   }, [activeAccountId, loadFolders])
 
-  // 3. Load emails when active folder or account changes
-  const loadEmails = useCallback(async (folder = 'INBOX', accId = activeAccountId) => {
+  // 3. Load emails with SWR (0ms instant display from cache, background refresh)
+  const loadEmails = useCallback(async (folder = 'INBOX', accId = activeAccountId, silent = false) => {
     if (!accId) return
-    setLoadingMessages(true)
+    const cacheKey = `${accId}:${folder}`
+    const cached = folderCacheRef.current.get(cacheKey)
+
+    // SWR: If cached, display immediately in 0ms!
+    if (cached && cached.length > 0) {
+      setMessages(cached)
+      setLoadingMessages(false)
+    } else if (!silent) {
+      setLoadingMessages(true)
+    }
     setMessagesError(null)
+
     try {
       const res = await emailApi.listEmails(folder, accId)
-      if (res && res.ok) {
-        setMessages(res.messages || [])
-      } else {
+      if (res && res.ok && Array.isArray(res.messages)) {
+        folderCacheRef.current.set(cacheKey, res.messages)
+        setMessages(res.messages)
+
+        // Background pre-fetch top 2 emails so opening them is instantaneous (0ms)
+        const toPrefetch = res.messages.slice(0, 2)
+        for (const item of toPrefetch) {
+          const bodyKey = `${accId}:${item.id}`
+          if (!emailBodyCacheRef.current.has(bodyKey)) {
+            emailApi.readEmail(item.id, folder, accId).then((r) => {
+              if (r?.ok && r.email) {
+                emailBodyCacheRef.current.set(bodyKey, r.email)
+              }
+            }).catch(() => {})
+          }
+        }
+      } else if (!cached) {
         setMessagesError('Não foi possível carregar as mensagens.')
       }
     } catch (err: any) {
-      setMessagesError(err?.message || 'Erro de conexão ao carregar e-mails.')
+      if (!cached) {
+        setMessagesError(err?.message || 'Erro de conexão ao carregar e-mails.')
+      }
     } finally {
       setLoadingMessages(false)
     }
@@ -113,16 +143,15 @@ export const EmailsPage: React.FC = () => {
   useExtensionEvents({
     onEvent: (event: any) => {
       if (!event || event.eventType !== 'new_email') return
-      const { accountId, messageId, subject, from } = event.data || {}
+      const { accountId, subject, from } = event.data || {}
       console.log(`[momai-emails] Novo e-mail recebido: ${subject} de ${from}`)
 
-      // If the incoming email belongs to the active account and we are in INBOX, refresh
-      if (accountId === activeAccountId && activeFolder.toUpperCase() === 'INBOX') {
-        loadEmails(activeFolder, activeAccountId)
-      }
-      // Update folders counters
-      if (activeAccountId) {
-        loadFolders(activeAccountId)
+      // If the incoming email belongs to the active account, refresh inbox silently
+      if (accountId === activeAccountId) {
+        if (activeFolder.toUpperCase() === 'INBOX') {
+          loadEmails(activeFolder, activeAccountId, true)
+        }
+        loadFolders(activeAccountId || undefined)
       }
     }
   })
@@ -152,13 +181,28 @@ export const EmailsPage: React.FC = () => {
     }
   }
 
-  // 6. Message actions
+  // 6. Message actions (Instant 0ms opening via body cache + optimistic UI updates)
   const handleSelectEmail = async (msg: EmailMessage) => {
+    const accId = activeAccountId || undefined
+    const cacheKey = `${accId}:${msg.id}`
+    const cached = emailBodyCacheRef.current.get(cacheKey)
+
+    // SWR: If full email body is in cache, open immediately in 0ms!
+    if (cached) {
+      setSelectedEmail(cached)
+      setLoadingEmailContent(false)
+      if (!msg.read) {
+        handleMarkRead(msg.id)
+      }
+      return
+    }
+
     setSelectedEmail(msg)
     setLoadingEmailContent(true)
     try {
-      const res = await emailApi.readEmail(msg.id, activeFolder, activeAccountId || undefined)
+      const res = await emailApi.readEmail(msg.id, activeFolder, accId)
       if (res.ok && res.email) {
+        emailBodyCacheRef.current.set(cacheKey, res.email)
         setSelectedEmail(res.email)
         // Mark as read in local list state
         setMessages((prev) =>
@@ -180,7 +224,13 @@ export const EmailsPage: React.FC = () => {
     if (selectedEmail?.id === id) {
       setSelectedEmail({ ...selectedEmail, starred: newStarred })
     }
-    await emailApi.toggleStarred(id, newStarred, activeFolder, activeAccountId || undefined)
+    // Update folder cache
+    const cacheKey = `${activeAccountId}:${activeFolder}`
+    const cached = folderCacheRef.current.get(cacheKey)
+    if (cached) {
+      folderCacheRef.current.set(cacheKey, cached.map((m) => (m.id === id ? { ...m, starred: newStarred } : m)))
+    }
+    emailApi.toggleStarred(id, newStarred, activeFolder, activeAccountId || undefined).catch(() => {})
   }
 
   const handleMarkRead = async (id: string) => {
@@ -190,7 +240,13 @@ export const EmailsPage: React.FC = () => {
     if (selectedEmail?.id === id) {
       setSelectedEmail({ ...selectedEmail, read: true })
     }
-    await emailApi.markAsRead(id, activeFolder, activeAccountId || undefined)
+    // Update folder cache
+    const cacheKey = `${activeAccountId}:${activeFolder}`
+    const cached = folderCacheRef.current.get(cacheKey)
+    if (cached) {
+      folderCacheRef.current.set(cacheKey, cached.map((m) => (m.id === id ? { ...m, read: true } : m)))
+    }
+    emailApi.markAsRead(id, activeFolder, activeAccountId || undefined).catch(() => {})
   }
 
   const handleMarkUnread = async (id: string) => {
@@ -201,7 +257,13 @@ export const EmailsPage: React.FC = () => {
       setSelectedEmail({ ...selectedEmail, read: false })
       setSelectedEmail(null) // Return to list if marked unread from reader
     }
-    await emailApi.markAsUnread(id, activeFolder, activeAccountId || undefined)
+    // Update folder cache
+    const cacheKey = `${activeAccountId}:${activeFolder}`
+    const cached = folderCacheRef.current.get(cacheKey)
+    if (cached) {
+      folderCacheRef.current.set(cacheKey, cached.map((m) => (m.id === id ? { ...m, read: false } : m)))
+    }
+    emailApi.markAsUnread(id, activeFolder, activeAccountId || undefined).catch(() => {})
   }
 
   const handleDelete = async (id: string) => {
@@ -209,7 +271,13 @@ export const EmailsPage: React.FC = () => {
     if (selectedEmail?.id === id) {
       setSelectedEmail(null)
     }
-    await emailApi.deleteEmail(id, activeFolder, activeAccountId || undefined)
+    // Update folder cache
+    const cacheKey = `${activeAccountId}:${activeFolder}`
+    const cached = folderCacheRef.current.get(cacheKey)
+    if (cached) {
+      folderCacheRef.current.set(cacheKey, cached.filter((m) => m.id !== id))
+    }
+    emailApi.deleteEmail(id, activeFolder, activeAccountId || undefined).catch(() => {})
   }
 
   const handleBatchDelete = async (ids: string[]) => {
