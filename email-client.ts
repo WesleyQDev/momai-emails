@@ -155,32 +155,35 @@ async function testAccountConnection(account: any): Promise<ConnectionTestResult
 async function listMailboxes(account: any) {
   const client = await getConnectedImapClient(account)
   const list = await client.list()
-  const folders: any[] = []
-  for (const item of list) {
-    if (item.flags && item.flags.has('\\Noselect')) continue
-    let role = 'custom'
-    const special = item.specialUse || ''
-    const pathLower = item.path.toLowerCase()
-    if (special === '\\Inbox' || pathLower === 'inbox') role = 'inbox'
-    else if (special === '\\Sent' || pathLower.includes('sent') || pathLower.includes('enviad')) role = 'sent'
-    else if (special === '\\Drafts' || pathLower.includes('draft') || pathLower.includes('rascunh')) role = 'drafts'
-    else if (special === '\\Trash' || pathLower.includes('trash') || pathLower.includes('lixeir')) role = 'trash'
-    else if (special === '\\Junk' || pathLower.includes('junk') || pathLower.includes('spam')) role = 'junk'
-    else if (special === '\\Archive' || pathLower.includes('archiv') || pathLower.includes('arquivo')) role = 'archive'
+  const validItems = list.filter((item: any) => !(item.flags && item.flags.has('\\Noselect')))
 
-    let status = { unseen: 0, messages: 0 }
-    try {
-      status = await client.status(item.path, { unseen: true, messages: true })
-    } catch {}
+  const folders = await Promise.all(
+    validItems.map(async (item: any) => {
+      let role = 'custom'
+      const special = item.specialUse || ''
+      const pathLower = item.path.toLowerCase()
+      if (special === '\\Inbox' || pathLower === 'inbox') role = 'inbox'
+      else if (special === '\\Sent' || pathLower.includes('sent') || pathLower.includes('enviad')) role = 'sent'
+      else if (special === '\\Drafts' || pathLower.includes('draft') || pathLower.includes('rascunh')) role = 'drafts'
+      else if (special === '\\Trash' || pathLower.includes('trash') || pathLower.includes('lixeir')) role = 'trash'
+      else if (special === '\\Junk' || pathLower.includes('junk') || pathLower.includes('spam')) role = 'junk'
+      else if (special === '\\Archive' || pathLower.includes('archiv') || pathLower.includes('arquivo')) role = 'archive'
 
-    folders.push({
-      path: item.path,
-      name: item.name,
-      role,
-      unreadCount: status.unseen || 0,
-      totalCount: status.messages || 0
+      let status = { unseen: 0, messages: 0 }
+      try {
+        status = await client.status(item.path, { unseen: true, messages: true })
+      } catch {}
+
+      return {
+        path: item.path,
+        name: item.name,
+        role,
+        unreadCount: status.unseen || 0,
+        totalCount: status.messages || 0
+      }
     })
-  }
+  )
+
   folders.sort((a, b) => {
     if (a.role === 'inbox') return -1
     if (b.role === 'inbox') return 1
@@ -208,7 +211,7 @@ async function fetchMessages(account: any, folder = 'INBOX', limit = 25, unreadO
       const targetUids = uids.slice(0, limit)
       for await (const msg of client.fetch(
         targetUids.join(','),
-        { uid: true, envelope: true, flags: true, bodyStructure: true, size: true },
+        { uid: true, envelope: true, flags: true, bodyStructure: false, size: true },
         { uid: true }
       )) {
         const env = msg.envelope || {}
@@ -234,7 +237,7 @@ async function fetchMessages(account: any, folder = 'INBOX', limit = 25, unreadO
       const range = `${startSeq}:*`
       for await (const msg of client.fetch(
         range,
-        { uid: true, envelope: true, flags: true, bodyStructure: true, size: true },
+        { uid: true, envelope: true, flags: true, bodyStructure: false, size: true },
         { uid: false }
       )) {
         const env = msg.envelope || {}
