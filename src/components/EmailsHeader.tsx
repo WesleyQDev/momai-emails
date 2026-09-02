@@ -67,26 +67,29 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
 
   const providerConfig = PROVIDERS[providerId] || PROVIDERS.custom
 
-  // User avatar state (loaded from storage if user uploaded, otherwise dynamic Gmail Material initial)
-  const [customAvatar, setCustomAvatar] = useState<string | null>(() => {
-    if (!activeAccount) return null
-    try {
-      return localStorage.getItem(`momai_emails_avatar_${activeAccount.id}`) || null
-    } catch {
-      return null
+  // Avatars map: stores custom uploaded avatar per account id
+  const [avatarMap, setAvatarMap] = useState<Record<string, string>>(() => {
+    const map: Record<string, string> = {}
+    for (const acc of accounts) {
+      try {
+        const saved = localStorage.getItem(`momai_emails_avatar_${acc.id}`)
+        if (saved) map[acc.id] = saved
+      } catch {}
     }
+    return map
   })
 
-  // Sync avatar when active account changes
+  // Sync avatar map when accounts change
   useEffect(() => {
-    if (!activeAccount) return
-    try {
-      const saved = localStorage.getItem(`momai_emails_avatar_${activeAccount.id}`)
-      setCustomAvatar(saved || null)
-    } catch {
-      setCustomAvatar(null)
+    const map: Record<string, string> = {}
+    for (const acc of accounts) {
+      try {
+        const saved = localStorage.getItem(`momai_emails_avatar_${acc.id}`)
+        if (saved) map[acc.id] = saved
+      } catch {}
     }
-  }, [activeAccount?.id])
+    setAvatarMap(map)
+  }, [accounts.map((a) => a.id).join(',')])
 
   // Close dropdown on click outside
   useEffect(() => {
@@ -103,19 +106,23 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
     }
   }, [dropdownOpen])
 
-  // Handle local avatar upload
+  // Handle local avatar upload for any account
+  const uploadTargetRef = useRef<string | null>(null)
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (!file || !activeAccount) return
+    const targetId = uploadTargetRef.current || activeAccount?.id
+    if (!file || !targetId) return
     const reader = new FileReader()
     reader.onload = () => {
       const base64 = reader.result as string
-      setCustomAvatar(base64)
+      setAvatarMap((prev) => ({ ...prev, [targetId]: base64 }))
       try {
-        localStorage.setItem(`momai_emails_avatar_${activeAccount.id}`, base64)
+        localStorage.setItem(`momai_emails_avatar_${targetId}`, base64)
       } catch {}
     }
     reader.readAsDataURL(file)
+    // Reset file input so same file can be re-selected
+    e.target.value = ''
   }
 
   const renderProviderIcon = (sizeClass = 'w-6 h-6') => {
@@ -134,6 +141,7 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
 
   const activeInitial = activeAccount?.email ? activeAccount.email.charAt(0).toUpperCase() : '?'
   const avatarBg = GMAIL_PALETTE[activeInitial] || '#1A73E8'
+  const activeAvatar = activeAccount ? avatarMap[activeAccount.id] : null
 
   return (
     <header className="flex items-center justify-between border-b border-border bg-sidebar/70 backdrop-blur-xs px-5 py-2.5 select-none relative z-30">
@@ -167,9 +175,9 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
           className="relative rounded-full focus:outline-hidden group cursor-pointer transition-transform active:scale-95 block"
           title={`${activeAccount?.name || activeAccount?.email || 'Perfil'} (Clique para alternar contas)`}
         >
-          {customAvatar ? (
+          {activeAvatar ? (
             <img
-              src={customAvatar}
+              src={activeAvatar}
               alt="Perfil"
               className="w-8 h-8 rounded-full object-cover shadow-xs"
             />
@@ -191,13 +199,16 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
               <div className="p-3 rounded-xl bg-input/40 border border-border flex items-center gap-3 relative group/avatar">
                 {/* Clickable avatar with change photo icon */}
                 <div
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={() => {
+                    uploadTargetRef.current = activeAccount?.id || null
+                    fileInputRef.current?.click()
+                  }}
                   className="relative cursor-pointer shrink-0"
                   title="Carregar foto personalizada de perfil"
                 >
-                  {customAvatar ? (
+                  {activeAvatar ? (
                     <img
-                      src={customAvatar}
+                      src={activeAvatar}
                       alt="Perfil"
                       className="w-12 h-12 rounded-full object-cover shadow-xs"
                     />
@@ -212,13 +223,6 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
                   <div className="absolute inset-0 bg-black/40 rounded-full opacity-0 group-hover/avatar:opacity-100 flex items-center justify-center transition-opacity text-white">
                     <CameraIcon className="w-4 h-4" />
                   </div>
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    onChange={handleAvatarChange}
-                    accept="image/*"
-                    className="hidden"
-                  />
                 </div>
 
                 <div className="flex-1 min-w-0">
@@ -244,6 +248,7 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
                     .map((acc) => {
                       const initial = acc.email.charAt(0).toUpperCase()
                       const accBg = GMAIL_PALETTE[initial] || '#1A73E8'
+                      const accAvatar = avatarMap[acc.id]
                       return (
                         <div
                           key={acc.id}
@@ -254,12 +259,20 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
                           className="group flex items-center justify-between p-2 rounded-xl hover:bg-input border border-transparent hover:border-border cursor-pointer transition-colors"
                         >
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <div
-                              className="w-8 h-8 rounded-full font-bold text-white text-xs flex items-center justify-center shrink-0 shadow-xs"
-                              style={{ backgroundColor: accBg }}
-                            >
-                              {initial}
-                            </div>
+                            {accAvatar ? (
+                              <img
+                                src={accAvatar}
+                                alt={acc.email}
+                                className="w-8 h-8 rounded-full object-cover shrink-0 shadow-xs"
+                              />
+                            ) : (
+                              <div
+                                className="w-8 h-8 rounded-full font-bold text-white text-xs flex items-center justify-center shrink-0 shadow-xs"
+                                style={{ backgroundColor: accBg }}
+                              >
+                                {initial}
+                              </div>
+                            )}
                             <div className="flex flex-col min-w-0 text-left">
                               <span className="font-medium text-text truncate max-w-[150px]">
                                 {acc.name || acc.email}
@@ -324,6 +337,15 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
           </div>
         )}
       </div>
+
+      {/* Hidden file input for avatar upload (shared for all accounts) */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleAvatarChange}
+        accept="image/*"
+        className="hidden"
+      />
     </header>
   )
 }
