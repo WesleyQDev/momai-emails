@@ -111,8 +111,8 @@ export const EmailsPage: React.FC = () => {
 
   // 4. Real-time updates: listen to new incoming emails
   useExtensionEvents({
-    eventType: 'new_email',
-    onEvent: (event) => {
+    onEvent: (event: any) => {
+      if (!event || event.eventType !== 'new_email') return
       const { accountId, messageId, subject, from } = event.data || {}
       console.log(`[momai-emails] Novo e-mail recebido: ${subject} de ${from}`)
 

@@ -3,13 +3,35 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
-const { encryptForStorage, decryptFromStorage } = require('../../secure-storage-bridge.ts')
+const bridgePath = [
+  path.resolve(__dirname, '../../secure-storage-bridge.ts'),
+  path.resolve(__dirname, '../secure-storage-bridge.ts'),
+  path.resolve(__dirname, 'secure-storage-bridge.ts'),
+  path.resolve(process.cwd(), 'secure-storage-bridge.ts')
+].find((p) => fs.existsSync(p)) || path.resolve(__dirname, 'secure-storage-bridge.ts')
 
-import type { EmailAccountConfig, PublicEmailAccount, EmailMessage } from './types'
-import { PROVIDERS, detectProviderFromEmail, type ProviderId } from './providers'
-import { testAccountConnection, fetchMessages, fetchFullMessage } from './email-client'
+const providersPath = [
+  path.resolve(__dirname, 'providers.ts'),
+  path.resolve(__dirname, 'src/services/providers.ts'),
+  path.resolve(process.cwd(), 'src/services/providers.ts')
+].find((p) => fs.existsSync(p)) || path.resolve(__dirname, 'providers.ts')
 
-export class AccountManager {
+const emailClientPath = [
+  path.resolve(__dirname, 'email-client.ts'),
+  path.resolve(__dirname, 'src/services/email-client.ts'),
+  path.resolve(process.cwd(), 'src/services/email-client.ts')
+].find((p) => fs.existsSync(p)) || path.resolve(__dirname, 'email-client.ts')
+
+const { encryptForStorage, decryptFromStorage } = require(bridgePath)
+const { PROVIDERS, detectProviderFromEmail } = require(providersPath)
+const { testAccountConnection, fetchMessages, fetchFullMessage } = require(emailClientPath)
+
+type EmailAccountConfig = import('./types').EmailAccountConfig
+type PublicEmailAccount = import('./types').PublicEmailAccount
+type EmailMessage = import('./types').EmailMessage
+type ProviderId = import('./providers').ProviderId
+
+class AccountManager {
   private storageDir: string
   private accountsFile: string
   private accounts: Map<string, EmailAccountConfig> = new Map()
@@ -196,7 +218,7 @@ export class AccountManager {
         const messages = await fetchMessages(acc, 'INBOX', 5, false)
         if (messages.length === 0) continue
 
-        const latestUid = Math.max(...messages.map((m) => m.uid))
+        const latestUid = Math.max(...messages.map((m: EmailMessage) => m.uid))
         const prevSeen = this.lastSeenUids.get(accId)
 
         if (prevSeen === undefined) {
@@ -206,7 +228,7 @@ export class AccountManager {
 
         if (latestUid > prevSeen) {
           // We have new incoming messages!
-          const newMessages = messages.filter((m) => m.uid > prevSeen)
+          const newMessages = messages.filter((m: EmailMessage) => m.uid > prevSeen)
           this.lastSeenUids.set(accId, latestUid)
 
           for (const msg of newMessages) {
@@ -223,3 +245,11 @@ export class AccountManager {
     }
   }
 }
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { AccountManager }
+}
+
+export { AccountManager }
+
+

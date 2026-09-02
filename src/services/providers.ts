@@ -125,3 +125,9 @@ export function detectProviderFromEmail(email: string): ProviderId {
   if (domain.includes('yahoo.com') || domain.includes('yahoo.com.br') || domain.includes('ymail.com')) return 'yahoo'
   return 'custom'
 }
+
+const _mod = typeof module !== 'undefined' ? module : null
+if (_mod && _mod.exports) {
+  _mod.exports = { PROVIDERS, detectProviderFromEmail }
+}
+

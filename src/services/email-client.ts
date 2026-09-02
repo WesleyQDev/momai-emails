@@ -5,9 +5,12 @@ const { ImapFlow } = require('imapflow')
 const nodemailer = require('nodemailer')
 const { simpleParser } = require('mailparser')
 
-import type { EmailAccountConfig, EmailMessage, EmailFolder, SendEmailPayload } from './types'
+type EmailAccountConfig = import('./types').EmailAccountConfig
+type EmailMessage = import('./types').EmailMessage
+type EmailFolder = import('./types').EmailFolder
+type SendEmailPayload = import('./types').SendEmailPayload
 
-export interface ConnectionTestResult {
+interface ConnectionTestResult {
   ok: boolean
   imapOk: boolean
   smtpOk: boolean
@@ -17,7 +20,7 @@ export interface ConnectionTestResult {
 /**
  * Creates an ImapFlow client instance for the specified account.
  */
-export function createImapClient(account: EmailAccountConfig, logger = false) {
+function createImapClient(account: EmailAccountConfig, logger = false) {
   const username = account.imap.user || account.email
   const password = account.password || ''
   return new ImapFlow({
@@ -39,7 +42,7 @@ export function createImapClient(account: EmailAccountConfig, logger = false) {
 /**
  * Creates a Nodemailer transporter for the specified account.
  */
-export function createSmtpTransporter(account: EmailAccountConfig) {
+function createSmtpTransporter(account: EmailAccountConfig) {
   const username = account.smtp.user || account.email
   const password = account.password || ''
   return nodemailer.createTransport({
@@ -59,7 +62,7 @@ export function createSmtpTransporter(account: EmailAccountConfig) {
 /**
  * Test both IMAP and SMTP connections for an account.
  */
-export async function testAccountConnection(account: EmailAccountConfig): Promise<ConnectionTestResult> {
+async function testAccountConnection(account: EmailAccountConfig): Promise<ConnectionTestResult> {
   let imapOk = false
   let smtpOk = false
   let errorMsg = ''
@@ -91,7 +94,7 @@ export async function testAccountConnection(account: EmailAccountConfig): Promis
 /**
  * List folders/mailboxes for an account.
  */
-export async function listMailboxes(account: EmailAccountConfig): Promise<EmailFolder[]> {
+async function listMailboxes(account: EmailAccountConfig): Promise<EmailFolder[]> {
   const client = createImapClient(account)
   await client.connect()
   try {
@@ -137,7 +140,7 @@ export async function listMailboxes(account: EmailAccountConfig): Promise<EmailF
 /**
  * Fetch messages list from a mailbox.
  */
-export async function fetchMessages(
+async function fetchMessages(
   account: EmailAccountConfig,
   folder = 'INBOX',
   limit = 25,
@@ -206,7 +209,7 @@ export async function fetchMessages(
 /**
  * Fetch full message details including parsed body (HTML/Text) and attachments.
  */
-export async function fetchFullMessage(
+async function fetchFullMessage(
   account: EmailAccountConfig,
   uidOrMessageId: string | number,
   folder = 'INBOX'
@@ -285,7 +288,7 @@ export async function fetchFullMessage(
 /**
  * Search emails by query (from, to, subject, body).
  */
-export async function searchMessages(
+async function searchMessages(
   account: EmailAccountConfig,
   query: string,
   folder = 'INBOX',
@@ -348,7 +351,7 @@ export async function searchMessages(
 /**
  * Send an email via SMTP.
  */
-export async function sendEmail(
+async function sendEmail(
   account: EmailAccountConfig,
   payload: SendEmailPayload
 ): Promise<{ ok: boolean; messageId?: string; error?: string }> {
@@ -385,7 +388,7 @@ export async function sendEmail(
 /**
  * Mark a message as read or unread.
  */
-export async function setMessageReadStatus(
+async function setMessageReadStatus(
   account: EmailAccountConfig,
   uid: number,
   read: boolean,
@@ -413,7 +416,7 @@ export async function setMessageReadStatus(
 /**
  * Toggle starred flag on a message.
  */
-export async function setMessageStarredStatus(
+async function setMessageStarredStatus(
   account: EmailAccountConfig,
   uid: number,
   starred: boolean,
@@ -441,7 +444,7 @@ export async function setMessageStarredStatus(
 /**
  * Delete a message (move to Trash if available, otherwise add \\Deleted flag).
  */
-export async function deleteMessage(
+async function deleteMessage(
   account: EmailAccountConfig,
   uid: number,
   folder = 'INBOX'
@@ -472,7 +475,7 @@ export async function deleteMessage(
 /**
  * Move message between mailboxes.
  */
-export async function moveMessage(
+async function moveMessage(
   account: EmailAccountConfig,
   uid: number,
   fromFolder: string,
@@ -492,3 +495,36 @@ export async function moveMessage(
     await client.logout().catch(() => {})
   }
 }
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    createImapClient,
+    createSmtpTransporter,
+    testAccountConnection,
+    listMailboxes,
+    fetchMessages,
+    fetchFullMessage,
+    searchMessages,
+    sendEmail,
+    setMessageReadStatus,
+    setMessageStarredStatus,
+    deleteMessage,
+    moveMessage
+  }
+}
+
+export {
+  createImapClient,
+  createSmtpTransporter,
+  testAccountConnection,
+  listMailboxes,
+  fetchMessages,
+  fetchFullMessage,
+  searchMessages,
+  sendEmail,
+  setMessageReadStatus,
+  setMessageStarredStatus,
+  deleteMessage,
+  moveMessage
+}
+
