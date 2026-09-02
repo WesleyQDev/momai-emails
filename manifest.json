@@ -208,7 +208,6 @@
     }
   ],
   "routes": [
-    { "method": "POST", "path": "/command", "tool": "command" },
     { "method": "GET", "path": "/accounts", "tool": "list_accounts" },
     { "method": "POST", "path": "/accounts/add", "tool": "add_account" },
     { "method": "POST", "path": "/accounts/remove", "tool": "remove_account" },

@@ -88,6 +88,15 @@ accountManager.initialize()
  */
 async function executeTool(toolName: string, args: any = {}): Promise<any> {
   switch (toolName) {
+    case 'command': {
+      const actualTool = args?.toolName || args?.tool
+      const actualArgs = args?.args || args
+      if (actualTool && actualTool !== 'command') {
+        return executeTool(actualTool, actualArgs)
+      }
+      return { ok: false, error: 'Ferramenta ausente no comando.' }
+    }
+
     // ── Account Management ──
     case 'list_accounts': {
       const accounts = accountManager.getPublicAccounts()
