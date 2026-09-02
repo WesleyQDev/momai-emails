@@ -30,6 +30,25 @@ export const FOLDER_TRANSLATIONS: Record<string, string> = {
   arquivo: 'Arquivo'
 }
 
+export const CATEGORY_TRANSLATIONS: Record<string, { label: string; description: string }> = {
+  primary: {
+    label: 'Principal',
+    description: 'Conversas pessoais e e-mails diretos'
+  },
+  promotions: {
+    label: 'Promoções',
+    description: 'Ofertas, novidades e e-mails de marketing'
+  },
+  social: {
+    label: 'Social',
+    description: 'Mensagens de redes sociais e mídias'
+  },
+  updates: {
+    label: 'Atualizações',
+    description: 'Notificações, confirmações e recibos'
+  }
+}
+
 /**
  * Format folder name for user-facing UI in pt-BR
  */

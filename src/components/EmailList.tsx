@@ -5,15 +5,20 @@ import React, { useState, useRef, useEffect, useCallback } from 'react'
 import {
   StarIcon as StarSolid,
   ArrowPathIcon,
-  MagnifyingGlassIcon,
   TrashIcon,
+  MagnifyingGlassIcon,
   EnvelopeOpenIcon,
   EnvelopeIcon,
+  InboxIcon,
+  TagIcon,
+  UserGroupIcon,
+  InformationCircleIcon,
   CheckCircleIcon
-} from '@heroicons/react/24/solid'
+} from '@heroicons/react/24/outline'
 import { StarIcon as StarOutline } from '@heroicons/react/24/outline'
-import { EmailAvatar } from './EmailAvatar'
 import type { EmailMessage } from '../services/types'
+import { EmailAvatar } from './EmailAvatar'
+import { CATEGORY_TRANSLATIONS } from '../services/i18n'
 
 interface EmailListProps {
   messages: EmailMessage[]
@@ -58,8 +63,14 @@ export const EmailList: React.FC<EmailListProps> = ({
 }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [unreadOnly, setUnreadOnly] = useState(false)
+  const [activeCategory, setActiveCategory] = useState<'primary' | 'promotions' | 'social' | 'updates'>('primary')
   const scrollRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
+
+  // Reset category when folder changes
+  useEffect(() => {
+    setActiveCategory('primary')
+  }, [activeFolder])
 
   // Infinite scroll: IntersectionObserver on sentinel at bottom of list
   useEffect(() => {
@@ -94,8 +105,43 @@ export const EmailList: React.FC<EmailListProps> = ({
     setSelectedIds(next)
   }
 
-  // Filter only by unreadOnly toggle; search is now server-side
-  const filteredMessages = unreadOnly ? messages.filter((m) => !m.read) : messages
+  // Gmail-style category classification (heuristic, client-side)
+  const classifyEmail = useCallback((msg: EmailMessage): 'primary' | 'promotions' | 'social' | 'updates' => {
+    const from = (msg.from?.address || '').toLowerCase()
+    const name = (msg.from?.name || '').toLowerCase()
+    const subject = (msg.subject || '').toLowerCase()
+
+    // Social: social networks, forums, communities
+    const socialDomains = ['facebook', 'twitter', 'linkedin', 'instagram', 'tiktok', 'pinterest', 'reddit', 'discord', 'slack', 'whatsapp', 'telegram', 'snapchat', 'youtube', 'twitch', 'github', 'gitlab', 'meetup', 'quora', 'tumblr']
+    if (socialDomains.some((d) => from.includes(d))) return 'social'
+    const socialKeywords = ['friend request', 'solicitação de amizade', 'seguiu você', 'followed you', 'mentioned you', 'mencionou você', 'commented', 'comentou', 'liked', 'curtiu', 'shared', 'compartilhou', 'tagged', 'marcou', 'invite', 'convite', 'joined', 'entrou']
+    if (socialKeywords.some((k) => subject.includes(k) || name.includes(k))) return 'social'
+
+    // Promotions: marketing, deals, newsletters
+    const promoDomains = ['newsletter', 'marketing', 'promo', 'noreply', 'no-reply', 'news@', 'offers', 'deals', 'shop', 'store', 'sale', 'mailer', 'campaign', 'mailchimp', 'sendgrid', 'hubspot', 'mailgun']
+    if (promoDomains.some((d) => from.includes(d))) return 'promotions'
+    const promoKeywords = ['unsubscribe', 'cancelar inscrição', 'descadastrar', 'oferta', 'offer', 'promoção', 'promotion', 'desconto', 'discount', 'cupom', 'coupon', 'sale', 'deal', 'newsletter', 'black friday', 'frete grátis', 'free shipping', 'compre', 'buy now', 'limited time', 'tempo limitado', 'exclusivo', 'exclusive']
+    if (promoKeywords.some((k) => subject.includes(k))) return 'promotions'
+
+    // Updates: notifications, transactional, automated
+    const updateDomains = ['notify', 'notification', 'alert', 'update', 'security', 'account', 'billing', 'support', 'service', 'info@', 'system', 'admin', 'postmaster', 'mailer-daemon']
+    if (updateDomains.some((d) => from.includes(d))) return 'updates'
+    const updateKeywords = ['verificação', 'verification', 'confirmação', 'confirmation', 'senha', 'password', 'código', 'code', 'login', 'acesso', 'segurança', 'security', 'atualização', 'update', 'fatura', 'invoice', 'recibo', 'receipt', 'pagamento', 'payment', 'entrega', 'delivery', 'rastreio', 'tracking', 'pedido', 'order']
+    if (updateKeywords.some((k) => subject.includes(k))) return 'updates'
+
+    // Default: Primary (personal, direct correspondence)
+    return 'primary'
+  }, [])
+
+  // Filter by unreadOnly toggle + category (only in INBOX)
+  const isInbox = activeFolder.toLowerCase() === 'inbox'
+  const filteredMessages = React.useMemo(() => {
+    let msgs = unreadOnly ? messages.filter((m) => !m.read) : messages
+    if (isInbox) {
+      msgs = msgs.filter((m) => classifyEmail(m) === activeCategory)
+    }
+    return msgs
+  }, [messages, unreadOnly, isInbox, activeCategory, classifyEmail])
 
   const formatDate = (dateStr: string, timestamp: number) => {
     if (!timestamp) return ''
@@ -191,6 +237,47 @@ export const EmailList: React.FC<EmailListProps> = ({
           />
         </div>
       </div>
+
+      {/* Gmail Category Tabs: Principal, Promoções, Social, Atualizações (only in INBOX) */}
+      {isInbox && (
+        <div className="flex items-center border-b border-border bg-sidebar/20 select-none overflow-x-auto">
+          {([
+            { id: 'primary' as const, Icon: InboxIcon },
+            { id: 'promotions' as const, Icon: TagIcon },
+            { id: 'social' as const, Icon: UserGroupIcon },
+            { id: 'updates' as const, Icon: InformationCircleIcon }
+          ]).map(({ id, Icon }) => {
+            const isActive = activeCategory === id
+            const info = CATEGORY_TRANSLATIONS[id] || { label: id, description: '' }
+            const unreadCount = messages.filter((m) => classifyEmail(m) === id && !m.read).length
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setActiveCategory(id)}
+                title={info.description}
+                className={`flex items-center gap-2.5 px-6 py-3 text-xs font-medium border-b-2 transition-all relative shrink-0 ${
+                  isActive
+                    ? 'border-accent text-accent font-semibold bg-accent/5'
+                    : 'border-transparent text-text-muted hover:text-text hover:bg-input/40'
+                }`}
+              >
+                <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-accent' : 'text-text-muted'}`} />
+                <span>{info.label}</span>
+                {unreadCount > 0 && (
+                  <span
+                    className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold shrink-0 ${
+                      isActive ? 'bg-accent/20 text-accent' : 'bg-input text-text-muted'
+                    }`}
+                  >
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       {/* Error banner */}
       {error && (

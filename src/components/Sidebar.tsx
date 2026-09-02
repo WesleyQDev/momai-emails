@@ -83,7 +83,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {folders.length === 0 ? (
             <div className="px-3 py-2 text-xs text-text-muted italic">Carregando pastas...</div>
           ) : (
-            folders.map((f) => {
+            folders
+              .filter((f) => {
+                // Hide "All Mail" / "Todos os E-mails" folder
+                const lower = f.name.toLowerCase().replace(/^\[gmail\]\/?/i, '').trim()
+                const pathLower = f.path.toLowerCase().replace(/^\[gmail\]\/?/i, '').trim()
+                if (
+                  f.role === 'all' ||
+                  lower === 'all mail' ||
+                  lower === 'todos os e-mails' ||
+                  lower === 'todos os emails' ||
+                  lower === 'all' ||
+                  pathLower.includes('all mail') ||
+                  pathLower.includes('todos os e-mails') ||
+                  pathLower.includes('todos os emails')
+                ) {
+                  return false
+                }
+                return true
+              })
+              .map((f) => {
               const Icon = getFolderIcon(f.role, f.name)
               const displayName = formatFolderName(f.name, f.role)
               const isActive = activeFolder.toLowerCase() === f.path.toLowerCase()
