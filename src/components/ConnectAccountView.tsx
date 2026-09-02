@@ -1,5 +1,5 @@
 // src/components/ConnectAccountView.tsx
-// Full-page provider selection and account connection view matching the onboarding design
+// Full-page provider selection and account connection view
 
 import React, { useState } from 'react'
 import {
@@ -8,10 +8,7 @@ import {
   ExclamationCircleIcon,
   ArrowTopRightOnSquareIcon,
   EyeIcon,
-  EyeSlashIcon,
-  QuestionMarkCircleIcon,
-  LockClosedIcon,
-  ShieldCheckIcon
+  EyeSlashIcon
 } from '@heroicons/react/24/outline'
 import { GmailIcon, OutlookIcon, YahooIcon, CustomMailIcon } from './ProviderIcons'
 import { PROVIDERS, ProviderId, detectProviderFromEmail } from '../services/providers'
@@ -29,10 +26,10 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
 }) => {
   const [selectedProvider, setSelectedProvider] = useState<ProviderId | null>(null)
 
-  // Form states
-  const [name, setName] = useState('')
+  // Form states (ordered: Email -> Password -> Display Name)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [name, setName] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [rememberCredentials, setRememberCredentials] = useState(true)
 
@@ -122,7 +119,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
     }
   }
 
-  // 1. STEP 1: Provider selection grid (exactly matching the user drawing)
+  // 1. STEP 1: Provider selection grid (matching the user design)
   if (!selectedProvider) {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-bg text-text select-none animate-fade-in relative">
@@ -209,7 +206,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
     )
   }
 
-  // 2. STEP 2: Full-screen card view for the selected provider
+  // 2. STEP 2: Full-screen connection view (no nested card in card)
   const preset = PROVIDERS[selectedProvider]
   const providerNames: Record<ProviderId, string> = {
     gmail: 'Gmail',
@@ -220,398 +217,338 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
   }
 
   return (
-    <div className="w-full h-full flex flex-col bg-bg text-text overflow-y-auto p-4 md:p-8 animate-fade-in">
-      <div className="max-w-2xl w-full mx-auto space-y-6">
-        {/* Top Back Navigation */}
-        <button
-          type="button"
-          onClick={() => setSelectedProvider(null)}
-          className="inline-flex items-center gap-2 text-xs font-medium text-text-muted hover:text-text px-3 py-1.5 rounded-lg border border-border bg-card/40 hover:bg-card transition-colors"
-        >
-          <ArrowLeftIcon className="w-4 h-4" />
-          <span>Voltar para seleção de provedor</span>
-        </button>
+    <div className="w-full h-full flex flex-col bg-bg text-text overflow-y-auto p-6 md:p-10 animate-fade-in">
+      <div className="w-full max-w-2xl mx-auto flex-1 flex flex-col justify-start space-y-6">
+        {/* Top Header & Navigation */}
+        <div className="flex items-center justify-between pb-4 border-b border-border">
+          <button
+            type="button"
+            onClick={() => setSelectedProvider(null)}
+            className="inline-flex items-center gap-2 text-xs font-medium text-text-muted hover:text-text px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-input transition-colors"
+          >
+            <ArrowLeftIcon className="w-4 h-4" />
+            <span>Voltar</span>
+          </button>
 
-        {/* Card Container */}
-        <div className="bg-card border border-border rounded-2xl shadow-glass-md overflow-hidden p-6 md:p-8 space-y-6">
-          {/* Card Header with Provider Icon and Title */}
-          <div className="flex items-center gap-4 pb-6 border-b border-border">
-            <div className="w-14 h-14 shrink-0 rounded-xl bg-sidebar/50 border border-border flex items-center justify-center p-2">
-              {selectedProvider === 'gmail' && <GmailIcon className="w-10 h-10" />}
-              {selectedProvider === 'outlook' && <OutlookIcon className="w-10 h-10" />}
-              {selectedProvider === 'yahoo' && <YahooIcon className="w-10 h-10" />}
-              {selectedProvider === 'custom' && <CustomMailIcon className="w-10 h-10 text-text" />}
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-bold text-text uppercase tracking-wider">
+              {providerNames[selectedProvider]}
+            </span>
+            <div className="w-8 h-8 rounded-lg bg-card border border-border flex items-center justify-center p-1">
+              {selectedProvider === 'gmail' && <GmailIcon className="w-6 h-6" />}
+              {selectedProvider === 'outlook' && <OutlookIcon className="w-6 h-6" />}
+              {selectedProvider === 'yahoo' && <YahooIcon className="w-6 h-6" />}
+              {selectedProvider === 'custom' && <CustomMailIcon className="w-6 h-6 text-text" />}
             </div>
+          </div>
+        </div>
+
+        {/* Title */}
+        <div>
+          <h2 className="text-2xl font-bold text-text">
+            Conectar conta {providerNames[selectedProvider]}
+          </h2>
+          <p className="text-xs text-text-muted mt-1">
+            {preset.description}
+          </p>
+        </div>
+
+        {/* Error Notification */}
+        {error && (
+          <div className="p-3.5 rounded-xl bg-input/60 border border-border text-xs text-text flex items-start gap-2.5">
+            <ExclamationCircleIcon className="w-4 h-4 text-accent shrink-0 mt-0.5" />
             <div>
-              <h2 className="text-xl md:text-2xl font-bold text-text">
-                Conectar conta {providerNames[selectedProvider]}
-              </h2>
-              <p className="text-xs text-text-muted mt-0.5">
-                {preset.description}
+              <p className="font-semibold">Erro de conexão</p>
+              <p className="text-text-muted mt-0.5">{error}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Success Notification */}
+        {success && (
+          <div className="p-3.5 rounded-xl bg-input/60 border border-accent/40 text-xs text-text flex items-center gap-2.5">
+            <CheckCircleIcon className="w-4 h-4 text-accent shrink-0" />
+            <div>
+              <p className="font-semibold text-accent">Conta conectada com sucesso!</p>
+              <p className="text-text-muted mt-0.5">Sincronizando suas mensagens...</p>
+            </div>
+          </div>
+        )}
+
+        {/* Form: 1. Email -> 2. Password -> 3. Display Name */}
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {/* 1. Email */}
+          <div>
+            <label className="block text-xs font-semibold text-text mb-1.5">
+              Endereço de E-mail *
+            </label>
+            <input
+              type="email"
+              required
+              placeholder={
+                selectedProvider === 'gmail'
+                  ? 'seuemail@gmail.com'
+                  : selectedProvider === 'outlook'
+                    ? 'seuemail@outlook.com'
+                    : selectedProvider === 'yahoo'
+                      ? 'seuemail@yahoo.com'
+                      : 'voce@seudominio.com'
+              }
+              value={email}
+              onChange={(e) => handleEmailChange(e.target.value)}
+              className="w-full px-3.5 py-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-hidden focus:border-accent"
+            />
+          </div>
+
+          {/* 2. Password */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-text">
+                Senha de Aplicativo *
+              </label>
+              {preset.appPasswordHelpUrl && (
+                <a
+                  href={preset.appPasswordHelpUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-[11px] text-accent hover:underline"
+                >
+                  <span>{preset.appPasswordDocLabel}</span>
+                  <ArrowTopRightOnSquareIcon className="w-3 h-3" />
+                </a>
+              )}
+            </div>
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                required
+                placeholder={
+                  selectedProvider === 'gmail'
+                    ? 'Senha de app de 16 letras (ex: abcd efgh ijkl mnop)'
+                    : 'Senha de aplicativo gerada na sua conta'
+                }
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full pl-3.5 pr-10 py-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-hidden focus:border-accent font-mono"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text"
+              >
+                {showPassword ? <EyeSlashIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          {/* 3. Display Name (opcional) */}
+          <div>
+            <label className="block text-xs font-semibold text-text mb-1.5">
+              Nome de Exibição <span className="text-text-muted font-normal">(opcional)</span>
+            </label>
+            <input
+              type="text"
+              placeholder="Ex: Trabalho, Pessoal"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full px-3.5 py-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-hidden focus:border-accent"
+            />
+          </div>
+
+          {/* Custom SMTP/IMAP Server Settings if "custom" selected */}
+          {selectedProvider === 'custom' && (
+            <div className="p-4 rounded-xl border border-border bg-sidebar/30 space-y-4 pt-3">
+              <span className="text-xs font-bold text-text uppercase tracking-wider block">
+                Configuração de Servidores
+              </span>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* IMAP */}
+                <div className="space-y-2">
+                  <span className="text-[11px] font-semibold text-accent block">Servidor de Entrada (IMAP)</span>
+                  <input
+                    type="text"
+                    placeholder="imap.seudominio.com"
+                    value={imapHost}
+                    onChange={(e) => setImapHost(e.target.value)}
+                    required
+                    className="w-full px-3 py-2 rounded-lg bg-input border border-border text-xs text-text"
+                  />
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      placeholder="993"
+                      value={imapPort}
+                      onChange={(e) => setImapPort(Number(e.target.value))}
+                      className="w-24 px-3 py-1.5 rounded-lg bg-input border border-border text-xs text-text"
+                    />
+                    <label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={imapSecure}
+                        onChange={(e) => setImapSecure(e.target.checked)}
+                        className="rounded border-border"
+                      />
+                      <span>SSL / TLS</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* SMTP */}
+                <div className="space-y-2">
+                  <span className="text-[11px] font-semibold text-accent block">Servidor de Saída (SMTP)</span>
+                  <input
+                    type="text"
+                    placeholder="smtp.seudominio.com"
+                    value={smtpHost}
+                    onChange={(e) => setSmtpHost(e.target.value)}
+                    required
+                    className="w-full px-3 py-2 rounded-lg bg-input border border-border text-xs text-text"
+                  />
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      placeholder="587"
+                      value={smtpPort}
+                      onChange={(e) => setSmtpPort(Number(e.target.value))}
+                      className="w-24 px-3 py-1.5 rounded-lg bg-input border border-border text-xs text-text"
+                    />
+                    <label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={smtpSecure}
+                        onChange={(e) => setSmtpSecure(e.target.checked)}
+                        className="rounded border-border"
+                      />
+                      <span>SSL</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={smtpRequireTLS}
+                        onChange={(e) => setSmtpRequireTLS(e.target.checked)}
+                        className="rounded border-border"
+                      />
+                      <span>STARTTLS</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Checklist simples à esquerda para guardar a senha */}
+          <div className="pt-1 pb-1">
+            <label className="flex items-center gap-2.5 text-xs text-text cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={rememberCredentials}
+                onChange={(e) => setRememberCredentials(e.target.checked)}
+                className="w-4 h-4 rounded border-border text-accent focus:ring-accent accent-accent"
+              />
+              <span>Guardar senha com segurança para reconexão automática</span>
+            </label>
+          </div>
+
+          {/* Submit Button */}
+          <button
+            type="submit"
+            disabled={loading || !email || !password}
+            className="w-full py-3 px-6 rounded-xl font-semibold text-xs bg-accent text-bg shadow-glass-sm hover:opacity-90 active:scale-[0.99] disabled:opacity-50 disabled:pointer-events-none transition-all flex items-center justify-center gap-2"
+          >
+            {loading ? (
+              <>
+                <div className="w-4 h-4 border-2 border-bg border-t-transparent rounded-full animate-spin" />
+                <span>Conectando...</span>
+              </>
+            ) : (
+              <span>Conectar conta</span>
+            )}
+          </button>
+        </form>
+
+        {/* Clean FAQ: Texto objetivo com links dos passos */}
+        <div className="pt-6 border-t border-border text-xs text-text-muted space-y-2.5">
+          <p className="font-semibold text-text">
+            Como obter a senha de aplicativo:
+          </p>
+
+          {selectedProvider === 'gmail' && (
+            <div className="space-y-1.5 leading-relaxed">
+              <p>
+                1. Ative a verificação em duas etapas em{' '}
+                <a
+                  href="https://myaccount.google.com/security"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent underline inline-flex items-center gap-0.5"
+                >
+                  myaccount.google.com/security
+                  <ArrowTopRightOnSquareIcon className="w-3 h-3" />
+                </a>.
+              </p>
+              <p>
+                2. Acesse a página de{' '}
+                <a
+                  href="https://myaccount.google.com/apppasswords"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent underline font-medium inline-flex items-center gap-0.5"
+                >
+                  Senhas de aplicativo
+                  <ArrowTopRightOnSquareIcon className="w-3 h-3" />
+                </a>, crie um novo app com o nome <strong>MomAI</strong> e copie os 16 caracteres gerados.
               </p>
             </div>
-          </div>
-
-          {/* Error Message */}
-          {error && (
-            <div className="p-4 rounded-xl bg-input/40 border border-border text-xs text-text flex items-start gap-3">
-              <ExclamationCircleIcon className="w-5 h-5 text-accent shrink-0 mt-0.5" />
-              <div>
-                <p className="font-semibold">Erro ao conectar</p>
-                <p className="text-text-muted mt-0.5">{error}</p>
-              </div>
-            </div>
           )}
 
-          {/* Success Message */}
-          {success && (
-            <div className="p-4 rounded-xl bg-input/40 border border-accent/40 text-xs text-text flex items-center gap-3">
-              <CheckCircleIcon className="w-5 h-5 text-accent shrink-0" />
-              <div>
-                <p className="font-semibold text-accent">Conta conectada com sucesso!</p>
-                <p className="text-text-muted mt-0.5">Sincronizando suas mensagens...</p>
-              </div>
-            </div>
-          )}
-
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Name */}
-              <div>
-                <label className="block text-xs font-semibold text-text mb-1.5">
-                  Nome de Exibição
-                </label>
-                <input
-                  type="text"
-                  placeholder="Ex: Trabalho, Pessoal"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-hidden focus:border-accent"
-                />
-              </div>
-
-              {/* Email */}
-              <div>
-                <label className="block text-xs font-semibold text-text mb-1.5">
-                  Endereço de E-mail *
-                </label>
-                <input
-                  type="email"
-                  required
-                  placeholder={
-                    selectedProvider === 'gmail'
-                      ? 'seuemail@gmail.com'
-                      : selectedProvider === 'outlook'
-                        ? 'seuemail@outlook.com'
-                        : selectedProvider === 'yahoo'
-                          ? 'seuemail@yahoo.com'
-                          : 'voce@seudominio.com'
-                  }
-                  value={email}
-                  onChange={(e) => handleEmailChange(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-hidden focus:border-accent"
-                />
-              </div>
-            </div>
-
-            {/* App Password */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-xs font-semibold text-text">
-                  Senha de Aplicativo *
-                </label>
-                {preset.appPasswordHelpUrl && (
-                  <a
-                    href={preset.appPasswordHelpUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-[11px] text-accent hover:underline"
-                  >
-                    <span>{preset.appPasswordDocLabel}</span>
-                    <ArrowTopRightOnSquareIcon className="w-3 h-3" />
-                  </a>
-                )}
-              </div>
-              <div className="relative">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  required
-                  placeholder={
-                    selectedProvider === 'gmail'
-                      ? 'Senha de app de 16 letras (ex: abcd efgh ijkl mnop)'
-                      : 'Senha de aplicativo gerada na sua conta'
-                  }
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-3.5 pr-10 py-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-hidden focus:border-accent font-mono"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text"
+          {selectedProvider === 'outlook' && (
+            <div className="space-y-1.5 leading-relaxed">
+              <p>
+                1. Acesse as opções de{' '}
+                <a
+                  href="https://account.live.com/proofs/manage/additional"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent underline font-medium inline-flex items-center gap-0.5"
                 >
-                  {showPassword ? <EyeSlashIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />}
-                </button>
-              </div>
+                  Segurança Adicional da Microsoft
+                  <ArrowTopRightOnSquareIcon className="w-3 h-3" />
+                </a>.
+              </p>
+              <p>
+                2. Na seção <strong>Senhas de aplicativo</strong>, clique em <strong>Criar nova senha</strong> e cole o código gerado acima.
+              </p>
             </div>
+          )}
 
-            {/* Custom SMTP/IMAP Server Settings if "custom" selected */}
-            {selectedProvider === 'custom' && (
-              <div className="p-4 rounded-xl border border-border bg-sidebar/30 space-y-4 pt-3">
-                <span className="text-xs font-bold text-text uppercase tracking-wider block">
-                  Configuração de Servidores
-                </span>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* IMAP */}
-                  <div className="space-y-2">
-                    <span className="text-[11px] font-semibold text-accent block">Servidor de Entrada (IMAP)</span>
-                    <input
-                      type="text"
-                      placeholder="imap.seudominio.com"
-                      value={imapHost}
-                      onChange={(e) => setImapHost(e.target.value)}
-                      required
-                      className="w-full px-3 py-2 rounded-lg bg-input border border-border text-xs text-text"
-                    />
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="number"
-                        placeholder="993"
-                        value={imapPort}
-                        onChange={(e) => setImapPort(Number(e.target.value))}
-                        className="w-24 px-3 py-1.5 rounded-lg bg-input border border-border text-xs text-text"
-                      />
-                      <label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={imapSecure}
-                          onChange={(e) => setImapSecure(e.target.checked)}
-                          className="rounded border-border"
-                        />
-                        <span>SSL / TLS</span>
-                      </label>
-                    </div>
-                  </div>
-
-                  {/* SMTP */}
-                  <div className="space-y-2">
-                    <span className="text-[11px] font-semibold text-accent block">Servidor de Saída (SMTP)</span>
-                    <input
-                      type="text"
-                      placeholder="smtp.seudominio.com"
-                      value={smtpHost}
-                      onChange={(e) => setSmtpHost(e.target.value)}
-                      required
-                      className="w-full px-3 py-2 rounded-lg bg-input border border-border text-xs text-text"
-                    />
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="number"
-                        placeholder="587"
-                        value={smtpPort}
-                        onChange={(e) => setSmtpPort(Number(e.target.value))}
-                        className="w-24 px-3 py-1.5 rounded-lg bg-input border border-border text-xs text-text"
-                      />
-                      <label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={smtpSecure}
-                          onChange={(e) => setSmtpSecure(e.target.checked)}
-                          className="rounded border-border"
-                        />
-                        <span>SSL</span>
-                      </label>
-                      <label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={smtpRequireTLS}
-                          onChange={(e) => setSmtpRequireTLS(e.target.checked)}
-                          className="rounded border-border"
-                        />
-                        <span>STARTTLS</span>
-                      </label>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Checkin para guardar a senha */}
-            <div className="pt-2 pb-1">
-              <label className="flex items-center gap-3 p-3 rounded-xl border border-border bg-sidebar/20 hover:bg-sidebar/40 cursor-pointer select-none transition-colors">
-                <input
-                  type="checkbox"
-                  checked={rememberCredentials}
-                  onChange={(e) => setRememberCredentials(e.target.checked)}
-                  className="w-4 h-4 rounded border-border text-accent focus:ring-accent accent-accent"
-                />
-                <div className="flex items-center gap-2 text-xs">
-                  <ShieldCheckIcon className="w-4 h-4 text-accent shrink-0" />
-                  <span className="font-medium text-text">
-                    Guardar senha com segurança para reconexão automática
-                  </span>
-                </div>
-              </label>
+          {selectedProvider === 'yahoo' && (
+            <div className="space-y-1.5 leading-relaxed">
+              <p>
+                1. Acesse{' '}
+                <a
+                  href="https://login.yahoo.com/account/security"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent underline font-medium inline-flex items-center gap-0.5"
+                >
+                  Segurança da Conta Yahoo
+                  <ArrowTopRightOnSquareIcon className="w-3 h-3" />
+                </a>.
+              </p>
+              <p>
+                2. Clique em <strong>Gerar senha de aplicativo</strong>, digite <strong>MomAI</strong> e copie a senha gerada.
+              </p>
             </div>
+          )}
 
-            {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={loading || !email || !password}
-              className="w-full py-3 px-6 rounded-xl font-semibold text-xs bg-accent text-bg shadow-glass-sm hover:opacity-90 active:scale-[0.99] disabled:opacity-50 disabled:pointer-events-none transition-all flex items-center justify-center gap-2"
-            >
-              {loading ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-bg border-t-transparent rounded-full animate-spin" />
-                  <span>Testando e conectando...</span>
-                </>
-              ) : (
-                <span>Conectar conta</span>
-              )}
-            </button>
-          </form>
-
-          {/* FAQ Section at bottom */}
-          <div className="pt-6 border-t border-border space-y-4">
-            <div className="flex items-center gap-2">
-              <QuestionMarkCircleIcon className="w-5 h-5 text-accent" />
-              <h3 className="text-sm font-bold text-text">
-                FAQ — Como obter a senha de aplicativo?
-              </h3>
+          {selectedProvider === 'custom' && (
+            <div className="space-y-1.5 leading-relaxed">
+              <p>
+                Para servidores corporativos, cPanel, Zoho ou Hostgator, utilize as portas <strong>993 (IMAP SSL)</strong> e <strong>587 (SMTP STARTTLS)</strong>. Provedores como Zoho e iCloud exigem senha de app gerada no painel de segurança da conta.
+              </p>
             </div>
-
-            {selectedProvider === 'gmail' && (
-              <div className="p-4 rounded-xl bg-sidebar/30 border border-border text-xs text-text-muted space-y-3">
-                <p className="text-text font-semibold">
-                  O Gmail exige uma "Senha de Aplicativo" de 16 dígitos para clientes IMAP/SMTP:
-                </p>
-                <ol className="list-decimal list-inside space-y-2 leading-relaxed">
-                  <li>
-                    Acesse sua Conta Google em{' '}
-                    <a
-                      href="https://myaccount.google.com/security"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-accent underline font-medium"
-                    >
-                      myaccount.google.com/security
-                    </a>
-                  </li>
-                  <li>
-                    Na aba <strong>Segurança</strong>, certifique-se de que a <strong>Verificação em duas etapas</strong> está <strong>Ativada</strong>.
-                  </li>
-                  <li>
-                    Acesse a página de{' '}
-                    <a
-                      href="https://myaccount.google.com/apppasswords"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-accent underline font-medium inline-flex items-center gap-1"
-                    >
-                      <span>Senhas de aplicativo</span>
-                      <ArrowTopRightOnSquareIcon className="w-3 h-3" />
-                    </a>
-                  </li>
-                  <li>
-                    No campo "Nome do app", digite <strong>MomAI</strong> e clique em <strong>Criar</strong>.
-                  </li>
-                  <li>
-                    Copie a senha de 16 letras gerada (você pode digitar com ou sem os espaços) e cole no campo acima.
-                  </li>
-                </ol>
-                <div className="p-2.5 rounded-lg bg-input/40 border border-border text-[11px] text-text flex items-center gap-2">
-                  <LockClosedIcon className="w-4 h-4 text-accent shrink-0" />
-                  <span>Sua senha principal do Google não é compartilhada e permanece protegida.</span>
-                </div>
-              </div>
-            )}
-
-            {selectedProvider === 'outlook' && (
-              <div className="p-4 rounded-xl bg-sidebar/30 border border-border text-xs text-text-muted space-y-3">
-                <p className="text-text font-semibold">
-                  Passo a passo para contas @outlook.com, @hotmail.com e @live.com:
-                </p>
-                <ol className="list-decimal list-inside space-y-2 leading-relaxed">
-                  <li>
-                    Acesse o painel de segurança da Microsoft em{' '}
-                    <a
-                      href="https://account.live.com/proofs/manage/additional"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-accent underline font-medium inline-flex items-center gap-1"
-                    >
-                      <span>Segurança Adicional da Conta</span>
-                      <ArrowTopRightOnSquareIcon className="w-3 h-3" />
-                    </a>
-                  </li>
-                  <li>
-                    Ative a <strong>Verificação em duas etapas</strong> se ainda não estiver ativa.
-                  </li>
-                  <li>
-                    Na seção <strong>Senhas de aplicativo</strong>, clique em <strong>Criar uma nova senha de aplicativo</strong>.
-                  </li>
-                  <li>
-                    Copie o código gerado e cole no campo de senha acima.
-                  </li>
-                </ol>
-              </div>
-            )}
-
-            {selectedProvider === 'yahoo' && (
-              <div className="p-4 rounded-xl bg-sidebar/30 border border-border text-xs text-text-muted space-y-3">
-                <p className="text-text font-semibold">
-                  Passo a passo para contas Yahoo Mail:
-                </p>
-                <ol className="list-decimal list-inside space-y-2 leading-relaxed">
-                  <li>
-                    Acesse a página de{' '}
-                    <a
-                      href="https://login.yahoo.com/account/security"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-accent underline font-medium inline-flex items-center gap-1"
-                    >
-                      <span>Segurança da Conta Yahoo</span>
-                      <ArrowTopRightOnSquareIcon className="w-3 h-3" />
-                    </a>
-                  </li>
-                  <li>
-                    Role até <strong>Senhas de aplicativo</strong> e clique em <strong>Gerar senha de aplicativo</strong>.
-                  </li>
-                  <li>
-                    Digite <strong>MomAI</strong> e clique em Gerar.
-                  </li>
-                  <li>
-                    Copie a senha de 16 dígitos e cole no campo acima.
-                  </li>
-                </ol>
-              </div>
-            )}
-
-            {selectedProvider === 'custom' && (
-              <div className="p-4 rounded-xl bg-sidebar/30 border border-border text-xs text-text-muted space-y-3">
-                <p className="text-text font-semibold">
-                  Servidores Corporativos, cPanel, Hostgator, Locaweb, Zoho, iCloud:
-                </p>
-                <ul className="list-disc list-inside space-y-1.5 leading-relaxed">
-                  <li>
-                    <strong>Portas recomendadas:</strong> IMAP porta <strong>993</strong> com SSL/TLS ativado; SMTP porta <strong>587</strong> com STARTTLS ou <strong>465</strong> com SSL.
-                  </li>
-                  <li>
-                    <strong>Zoho Mail:</strong> Exige que você gere uma senha de aplicativo em <em>Zoho Accounts &gt; Segurança &gt; Senhas de Aplicativo</em>.
-                  </li>
-                  <li>
-                    <strong>iCloud:</strong> Exige senha de app gerada em <em>appleid.apple.com</em>.
-                  </li>
-                  <li>
-                    <strong>cPanel / Webmail corporativo:</strong> Geralmente utiliza a mesma senha do seu webmail ou a senha de e-mail criada no painel.
-                  </li>
-                </ul>
-              </div>
-            )}
-          </div>
+          )}
         </div>
       </div>
     </div>
