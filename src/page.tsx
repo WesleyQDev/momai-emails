@@ -7,7 +7,7 @@ import { useExtensionEvents } from 'momai:events'
 import { emailApi } from './services/api'
 import type { PublicEmailAccount, EmailFolder, EmailMessage, SendEmailPayload } from './services/types'
 import { AccountTabs } from './components/AccountTabs'
-import { AccountModal } from './components/AccountModal'
+import { ConnectAccountView } from './components/ConnectAccountView'
 import { Sidebar } from './components/Sidebar'
 import { EmailList } from './components/EmailList'
 import { EmailReader } from './components/EmailReader'
@@ -19,7 +19,7 @@ export const EmailsPage: React.FC = () => {
   // Accounts state
   const [accounts, setAccounts] = useState<PublicEmailAccount[]>([])
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null)
-  const [isAddAccountModalOpen, setIsAddAccountModalOpen] = useState(false)
+  const [isAddingAccount, setIsAddingAccount] = useState(false)
 
   // Folders state
   const [folders, setFolders] = useState<EmailFolder[]>([])
@@ -300,6 +300,23 @@ export const EmailsPage: React.FC = () => {
     return Boolean(res.ok)
   }
 
+  // If user has no accounts, or clicked "+ Adicionar Conta", show full-screen onboarding view
+  if (accounts.length === 0 || isAddingAccount) {
+    return (
+      <ConnectAccountView
+        onSave={async (data) => {
+          const res = await handleSaveAccount(data)
+          if (res.ok) {
+            setIsAddingAccount(false)
+          }
+          return res
+        }}
+        onCancel={() => setIsAddingAccount(false)}
+        canCancel={accounts.length > 0}
+      />
+    )
+  }
+
   return (
     <div className="w-full h-full flex flex-col bg-bg text-text overflow-hidden font-sans">
       {/* 1. Account Tabs Bar */}
@@ -307,7 +324,7 @@ export const EmailsPage: React.FC = () => {
         accounts={accounts}
         activeAccountId={activeAccountId}
         onSelectAccount={handleSelectAccount}
-        onOpenAddModal={() => setIsAddAccountModalOpen(true)}
+        onOpenAddModal={() => setIsAddingAccount(true)}
         onRemoveAccount={handleRemoveAccount}
       />
 
@@ -357,14 +374,7 @@ export const EmailsPage: React.FC = () => {
         )}
       </div>
 
-      {/* 3. Add Account Modal */}
-      <AccountModal
-        isOpen={isAddAccountModalOpen || accounts.length === 0}
-        onClose={() => setIsAddAccountModalOpen(false)}
-        onSave={handleSaveAccount}
-      />
-
-      {/* 4. Compose Floating Modal */}
+      {/* 3. Compose Floating Modal */}
       <EmailComposer
         isOpen={isComposeOpen}
         accounts={accounts}
