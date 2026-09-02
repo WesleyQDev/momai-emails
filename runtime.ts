@@ -68,10 +68,25 @@ accountManager.setOnNewEmail(({ accountId, email }: any) => {
         messageId: email.messageId || email.id
       }
     })
+
+    // 3. Emit badge_update so sidebar lights up even when extension UI is not open
+    safeSend({
+      type: 'event',
+      eventType: 'badge_update',
+      data: {
+        extensionId: 'momai-emails',
+        count: true
+      }
+    })
   } catch (err: any) {
     console.warn('[runtime:momai-emails] Failed to emit email event:', err?.message || err)
   }
 })
+
+// Periodic heartbeat to NodeCore health monitor (every 30s) to prevent worker timeout/SIGTERM
+setInterval(() => {
+  safeSend({ type: 'heartbeat', timestamp: Date.now() })
+}, 30000)
 
 // Initialize manager on startup
 accountManager.initialize()

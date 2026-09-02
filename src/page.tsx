@@ -80,9 +80,9 @@ export const EmailsPage: React.FC = () => {
           ? inbox.unreadCount
           : res.folders.reduce((acc: number, f: any) => acc + (f.unreadCount || 0), 0)
         if (unread > 0) {
-          sdk.badge.set(unread)
+          sdk.badge.set(unread, 'momai-emails')
         } else {
-          sdk.badge.clear()
+          sdk.badge.clear('momai-emails')
         }
       }
     } catch (err) {
@@ -97,7 +97,7 @@ export const EmailsPage: React.FC = () => {
       setFolders([])
       setMessages([])
       setSelectedEmail(null)
-      sdk.badge.clear()
+      sdk.badge.clear('momai-emails')
     }
   }, [activeAccountId, loadFolders])
 
@@ -113,8 +113,8 @@ export const EmailsPage: React.FC = () => {
       setLoadingMessages(false)
       if (folder.toUpperCase() === 'INBOX') {
         const unread = cached.filter((m) => !m.read).length
-        if (unread > 0) sdk.badge.set(unread)
-        else sdk.badge.clear()
+        if (unread > 0) sdk.badge.set(unread, 'momai-emails')
+        else sdk.badge.clear('momai-emails')
       }
     } else if (!silent) {
       setLoadingMessages(true)
@@ -129,8 +129,8 @@ export const EmailsPage: React.FC = () => {
 
         if (folder.toUpperCase() === 'INBOX') {
           const unread = res.messages.filter((m) => !m.read).length
-          if (unread > 0) sdk.badge.set(unread)
-          else sdk.badge.clear()
+          if (unread > 0) sdk.badge.set(unread, 'momai-emails')
+          else sdk.badge.clear('momai-emails')
         }
 
         // Background pre-fetch top 2 emails so opening them is instantaneous (0ms)
@@ -175,14 +175,19 @@ export const EmailsPage: React.FC = () => {
       const isNotifAccountEnabled = accountId
         ? localStorage.getItem(`momai_emails_notify_${accountId}`) === 'true'
         : false
-      const fromStr =
-        typeof from === 'object'
-          ? from?.name || from?.address || 'Novo remetente'
-          : from || 'Novo remetente'
+
+      // Extrai apenas o nome do remetente limpo para a notificação
+      let senderName = 'Novo e-mail'
+      if (typeof from === 'object' && from !== null) {
+        senderName = from.name || from.address || 'Novo e-mail'
+      } else if (typeof from === 'string' && from) {
+        const match = from.match(/^([^<]+)<.*>$/)
+        senderName = match ? match[1].trim().replace(/^["']|["']$/g, '') : from
+      }
 
       if (isNotifGloballyEnabled || isNotifAccountEnabled) {
         sdk.notifications.send({
-          title: `Novo e-mail de ${fromStr}`,
+          title: senderName,
           body: subject || '(Sem assunto)',
           action: 'momai-emails:open'
         }).catch(() => {})
@@ -196,7 +201,7 @@ export const EmailsPage: React.FC = () => {
         loadFolders(activeAccountId || undefined)
       } else {
         // Increment badge if incoming for another account or background
-        sdk.badge.set((prev: any) => (typeof prev === 'number' ? prev + 1 : 1))
+        sdk.badge.set((prev: number) => prev + 1, 'momai-emails')
       }
     }
   })
@@ -287,8 +292,8 @@ export const EmailsPage: React.FC = () => {
     }
     if (activeFolder.toUpperCase() === 'INBOX') {
       const remaining = messages.filter((m) => m.id !== id && !m.read).length
-      if (remaining > 0) sdk.badge.set(remaining)
-      else sdk.badge.clear()
+      if (remaining > 0) sdk.badge.set(remaining, 'momai-emails')
+      else sdk.badge.clear('momai-emails')
     }
     // Update folder cache
     const cacheKey = `${activeAccountId}:${activeFolder}`
@@ -309,7 +314,7 @@ export const EmailsPage: React.FC = () => {
     }
     if (activeFolder.toUpperCase() === 'INBOX') {
       const remaining = messages.filter((m) => m.id === id || !m.read).length
-      sdk.badge.set(remaining)
+      sdk.badge.set(remaining, 'momai-emails')
     }
     // Update folder cache
     const cacheKey = `${activeAccountId}:${activeFolder}`
@@ -327,8 +332,8 @@ export const EmailsPage: React.FC = () => {
     }
     if (activeFolder.toUpperCase() === 'INBOX') {
       const remaining = messages.filter((m) => m.id !== id && !m.read).length
-      if (remaining > 0) sdk.badge.set(remaining)
-      else sdk.badge.clear()
+      if (remaining > 0) sdk.badge.set(remaining, 'momai-emails')
+      else sdk.badge.clear('momai-emails')
     }
     // Update folder cache
     const cacheKey = `${activeAccountId}:${activeFolder}`
