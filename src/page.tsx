@@ -7,7 +7,7 @@ import { useExtensionEvents } from 'momai:events'
 import { emailApi } from './services/api'
 import { emailStorageCache } from './services/cache'
 import type { PublicEmailAccount, EmailFolder, EmailMessage, SendEmailPayload } from './services/types'
-import { AccountTabs } from './components/AccountTabs'
+import { EmailsHeader } from './components/EmailsHeader'
 import { ConnectAccountView } from './components/ConnectAccountView'
 import { Sidebar } from './components/Sidebar'
 import { EmailList } from './components/EmailList'
@@ -496,8 +496,8 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
 
   return (
     <div className="w-full h-full flex flex-col bg-bg text-text overflow-hidden font-sans">
-      {/* 1. Account Tabs Bar */}
-      <AccountTabs
+      {/* 1. Header with Provider Logo (left) and Account Profile Switcher (right) */}
+      <EmailsHeader
         accounts={accounts}
         activeAccountId={activeAccountId}
         onSelectAccount={handleSelectAccount}

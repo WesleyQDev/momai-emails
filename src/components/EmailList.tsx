@@ -12,6 +12,7 @@ import {
   CheckCircleIcon
 } from '@heroicons/react/24/solid'
 import { StarIcon as StarOutline } from '@heroicons/react/24/outline'
+import { EmailAvatar } from './EmailAvatar'
 import type { EmailMessage } from '../services/types'
 
 interface EmailListProps {
@@ -241,8 +242,9 @@ export const EmailList: React.FC<EmailListProps> = ({
                 </div>
 
                 {/* Sender */}
-                <div className="w-40 shrink-0 truncate">
-                  <span className={msg.read ? 'text-text-muted font-normal' : 'text-text font-bold'}>
+                <div className="w-48 shrink-0 flex items-center gap-2.5 truncate">
+                  <EmailAvatar name={msg.from.name} address={msg.from.address} size="sm" />
+                  <span className={`truncate ${msg.read ? 'text-text-muted font-normal' : 'text-text font-bold'}`}>
                     {msg.from.name || msg.from.address}
                   </span>
                 </div>
