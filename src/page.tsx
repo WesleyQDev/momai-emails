@@ -72,18 +72,6 @@ export const EmailsPage: React.FC = () => {
       const res = await emailApi.listFolders(accId)
       if (res && res.ok && Array.isArray(res.folders)) {
         setFolders(res.folders)
-        // Calculate unread count in inbox to update sidebar badge
-        const inbox = res.folders.find(
-          (f: any) => f.role === 'inbox' || f.path.toUpperCase() === 'INBOX'
-        )
-        const unread = inbox
-          ? inbox.unreadCount
-          : res.folders.reduce((acc: number, f: any) => acc + (f.unreadCount || 0), 0)
-        if (unread > 0) {
-          sdk.badge.set(unread, 'momai-emails')
-        } else {
-          sdk.badge.clear('momai-emails')
-        }
       }
     } catch (err) {
       console.error('[momai-emails] Error loading folders:', err)
@@ -97,9 +85,25 @@ export const EmailsPage: React.FC = () => {
       setFolders([])
       setMessages([])
       setSelectedEmail(null)
-      sdk.badge.clear('momai-emails')
     }
   }, [activeAccountId, loadFolders])
+
+  // Clear sidebar unread badge whenever this extension page is opened or focused (like mobile notifications)
+  useEffect(() => {
+    sdk.badge.clear('momai-emails')
+
+    const handleClear = () => {
+      if (!document.hidden) {
+        sdk.badge.clear('momai-emails')
+      }
+    }
+    window.addEventListener('focus', handleClear)
+    document.addEventListener('visibilitychange', handleClear)
+    return () => {
+      window.removeEventListener('focus', handleClear)
+      document.removeEventListener('visibilitychange', handleClear)
+    }
+  }, [])
 
   // 3. Load emails with SWR (0ms instant display from cache, background refresh)
   const loadEmails = useCallback(async (folder = 'INBOX', accId = activeAccountId, silent = false) => {
@@ -111,11 +115,6 @@ export const EmailsPage: React.FC = () => {
     if (cached && cached.length > 0) {
       setMessages(cached)
       setLoadingMessages(false)
-      if (folder.toUpperCase() === 'INBOX') {
-        const unread = cached.filter((m) => !m.read).length
-        if (unread > 0) sdk.badge.set(unread, 'momai-emails')
-        else sdk.badge.clear('momai-emails')
-      }
     } else if (!silent) {
       setLoadingMessages(true)
     }
@@ -126,12 +125,6 @@ export const EmailsPage: React.FC = () => {
       if (res && res.ok && Array.isArray(res.messages)) {
         folderCacheRef.current.set(cacheKey, res.messages)
         setMessages(res.messages)
-
-        if (folder.toUpperCase() === 'INBOX') {
-          const unread = res.messages.filter((m) => !m.read).length
-          if (unread > 0) sdk.badge.set(unread, 'momai-emails')
-          else sdk.badge.clear('momai-emails')
-        }
 
         // Background pre-fetch top 2 emails so opening them is instantaneous (0ms)
         const toPrefetch = res.messages.slice(0, 2)
@@ -199,8 +192,14 @@ export const EmailsPage: React.FC = () => {
           loadEmails(activeFolder, activeAccountId, true)
         }
         loadFolders(activeAccountId || undefined)
-      } else {
-        // Increment badge if incoming for another account or background
+      }
+
+      // Increment sidebar badge ONLY if the user is not actively viewing the emails page
+      const isActivelyViewing =
+        !document.hidden &&
+        window.location.pathname.startsWith('/extensions/momai-emails')
+
+      if (!isActivelyViewing) {
         sdk.badge.set((prev: number) => prev + 1, 'momai-emails')
       }
     }
@@ -290,11 +289,7 @@ export const EmailsPage: React.FC = () => {
     if (selectedEmail?.id === id) {
       setSelectedEmail({ ...selectedEmail, read: true })
     }
-    if (activeFolder.toUpperCase() === 'INBOX') {
-      const remaining = messages.filter((m) => m.id !== id && !m.read).length
-      if (remaining > 0) sdk.badge.set(remaining, 'momai-emails')
-      else sdk.badge.clear('momai-emails')
-    }
+    sdk.badge.clear('momai-emails')
     // Update folder cache
     const cacheKey = `${activeAccountId}:${activeFolder}`
     const cached = folderCacheRef.current.get(cacheKey)
@@ -312,10 +307,6 @@ export const EmailsPage: React.FC = () => {
       setSelectedEmail({ ...selectedEmail, read: false })
       setSelectedEmail(null) // Return to list if marked unread from reader
     }
-    if (activeFolder.toUpperCase() === 'INBOX') {
-      const remaining = messages.filter((m) => m.id === id || !m.read).length
-      sdk.badge.set(remaining, 'momai-emails')
-    }
     // Update folder cache
     const cacheKey = `${activeAccountId}:${activeFolder}`
     const cached = folderCacheRef.current.get(cacheKey)
@@ -330,11 +321,7 @@ export const EmailsPage: React.FC = () => {
     if (selectedEmail?.id === id) {
       setSelectedEmail(null)
     }
-    if (activeFolder.toUpperCase() === 'INBOX') {
-      const remaining = messages.filter((m) => m.id !== id && !m.read).length
-      if (remaining > 0) sdk.badge.set(remaining, 'momai-emails')
-      else sdk.badge.clear('momai-emails')
-    }
+    sdk.badge.clear('momai-emails')
     // Update folder cache
     const cacheKey = `${activeAccountId}:${activeFolder}`
     const cached = folderCacheRef.current.get(cacheKey)
