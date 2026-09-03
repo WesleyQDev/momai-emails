@@ -8,7 +8,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { encryptForStorage, decryptFromStorage } = require('./secure-storage-bridge.ts')
 const { PROVIDERS, detectProviderFromEmail } = require('./providers-data.ts')
-const { testAccountConnection, fetchMessages, fetchFullMessage, getMailboxStatus } = require('./email-client.ts')
+const { testAccountConnection, fetchMessages, fetchFullMessage, getMailboxStatus, releaseImapClient } = require('./email-client.ts')
 
 class AccountManager {
   private storageDir: string
@@ -47,29 +47,46 @@ class AccountManager {
     this.startBackgroundPoller()
   }
 
+  public async primeAccount(accId: string, acc: any): Promise<void> {
+    try {
+      if (!this.seenUids.has(accId)) {
+        this.seenUids.set(accId, new Set())
+      }
+      const accountSeen = this.seenUids.get(accId)!
+
+      // 1. Obtém status da caixa INBOX (unseen, total de mensagens e uidNext)
+      const status = await getMailboxStatus(acc, 'INBOX')
+      if (status.ok) {
+        this.unreadCounts.set(accId, status.unseen || 0)
+      }
+
+      // 2. Busca as mensagens mais recentes (até 50) para registrar como já vistas
+      const res = await fetchMessages(acc, 'INBOX', 50, false)
+      const messages = Array.isArray(res) ? res : (res?.messages || [])
+      const validUids = messages.map((m: any) => m.uid || 0).filter((u: number) => u > 0)
+      for (const u of validUids) {
+        accountSeen.add(u)
+      }
+
+      // 3. Determina o baseline do UID:
+      // Pelo RFC 3501, uidNext é estritamente maior que qualquer UID já existente na caixa.
+      let latestUid = 0
+      if (status.ok && typeof status.uidNext === 'number' && status.uidNext > 1) {
+        latestUid = status.uidNext - 1
+      } else if (validUids.length > 0) {
+        latestUid = Math.max(...validUids)
+      }
+
+      this.lastSeenUids.set(accId, latestUid)
+      console.log(`[AccountManager] Conta ${acc.email} inicializada (primed). lastSeenUid: ${latestUid}, unseen: ${status.unseen || 0}`)
+    } catch (err: any) {
+      console.warn(`[AccountManager] Falha ao inicializar UID para ${acc.email}:`, err?.message || err)
+    }
+  }
+
   private async primeInitialUids(): Promise<void> {
     for (const [accId, acc] of this.accounts.entries()) {
-      try {
-        if (!this.seenUids.has(accId)) this.seenUids.set(accId, new Set())
-        const status = await getMailboxStatus(acc, 'INBOX')
-        if (status.ok) {
-          this.unreadCounts.set(accId, status.unseen || 0)
-        }
-        const res = await fetchMessages(acc, 'INBOX', 10, false)
-        const messages = Array.isArray(res) ? res : (res?.messages || [])
-        if (messages && messages.length > 0) {
-          const uids = messages.map((m: any) => m.uid || 0).filter((u: number) => u > 0)
-          for (const u of uids) this.seenUids.get(accId)!.add(u)
-          const latestUid = uids.length > 0 ? Math.max(...uids) : 0
-          this.lastSeenUids.set(accId, latestUid)
-          console.log(`[AccountManager] Account ${acc.email} primed with UID: ${latestUid}, unread: ${status.unseen || 0}`)
-        } else {
-          this.lastSeenUids.set(accId, 0)
-        }
-      } catch (err: any) {
-        console.warn(`[AccountManager] Failed to prime UID for ${acc.email}:`, err?.message || err)
-        this.lastSeenUids.set(accId, 0)
-      }
+      await this.primeAccount(accId, acc)
     }
   }
 
@@ -198,6 +215,9 @@ class AccountManager {
       this.activeAccountId = id
     }
 
+    // Inicializa imediatamente o baseline de UIDs para que e-mails anteriores não disparem notificações
+    await this.primeAccount(id, accountConfig)
+
     await this.saveAccounts()
     const { password: _, ...pub } = accountConfig
     return { ok: true, account: pub }
@@ -206,6 +226,14 @@ class AccountManager {
   public async removeAccount(id: string): Promise<boolean> {
     if (!this.accounts.has(id)) return false
     this.accounts.delete(id)
+    this.lastSeenUids.delete(id)
+    this.seenUids.delete(id)
+    this.unreadCounts.delete(id)
+    try {
+      if (typeof releaseImapClient === 'function') {
+        releaseImapClient(id)
+      }
+    } catch {}
     if (this.activeAccountId === id) {
       const next = Array.from(this.accounts.keys())[0]
       this.activeAccountId = next || null
@@ -233,13 +261,20 @@ class AccountManager {
           if (!this.seenUids.has(accId)) this.seenUids.set(accId, new Set())
           const accountSeen = this.seenUids.get(accId)!
 
+          // Se a conta ainda não possui baseline de UIDs registrado, inicializa agora e pula o ciclo.
+          // NUNCA disparar notificações na primeira checagem de uma conta!
+          if (!this.lastSeenUids.has(accId)) {
+            await this.primeAccount(accId, acc)
+            continue
+          }
+
           // Status check: rápido, obtém contagem de não lidos atualizada sem bloquear a caixa
           const status = await getMailboxStatus(acc, 'INBOX')
           if (status.ok) {
             this.unreadCounts.set(accId, status.unseen || 0)
           }
 
-          const prevSeen = this.lastSeenUids.get(accId) ?? 0
+          const prevSeen = this.lastSeenUids.get(accId)!
 
           // Busca as mensagens mais recentes (o fetchMessages agora força client.noop() internamente)
           const res = await fetchMessages(acc, 'INBOX', 10, false)
@@ -252,10 +287,12 @@ class AccountManager {
           const latestUid = Math.max(...validUids)
 
           if (latestUid > prevSeen) {
-            const newMessages = messages.filter((m: any) => {
-              const uid = m.uid || 0
-              return uid > prevSeen && !accountSeen.has(uid)
-            })
+            const newMessages = messages
+              .filter((m: any) => {
+                const uid = m.uid || 0
+                return uid > prevSeen && !accountSeen.has(uid)
+              })
+              .sort((a: any, b: any) => (a.uid || 0) - (b.uid || 0))
 
             this.lastSeenUids.set(accId, latestUid)
 

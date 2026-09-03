@@ -1,32 +1,31 @@
 # MomAI E-mails
 
-Gerencie suas caixas de entrada e envie e-mails diretamente pela **MomAI** usando comandos de voz ou texto. Compatível com os principais provedores (Gmail, Outlook, Yahoo, iCloud e servidores IMAP/SMTP personalizados).
+Gerencie suas caixas de entrada e envie e-mails diretamente pela MomAI usando comandos de voz ou texto. Compatível com os principais serviços como Gmail, Outlook, Yahoo, iCloud e servidores personalizados.
 
----
+## Sua caixa de entrada organizada e ao seu alcance
+
+Com o MomAI E-mails, você não precisa interromper o que está fazendo no computador para checar mensagens importantes ou responder contatos urgentes. Tudo pode ser feito de forma rápida e conversacional com a sua assistente.
 
 ### Principais Recursos
 
-- **Múltiplas Contas**: Conecte contas do Gmail, Outlook/Hotmail, Yahoo, iCloud ou qualquer servidor IMAP/SMTP próprio simultaneamente.
-- **Notificações em Tempo Real**: Alertas no sistema e indicador na aba lateral para você nunca perder mensagens importantes.
-- **Categorização Inteligente**: Separação automática por abas (**Principal**, **Promoções**, **Social** e **Atualizações**) para uma caixa limpa e organizada.
-- **Comandos de Voz e Chat**: Peça para a assistente ler seus últimos e-mails, resumir mensagens ou enviar uma resposta rápida.
-- **Segurança Local e Criptografia**: Suas senhas e credenciais de e-mail são criptografadas com segurança usando a API nativa do sistema operacional (DPAPI no Windows).
+- **Múltiplas Contas Conectadas**: Adicione e alterne entre contas do Gmail, Outlook, Hotmail, Yahoo, iCloud ou contas profissionais em um só lugar.
+- **Avisos em Tempo Real**: Receba notificações na área de trabalho e no menu lateral assim que novas mensagens chegarem, sem perder nada importante.
+- **Separação Automática**: Seus e-mails são organizados de forma clara em categorias como Principal, Promoções, Atualizações e Social para evitar sobrecarga.
+- **Leitura e Resumo por Voz**: A MomAI lê o conteúdo das mensagens para você e resume conversas longas em poucos segundos.
+- **Respostas Rápidas**: Dite ou digite suas respostas e envie na hora sem abrir o navegador.
+- **Segurança e Criptografia Local**: Suas credenciais são salvas com criptografia de ponta do próprio Windows no seu computador. Nenhuma senha é enviada para servidores de terceiros.
 
----
+## O que você pode pedir à MomAI
 
-### Exemplos do que você pode pedir à MomAI
+- "MomAI, tenho algum e-mail novo na minha caixa de entrada?"
+- "Leia o último e-mail que recebi da equipe de trabalho."
+- "Envie um e-mail para contato@empresa.com avisando que o relatório já foi aprovado."
+- "Responda ao último e-mail confirmando a reunião para amanhã às 14h."
+- "Marque todos os e-mails promocionais como lidos."
 
-- *"MomAI, tem algum e-mail novo na minha caixa de entrada?"*
-- *"Leia o último e-mail que recebi da equipe de projetos."*
-- *"Envie um e-mail para contato@empresa.com dizendo que o relatório já foi aprovado."*
-- *"Responda ao último e-mail confirmando a reunião para amanhã às 14h."*
-- *"Marque todos os e-mails de promoções como lidos."*
+## Como Configurar
 
----
-
-### Como Configurar
-
-1. Abra a extensão **MomAI E-mails** pela barra lateral.
-2. Clique em **Conectar Conta** ou selecione o seu provedor (Gmail, Outlook, Yahoo, etc.).
-3. Informe seu endereço de e-mail e a senha de aplicativo gerada no seu provedor.
-4. Pronto! Seus e-mails serão sincronizados automaticamente e você já pode interagir por voz ou pela interface.
+1. Abra o MomAI e clique no ícone de E-mails na barra lateral.
+2. Clique no botão de conectar conta e selecione o seu provedor (como Gmail ou Outlook).
+3. Insira seu endereço de e-mail e a senha de aplicativo gerada na sua conta.
+4. Pronto! Suas mensagens serão sincronizadas e você já pode usá-la pelo painel ou pedir diretamente à assistente.
