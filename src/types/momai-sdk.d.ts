@@ -16,6 +16,16 @@ declare module 'momai:sdk' {
       set: (countOrOpts: any, extId?: string) => void
       clear: (extId?: string) => void
     }
+    clipboard: {
+      read: () => Promise<{
+        ok: boolean
+        type?: 'image' | 'text'
+        dataUrl?: string
+        text?: string
+        error?: string
+      }>
+      writeImage: (dataUrl: string) => Promise<{ ok: boolean; error?: string }>
+    }
     [key: string]: any
   }
   export default sdk

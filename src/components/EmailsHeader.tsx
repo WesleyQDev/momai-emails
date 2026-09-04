@@ -5,7 +5,9 @@ import React, { useState, useRef, useEffect } from 'react'
 import {
   PlusIcon,
   TrashIcon,
-  CameraIcon
+  CameraIcon,
+  MagnifyingGlassIcon,
+  XMarkIcon
 } from '@heroicons/react/24/outline'
 import { GmailIcon, OutlookIcon, YahooIcon, CustomMailIcon } from './ProviderIcons'
 import { detectProviderFromEmail, PROVIDERS, ProviderId } from '../services/providers'
@@ -47,6 +49,8 @@ interface EmailsHeaderProps {
   onSelectAccount: (id: string) => void
   onOpenAddModal: () => void
   onRemoveAccount: (id: string) => void
+  searchQuery?: string
+  onSearchChange?: (q: string) => void
 }
 
 export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
@@ -54,7 +58,9 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
   activeAccountId,
   onSelectAccount,
   onOpenAddModal,
-  onRemoveAccount
+  onRemoveAccount,
+  searchQuery = '',
+  onSearchChange
 }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -144,31 +150,45 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
   const activeAvatar = activeAccount ? avatarMap[activeAccount.id] : null
 
   return (
-    <header className="flex items-center justify-between border-b border-border bg-sidebar/70 backdrop-blur-xs px-5 py-2.5 select-none relative z-30">
-      {/* 1. Left: Provider SVG & Platform Title */}
-      <div className="flex items-center gap-3">
+    <header className="flex items-center justify-between gap-4 border-b border-border bg-sidebar/70 backdrop-blur-xs px-5 py-2.5 select-none relative z-30">
+      {/* 1. Left: Provider SVG & Provider Title */}
+      <div className="flex items-center gap-2.5 shrink-0 min-w-[120px]">
         <div className="flex items-center justify-center shrink-0 drop-shadow-xs">
           {renderProviderIcon('w-6 h-6')}
         </div>
-        <div className="flex flex-col">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-bold text-text tracking-tight">
-              {providerConfig.name}
-            </span>
-            <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-input/70 border border-border text-text-muted">
-              MomAI E-mails
-            </span>
-          </div>
-          {activeAccount && (
-            <span className="text-[11px] text-text-muted font-normal truncate max-w-[260px]">
-              {activeAccount.email}
-            </span>
-          )}
-        </div>
+        <span className="text-sm font-bold text-text tracking-tight">
+          {providerConfig.name}
+        </span>
       </div>
 
-      {/* 2. Right: ONLY the circular Profile Avatar (no green/purple status dots) */}
-      <div className="relative" ref={dropdownRef}>
+      {/* 2. Center: Search Bar (Gmail style) */}
+      {onSearchChange && (
+        <div className="flex-1 max-w-xl mx-2 sm:mx-4 flex items-center justify-center">
+          <div className="w-full flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-input/70 hover:bg-input border border-border/80 focus-within:border-accent focus-within:bg-input focus-within:shadow-xs transition-all">
+            <MagnifyingGlassIcon className="w-4 h-4 text-text-muted shrink-0 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Pesquisar nos e-mails..."
+              value={searchQuery}
+              onChange={(e) => onSearchChange(e.target.value)}
+              className="w-full bg-transparent border-0 p-0 text-xs text-text placeholder:text-text-muted focus:outline-hidden"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => onSearchChange('')}
+                className="text-text-muted hover:text-text p-0.5 rounded-full cursor-pointer transition-colors"
+                title="Limpar pesquisa"
+              >
+                <XMarkIcon className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 3. Right: ONLY the circular Profile Avatar (no green/purple status dots) */}
+      <div className="relative shrink-0 min-w-[120px] flex justify-end" ref={dropdownRef}>
         <button
           type="button"
           onClick={() => setDropdownOpen((prev) => !prev)}

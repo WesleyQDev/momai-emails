@@ -14,6 +14,10 @@ export interface EmailAttachment {
   contentType: string
   size: number
   contentId?: string
+  part?: string
+  localPath?: string
+  previewDataUrl?: string
+  base64Data?: string
 }
 
 export interface EmailMessage {
@@ -75,6 +79,15 @@ export interface EmailAccountConfig {
 
 export type PublicEmailAccount = Omit<EmailAccountConfig, 'password'>
 
+export interface OutgoingAttachment {
+  id: string
+  filename: string
+  contentType: string
+  size: number
+  previewUrl?: string
+  base64Data?: string
+}
+
 export interface SendEmailPayload {
   accountId?: string
   to: string
@@ -85,4 +98,5 @@ export interface SendEmailPayload {
   bcc?: string
   inReplyTo?: string
   references?: string
+  attachments?: OutgoingAttachment[]
 }

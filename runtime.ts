@@ -31,7 +31,12 @@ const {
   setMessageReadStatus,
   setMessageStarredStatus,
   deleteMessage,
-  moveMessage
+  moveMessage,
+  downloadAttachmentToFile,
+  openFileWithDefaultApp,
+  saveAttachmentWithDialog,
+  generatePdfThumbnail,
+  generateDocumentThumbnail
 } = require('./email-client.ts')
 
 const accountManager = new AccountManager()
@@ -237,6 +242,99 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
       }
     }
 
+    case 'open_attachment': {
+      const account = accountManager.getAccount(args.accountId)
+      if (!account) return { ok: false, error: 'Nenhuma conta de e-mail encontrada.' }
+      try {
+        const messageId = args.messageId || args.id || args.uid
+        const folder = args.folder || 'INBOX'
+        const filename = args.filename
+        const part = args.part
+
+        const filePath = await downloadAttachmentToFile(account, messageId, folder, filename, part)
+        if (!filePath) {
+          return { ok: false, error: 'Não foi possível baixar o documento anexo.' }
+        }
+
+        const openRes = await openFileWithDefaultApp(filePath)
+        if (!openRes.ok) {
+          return { ok: false, error: openRes.error || 'Falha ao abrir documento no computador.' }
+        }
+
+        const resolvedName = path.basename(filePath)
+        return {
+          ok: true,
+          path: openRes.path,
+          filename: resolvedName,
+          instruction: `Documento "${resolvedName}" aberto com sucesso no computador.`,
+          directResponse: `O documento "${resolvedName}" foi aberto com o aplicativo padrão do seu computador.`
+        }
+      } catch (err: any) {
+        return { ok: false, error: err?.message || String(err) }
+      }
+    }
+
+    case 'save_attachment': {
+      const account = accountManager.getAccount(args.accountId)
+      if (!account) return { ok: false, error: 'Nenhuma conta de e-mail encontrada.' }
+      try {
+        const messageId = args.messageId || args.id || args.uid
+        const folder = args.folder || 'INBOX'
+        const filename = args.filename
+        const part = args.part
+
+        const filePath = await downloadAttachmentToFile(account, messageId, folder, filename, part)
+        if (!filePath) {
+          return { ok: false, error: 'Não foi possível baixar o documento anexo.' }
+        }
+
+        const saveRes = await saveAttachmentWithDialog(filePath, filename)
+        if (!saveRes.ok) {
+          return { ok: false, error: saveRes.error || 'Falha ao salvar anexo.' }
+        }
+
+        if (saveRes.cancelled) {
+          return { ok: true, cancelled: true, instruction: 'Salvamento cancelado pelo usuário.' }
+        }
+
+        const resolvedName = path.basename(saveRes.savedPath || filePath)
+        return {
+          ok: true,
+          savedPath: saveRes.savedPath,
+          filename: resolvedName,
+          instruction: `Documento "${resolvedName}" salvo com sucesso em "${saveRes.savedPath}".`,
+          directResponse: `O documento "${resolvedName}" foi salvo com sucesso em:\n${saveRes.savedPath}`
+        }
+      } catch (err: any) {
+        return { ok: false, error: err?.message || String(err) }
+      }
+    }
+
+    case 'get_attachment_preview': {
+      const account = accountManager.getAccount(args.accountId)
+      if (!account) return { ok: false, error: 'Conta não encontrada.' }
+      try {
+        const messageId = args.messageId || args.id || args.uid
+        const folder = args.folder || 'INBOX'
+        const filename = args.filename
+        const filePath = await downloadAttachmentToFile(account, messageId, folder, filename)
+        if (!filePath) return { ok: false, error: 'Arquivo anexo não encontrado.' }
+
+        let previewDataUrl: string | null = null
+        const ext = path.extname(filePath).toLowerCase()
+        if (['.pdf', '.docx', '.doc', '.rtf', '.odt', '.xlsx', '.xls', '.csv'].includes(ext)) {
+          previewDataUrl = await generateDocumentThumbnail(filePath, 400)
+        } else if (/\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(filePath)) {
+          const buf = fs.readFileSync(filePath)
+          const imgExt = ext.slice(1)
+          previewDataUrl = `data:image/${imgExt === 'jpg' ? 'jpeg' : imgExt};base64,${buf.toString('base64')}`
+        }
+        return { ok: true, previewDataUrl, filePath }
+      } catch (err: any) {
+        return { ok: false, error: err?.message || String(err) }
+      }
+    }
+
     case 'search_emails': {
       const account = accountManager.getAccount(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail encontrada.' }
@@ -273,7 +371,8 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
           cc: args.cc,
           bcc: args.bcc,
           inReplyTo: args.inReplyTo,
-          references: args.references
+          references: args.references,
+          attachments: args.attachments
         })
         if (result.ok) {
           safeSend({

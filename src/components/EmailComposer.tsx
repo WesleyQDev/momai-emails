@@ -1,5 +1,8 @@
 // src/components/EmailComposer.tsx
-// Floating compose window following Gmail UX style with recipient autocomplete
+// Floating compose window following Gmail UX style:
+// - Drag & drop images/files -> goes to Attachment Tray
+// - Right click -> Colar (or Ctrl+V) -> inserts image INLINE into message content
+// - Select inline image + Delete / Backspace -> removes the selected image
 
 import React, { useState, useEffect, useRef } from 'react'
 import {
@@ -8,10 +11,17 @@ import {
   ArrowsPointingOutIcon,
   ArrowsPointingInIcon,
   PaperAirplaneIcon,
+  PaperClipIcon,
+  PhotoIcon,
   TrashIcon,
-  UserIcon
+  UserIcon,
+  ArrowUpTrayIcon,
+  EyeIcon
 } from '@heroicons/react/24/outline'
-import type { PublicEmailAccount, SendEmailPayload } from '../services/types'
+import type { PublicEmailAccount, SendEmailPayload, OutgoingAttachment } from '../services/types'
+import sdk from 'momai:sdk'
+import ContextMenu from './ContextMenu'
+import { OfficialFileIcon, formatFileSize, getAttachmentFileInfo } from './AttachmentBadge'
 
 interface EmailComposerProps {
   isOpen: boolean
@@ -66,6 +76,70 @@ function deleteRecipient(email: string): RecipientItem[] {
   }
 }
 
+function extractImageUrlsFromDataTransfer(dataTransfer: DataTransfer): string[] {
+  const urls: string[] = []
+
+  // 1. Check HTML snippet
+  const html = dataTransfer.getData('text/html')
+  if (html) {
+    try {
+      const parser = new DOMParser()
+      const doc = parser.parseFromString(html, 'text/html')
+      const imgs = doc.querySelectorAll('img')
+      imgs.forEach((img) => {
+        const src = img.getAttribute('src')
+        if (src && !src.startsWith('data:image/svg+xml;base64,PHN2Zy')) {
+          urls.push(src)
+        }
+      })
+    } catch {
+      // ignore
+    }
+  }
+
+  // 2. Check uri-list and text/plain
+  const uriList = dataTransfer.getData('text/uri-list')
+  const plainText = dataTransfer.getData('text/plain')
+  const candidates = [uriList, plainText].filter(Boolean)
+
+  for (const text of candidates) {
+    try {
+      if (text.includes('mediaurl=') || text.includes('imgurl=') || text.includes('imgrefurl=')) {
+        const matchBing = text.match(/[?&]mediaurl=([^&]+)/i)
+        if (matchBing && matchBing[1]) {
+          const decoded = decodeURIComponent(matchBing[1])
+          if (decoded && !urls.includes(decoded)) {
+            urls.unshift(decoded)
+          }
+        }
+        const matchGoogle = text.match(/[?&]imgurl=([^&]+)/i)
+        if (matchGoogle && matchGoogle[1]) {
+          const decoded = decodeURIComponent(matchGoogle[1])
+          if (decoded && !urls.includes(decoded)) {
+            urls.unshift(decoded)
+          }
+        }
+      } else if (
+        text.startsWith('http://') ||
+        text.startsWith('https://') ||
+        text.startsWith('data:image/') ||
+        text.startsWith('blob:')
+      ) {
+        const isImageExt = /\.(png|jpe?g|webp|gif|svg|bmp|ico|avif)(\?.*)?$/i.test(text)
+        if (isImageExt || text.startsWith('data:image/') || text.startsWith('blob:')) {
+          if (!urls.includes(text)) {
+            urls.push(text)
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return urls
+}
+
 export const EmailComposer: React.FC<EmailComposerProps> = ({
   isOpen,
   accounts,
@@ -83,16 +157,34 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
   const [isHtml, setIsHtml] = useState(false)
+  const [attachments, setAttachments] = useState<OutgoingAttachment[]>([])
 
   const [isMinimized, setIsMinimized] = useState(false)
   const [isMaximized, setIsMaximized] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Drag-and-drop & attachment state
+  const [isDraggingOver, setIsDraggingOver] = useState(false)
+  const [isProcessingAttachments, setIsProcessingAttachments] = useState(false)
+  const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null)
+  const [selectedInlineImg, setSelectedInlineImg] = useState<HTMLImageElement | null>(null)
+  const dragCounter = useRef(0)
+
+  // Refs for editor and file inputs
+  const editorRef = useRef<HTMLDivElement>(null)
+  const savedSelectionRef = useRef<Range | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const imageInputInlineRef = useRef<HTMLInputElement>(null)
+
+  // Context menus
+  const [bodyContextMenu, setBodyContextMenu] = useState<{ visible: boolean; x: number; y: number } | null>(null)
+  const [recipientContextMenu, setRecipientContextMenu] = useState<{ visible: boolean; x: number; y: number; email: string } | null>(null)
+
   // Autocomplete state
   const [recentRecipients, setRecentRecipients] = useState<RecipientItem[]>([])
   const [showToAutofill, setShowToAutofill] = useState(false)
-  const [contextMenu, setContextMenu] = useState<{ visible: boolean; x: number; y: number; email: string } | null>(null)
   const toInputRef = useRef<HTMLInputElement>(null)
   const toAutofillRef = useRef<HTMLDivElement>(null)
 
@@ -105,15 +197,31 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
       setShowCc(Boolean(initialData?.cc))
       setShowBcc(Boolean(initialData?.bcc))
       setSubject(initialData?.subject || '')
-      setBody(initialData?.body || '')
+      const initBody = initialData?.body || ''
+      setBody(initBody)
+      if (editorRef.current) {
+        editorRef.current.innerHTML = initBody
+      }
       setIsHtml(Boolean(initialData?.isHtml))
+      setAttachments(initialData?.attachments || [])
       setError(null)
       setIsMinimized(false)
+      setIsDraggingOver(false)
+      setSelectedInlineImg(null)
       setRecentRecipients(getRecentRecipients())
     }
   }, [isOpen, initialData, activeAccountId, accounts])
 
-  // Close autofill on outside click
+  // Sync editor content when initialData changes
+  useEffect(() => {
+    if (editorRef.current && isOpen && body !== editorRef.current.innerHTML) {
+      if (document.activeElement !== editorRef.current) {
+        editorRef.current.innerHTML = body
+      }
+    }
+  }, [body, isOpen])
+
+  // Close autofill & context menu on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (
@@ -124,7 +232,8 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
       ) {
         setShowToAutofill(false)
       }
-      setContextMenu(null)
+      setRecipientContextMenu(null)
+      setBodyContextMenu(null)
     }
     document.addEventListener('click', handleClickOutside)
     return () => document.removeEventListener('click', handleClickOutside)
@@ -132,10 +241,404 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
 
   if (!isOpen) return null
 
+  // Selection helpers
+  const saveSelection = () => {
+    const sel = window.getSelection()
+    if (sel && sel.rangeCount > 0) {
+      savedSelectionRef.current = sel.getRangeAt(0).cloneRange()
+    }
+  }
+
+  const restoreSelection = () => {
+    if (!editorRef.current) return
+    editorRef.current.focus()
+    if (savedSelectionRef.current) {
+      const sel = window.getSelection()
+      if (sel) {
+        sel.removeAllRanges()
+        sel.addRange(savedSelectionRef.current)
+      }
+    }
+  }
+
+  // Insert image directly INLINE into editor (used when pasting or inserting inline image)
+  const insertInlineImage = (src: string, alt = 'imagem') => {
+    if (!editorRef.current) return
+    editorRef.current.focus()
+    restoreSelection()
+
+    const imgId = `img-inline-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+    const imgHtml = `<img id="${imgId}" src="${src}" alt="${alt}" tabIndex="0" class="momai-inline-img hover:opacity-95 transition-all cursor-pointer" style="max-width: 100%; height: auto; border-radius: 8px; margin: 8px 0; display: block; box-shadow: 0 2px 8px rgba(0,0,0,0.15); outline: none;" />`
+
+    document.execCommand('insertHTML', false, imgHtml)
+    setIsHtml(true)
+    setBody(editorRef.current.innerHTML)
+  }
+
+  // Read files and add as ATTACHMENT TRAY below
+  const addFilesAsAttachments = async (files: FileList | File[]) => {
+    setIsProcessingAttachments(true)
+    const newAttachments: OutgoingAttachment[] = []
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      try {
+        const att = await new Promise<OutgoingAttachment>((resolve) => {
+          const reader = new FileReader()
+          reader.onload = () => {
+            const base64Data = reader.result as string
+            resolve({
+              id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              filename: file.name,
+              contentType: file.type || 'application/octet-stream',
+              size: file.size,
+              previewUrl: file.type.startsWith('image/') ? base64Data : undefined,
+              base64Data
+            })
+          }
+          reader.onerror = () => {
+            resolve({
+              id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              filename: file.name,
+              contentType: file.type || 'application/octet-stream',
+              size: file.size
+            })
+          }
+          reader.readAsDataURL(file)
+        })
+        newAttachments.push(att)
+      } catch (err) {
+        console.error('[EmailComposer] Erro ao ler anexo de arquivo:', err)
+      }
+    }
+    if (newAttachments.length > 0) {
+      setAttachments((prev) => [...prev, ...newAttachments])
+    }
+    setIsProcessingAttachments(false)
+  }
+
+  // Convert web image URLs into ATTACHMENT TRAY below
+  const addUrlsAsAttachments = async (urls: string[]) => {
+    if (urls.length === 0) return
+    setIsProcessingAttachments(true)
+    const newAttachments: OutgoingAttachment[] = []
+
+    for (const url of urls) {
+      try {
+        const cleanUrl = url.trim()
+        let filename = 'imagem_anexa.png'
+        try {
+          const urlObj = new URL(cleanUrl)
+          const pathname = urlObj.pathname
+          const base = pathname.substring(pathname.lastIndexOf('/') + 1)
+          if (base && base.includes('.')) {
+            filename = decodeURIComponent(base)
+          }
+        } catch {
+          // fallback
+        }
+
+        if (cleanUrl.startsWith('data:image/')) {
+          const mimeMatch = cleanUrl.match(/^data:([^;]+);base64,/)
+          const contentType = mimeMatch ? mimeMatch[1] : 'image/png'
+          newAttachments.push({
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            filename,
+            contentType,
+            size: Math.round((cleanUrl.length * 3) / 4),
+            previewUrl: cleanUrl,
+            base64Data: cleanUrl
+          })
+          continue
+        }
+
+        try {
+          const res = await fetch(cleanUrl)
+          const blob = await res.blob()
+          const att = await new Promise<OutgoingAttachment>((resolve) => {
+            const reader = new FileReader()
+            reader.onload = () => {
+              const base64Data = reader.result as string
+              resolve({
+                id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                filename,
+                contentType: blob.type || 'image/png',
+                size: blob.size,
+                previewUrl: base64Data,
+                base64Data
+              })
+            }
+            reader.onerror = () => {
+              resolve({
+                id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                filename,
+                contentType: blob.type || 'image/png',
+                size: blob.size,
+                previewUrl: cleanUrl
+              })
+            }
+            reader.readAsDataURL(blob)
+          })
+          newAttachments.push(att)
+        } catch {
+          newAttachments.push({
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            filename,
+            contentType: 'image/png',
+            size: 0,
+            previewUrl: cleanUrl
+          })
+        }
+      } catch (err) {
+        console.error('[EmailComposer] Erro ao processar anexo de imagem:', err)
+      }
+    }
+
+    if (newAttachments.length > 0) {
+      setAttachments((prev) => [...prev, ...newAttachments])
+    }
+    setIsProcessingAttachments(false)
+  }
+
+  // 1. DRAG & DROP -> MUST GO TO ATTACHMENT TRAY BELOW
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounter.current = 0
+    setIsDraggingOver(false)
+
+    // A. Local files dropped -> Add to Attachment Tray
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      await addFilesAsAttachments(e.dataTransfer.files)
+      return
+    }
+
+    // B. Web images / links dragged -> Add to Attachment Tray
+    const imageUrls = extractImageUrlsFromDataTransfer(e.dataTransfer)
+    if (imageUrls.length > 0) {
+      await addUrlsAsAttachments(imageUrls)
+      return
+    }
+
+    // C. Fallback: plain text snippet
+    const text = e.dataTransfer.getData('text/plain')
+    if (text && editorRef.current) {
+      editorRef.current.focus()
+      document.execCommand('insertText', false, text)
+      setBody(editorRef.current.innerHTML)
+    }
+  }
+
+  // 2. CLIPBOARD PASTE (Ctrl+V) -> MUST PASTE INLINE INSIDE MESSAGE BODY
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    // Check if clipboard contains image files
+    if (e.clipboardData.files && e.clipboardData.files.length > 0) {
+      const filesArr = Array.from(e.clipboardData.files)
+      const imageFiles = filesArr.filter((f) => f.type.startsWith('image/'))
+      const otherFiles = filesArr.filter((f) => !f.type.startsWith('image/'))
+
+      if (imageFiles.length > 0) {
+        e.preventDefault()
+        setIsProcessingAttachments(true)
+        for (const file of imageFiles) {
+          const reader = new FileReader()
+          reader.onload = () => {
+            if (reader.result) {
+              insertInlineImage(reader.result as string, file.name)
+            }
+          }
+          reader.readAsDataURL(file)
+        }
+        setIsProcessingAttachments(false)
+      }
+
+      if (otherFiles.length > 0) {
+        e.preventDefault()
+        await addFilesAsAttachments(otherFiles)
+      }
+      return
+    }
+
+    if (e.clipboardData.items) {
+      const imageItems = Array.from(e.clipboardData.items).filter((item) =>
+        item.type.startsWith('image/')
+      )
+      if (imageItems.length > 0) {
+        e.preventDefault()
+        setIsProcessingAttachments(true)
+        for (const item of imageItems) {
+          const file = item.getAsFile()
+          if (file) {
+            const reader = new FileReader()
+            reader.onload = () => {
+              if (reader.result) {
+                insertInlineImage(reader.result as string, file.name)
+              }
+            }
+            reader.readAsDataURL(file)
+          }
+        }
+        setIsProcessingAttachments(false)
+        return
+      }
+    }
+  }
+
+  // 3. RIGHT CLICK -> COLAR (Paste) -> MUST PASTE INLINE INSIDE MESSAGE BODY
+  //
+  // Why we use sdk.clipboard.read() (native Electron clipboard via SDK):
+  // The Web Clipboard API (navigator.clipboard.read/readText) requires active
+  // document focus AND a direct user gesture on the focused element. Clicking a
+  // custom ContextMenu item loses focus, so the browser always throws DOMException.
+  // Electron's native clipboard (wrapped by sdk.clipboard) has no such restriction.
+  const handleContextMenuPaste = async () => {
+    setBodyContextMenu(null)
+
+    if (!editorRef.current) return
+    editorRef.current.focus()
+    restoreSelection()
+
+    try {
+      if (sdk?.clipboard && typeof sdk.clipboard.read === 'function') {
+        const result = await sdk.clipboard.read()
+        if (result && result.ok) {
+          if (result.type === 'image' && result.dataUrl) {
+            insertInlineImage(result.dataUrl)
+            return
+          }
+          if (result.type === 'text' && result.text) {
+            const trimmed = result.text.trim()
+            // Check if the text is an image URL
+            if (
+              trimmed.startsWith('data:image/') ||
+              /\.(png|jpe?g|webp|gif|svg|bmp|avif)(\?.*)?$/i.test(trimmed)
+            ) {
+              insertInlineImage(trimmed)
+              return
+            }
+            // Otherwise insert as plain text
+            document.execCommand('insertText', false, result.text)
+            if (editorRef.current) setBody(editorRef.current.innerHTML)
+            return
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[EmailComposer] sdk.clipboard.read error:', err)
+    }
+
+    // Last resort fallback (only triggers outside Electron, e.g. pure browser dev)
+    try {
+      document.execCommand('paste')
+      if (editorRef.current) setBody(editorRef.current.innerHTML)
+    } catch {
+      // nothing more we can do
+    }
+  }
+
+  // 4. INLINE IMAGE CLICK SELECTION & DELETE / BACKSPACE HANDLING
+  const handleEditorClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement
+    if (target && target.tagName === 'IMG') {
+      // Highlight selected image
+      setSelectedInlineImg(target as HTMLImageElement)
+      const imgs = editorRef.current?.querySelectorAll('img')
+      imgs?.forEach((img) => {
+        img.style.outline = 'none'
+        img.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)'
+      })
+      target.style.outline = '2px solid var(--accent, #6366f1)'
+      target.style.boxShadow = '0 0 0 4px rgba(99,102,241,0.3)'
+      target.focus()
+    } else {
+      // Clear image selection
+      if (selectedInlineImg) {
+        selectedInlineImg.style.outline = 'none'
+        selectedInlineImg.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)'
+        setSelectedInlineImg(null)
+      }
+    }
+  }
+
+  const handleEditorKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      // If an inline image is explicitly selected
+      if (selectedInlineImg && selectedInlineImg.parentNode) {
+        e.preventDefault()
+        selectedInlineImg.remove()
+        setSelectedInlineImg(null)
+        if (editorRef.current) {
+          setBody(editorRef.current.innerHTML)
+        }
+        return
+      }
+
+      // Check if current selection focus is an image node
+      const sel = window.getSelection()
+      if (sel && sel.rangeCount > 0) {
+        const node = sel.anchorNode
+        if (node) {
+          let imgElem: HTMLImageElement | null = null
+          if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).tagName === 'IMG') {
+            imgElem = node as HTMLImageElement
+          } else if (node.previousSibling && (node.previousSibling as HTMLElement).tagName === 'IMG') {
+            imgElem = node.previousSibling as HTMLImageElement
+          }
+          if (imgElem) {
+            e.preventDefault()
+            imgElem.remove()
+            setSelectedInlineImg(null)
+            if (editorRef.current) {
+              setBody(editorRef.current.innerHTML)
+            }
+            return
+          }
+        }
+      }
+    }
+    saveSelection()
+  }
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounter.current++
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      setIsDraggingOver(true)
+    }
+  }
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!isDraggingOver) {
+      setIsDraggingOver(true)
+    }
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounter.current--
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0
+      setIsDraggingOver(false)
+    }
+  }
+
+  const removeAttachment = (id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id))
+  }
+
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!to.trim()) {
       setError('Por favor, informe ao menos um destinatário.')
+      return
+    }
+
+    const currentContent = editorRef.current ? editorRef.current.innerHTML : body
+    if (!currentContent.trim() && attachments.length === 0) {
+      setError('Por favor, digite o conteúdo da mensagem.')
       return
     }
 
@@ -147,18 +650,18 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
         accountId: selectedAccountId,
         to: to.trim(),
         subject: subject.trim() || '(Sem assunto)',
-        body,
-        isHtml,
+        body: currentContent,
+        isHtml: isHtml || currentContent.includes('<img'),
         cc: cc.trim() || undefined,
         bcc: bcc.trim() || undefined,
         inReplyTo: initialData?.inReplyTo,
-        references: initialData?.references
+        references: initialData?.references,
+        attachments: attachments.length > 0 ? attachments : undefined
       })
 
       if (!res.ok) {
         setError(res.error || 'Falha ao enviar mensagem.')
       } else {
-        // Save to recent recipients
         saveRecipient(to.trim())
         onClose()
       }
@@ -175,16 +678,81 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
     return r.email.toLowerCase().includes(q) || (r.name && r.name.toLowerCase().includes(q))
   })
 
+  const totalAttachmentsSize = attachments.reduce((sum, a) => sum + (a.size || 0), 0)
+
   return (
     <div
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
       className={`fixed z-50 bg-card border border-border shadow-glass-lg rounded-t-xl overflow-hidden flex flex-col transition-all duration-200 animate-slide-up ${
         isMinimized
           ? 'bottom-0 right-8 w-72 h-11'
           : isMaximized
             ? 'inset-4 rounded-xl'
-            : 'bottom-0 right-8 w-[580px] h-[520px]'
+            : 'bottom-0 right-8 w-[640px] h-[560px]'
       }`}
     >
+      {/* Hidden File Inputs */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          if (e.target.files && e.target.files.length > 0) {
+            addFilesAsAttachments(e.target.files)
+            e.target.value = ''
+          }
+        }}
+      />
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          if (e.target.files && e.target.files.length > 0) {
+            addFilesAsAttachments(e.target.files)
+            e.target.value = ''
+          }
+        }}
+      />
+      <input
+        ref={imageInputInlineRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          if (e.target.files && e.target.files.length > 0) {
+            const file = e.target.files[0]
+            const reader = new FileReader()
+            reader.onload = () => {
+              if (reader.result) {
+                insertInlineImage(reader.result as string, file.name)
+              }
+            }
+            reader.readAsDataURL(file)
+            e.target.value = ''
+          }
+        }}
+      />
+
+      {/* Visual Drop Overlay (Drag to attach) */}
+      {isDraggingOver && (
+        <div className="absolute inset-0 z-50 bg-bg/90 backdrop-blur-xs border-2 border-dashed border-accent flex flex-col items-center justify-center gap-3 p-6 text-center animate-fade-in pointer-events-none">
+          <div className="w-14 h-14 rounded-2xl bg-accent/15 border border-accent/30 flex items-center justify-center text-accent animate-pulse shadow-glass-sm">
+            <ArrowUpTrayIcon className="w-7 h-7" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-text">Solte seus arquivos ou imagens aqui</p>
+            <p className="text-xs text-text-muted mt-0.5">Eles serão adicionados aos anexos da mensagem</p>
+          </div>
+        </div>
+      )}
+
       {/* Header Bar */}
       <div className="flex items-center justify-between px-4 py-2.5 bg-sidebar/90 border-b border-border select-none">
         <span className="text-xs font-semibold text-text truncate">
@@ -244,7 +812,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
             </select>
           </div>
 
-          {/* To Field with Cc/Bcc buttons and Autocomplete */}
+          {/* To Field with Autocomplete */}
           <div className="flex items-center px-4 py-2 border-b border-border/40 gap-2 relative">
             <span className="text-text-muted font-medium w-12 shrink-0">Para:</span>
             <input
@@ -298,7 +866,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
                     onContextMenu={(e) => {
                       e.preventDefault()
                       e.stopPropagation()
-                      setContextMenu({ visible: true, x: e.clientX, y: e.clientY, email: item.email })
+                      setRecipientContextMenu({ visible: true, x: e.clientX, y: e.clientY, email: item.email })
                     }}
                     className="flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-input transition-colors group select-none text-xs"
                   >
@@ -378,21 +946,108 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
             </div>
           )}
 
-          {/* Body Editor */}
-          <div className="flex-1 p-4 overflow-y-auto">
-            <textarea
-              required
-              rows={12}
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              placeholder="Escreva sua mensagem aqui..."
-              className="w-full h-full bg-transparent border-none text-text placeholder:text-text-muted focus:outline-hidden resize-none text-xs leading-relaxed font-sans"
+          {/* Gmail-Style Rich ContentEditable Editor */}
+          <div className="flex-1 p-4 overflow-y-auto relative flex flex-col">
+            <div
+              ref={editorRef}
+              contentEditable
+              suppressContentEditableWarning
+              onClick={handleEditorClick}
+              onKeyDown={handleEditorKeyDown}
+              onInput={() => {
+                if (editorRef.current) {
+                  setBody(editorRef.current.innerHTML)
+                }
+              }}
+              onKeyUp={saveSelection}
+              onMouseUp={saveSelection}
+              onPaste={handlePaste}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                saveSelection()
+                setBodyContextMenu({ visible: true, x: e.clientX, y: e.clientY })
+              }}
+              className="w-full h-full min-h-[160px] bg-transparent text-text focus:outline-hidden text-xs leading-relaxed font-sans cursor-text [&:empty]:before:content-[attr(data-placeholder)] [&:empty]:before:text-text-muted [&:empty]:before:pointer-events-none"
+              data-placeholder="Escreva sua mensagem aqui... (clique com o botão direito para Colar imagens na mensagem, ou arraste arquivos para Anexos)"
             />
           </div>
 
+          {/* Attachments Section Tray */}
+          {attachments.length > 0 && (
+            <div className="px-4 py-2.5 border-t border-border/60 bg-sidebar/30 max-h-36 overflow-y-auto">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[11px] font-semibold text-text-muted flex items-center gap-1.5">
+                  <PaperClipIcon className="w-3.5 h-3.5" />
+                  Anexos ({attachments.length})
+                </span>
+                {totalAttachmentsSize > 0 && (
+                  <span className="text-[10px] text-text-muted">
+                    Total: {formatFileSize(totalAttachmentsSize)}
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {attachments.map((att) => {
+                  const isImage = att.contentType.startsWith('image/') || Boolean(att.previewUrl)
+                  const fileInfo = getAttachmentFileInfo(att.filename, att.contentType)
+
+                  return (
+                    <div
+                      key={att.id}
+                      className="group relative flex items-center gap-2.5 p-2 rounded-xl bg-card border border-border/80 shadow-xs hover:border-accent/50 transition-all overflow-hidden"
+                    >
+                      {/* Image Thumbnail or File Icon */}
+                      {isImage && att.previewUrl ? (
+                        <div
+                          onClick={() => setPreviewImage({ url: att.previewUrl!, name: att.filename })}
+                          className="w-9 h-9 rounded-lg overflow-hidden bg-sidebar shrink-0 border border-border/40 cursor-pointer relative group/thumb"
+                          title="Clique para ampliar"
+                        >
+                          <img
+                            src={att.previewUrl}
+                            alt={att.filename}
+                            className="w-full h-full object-cover"
+                          />
+                          <div className="absolute inset-0 bg-bg/50 opacity-0 group-hover/thumb:opacity-100 flex items-center justify-center transition-opacity text-text">
+                            <EyeIcon className="w-3.5 h-3.5" />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="w-9 h-9 rounded-lg bg-sidebar flex items-center justify-center shrink-0 border border-border/40">
+                          <OfficialFileIcon category={fileInfo.category} className="w-4 h-4" />
+                        </div>
+                      )}
+
+                      {/* File Details */}
+                      <div className="flex-1 min-w-0 pr-6">
+                        <p className="text-xs font-medium text-text truncate" title={att.filename}>
+                          {att.filename}
+                        </p>
+                        <p className="text-[10px] text-text-muted mt-0.5">
+                          {att.size > 0 ? formatFileSize(att.size) : isImage ? 'Imagem' : fileInfo.label}
+                        </p>
+                      </div>
+
+                      {/* Remove Button */}
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(att.id)}
+                        className="absolute right-1.5 top-1.5 p-1 rounded-lg text-text-muted hover:text-accent hover:bg-input transition-colors opacity-70 group-hover:opacity-100"
+                        title="Remover anexo"
+                      >
+                        <XMarkIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Bottom Toolbar & Send Button */}
-          <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-sidebar/40">
-            <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between px-4 py-2.5 border-t border-border bg-sidebar/40">
+            <div className="flex items-center gap-2">
               <button
                 type="submit"
                 disabled={loading || !to.trim()}
@@ -410,6 +1065,41 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
                   </>
                 )}
               </button>
+
+              <div className="h-4 w-px bg-border/60 mx-1" />
+
+              {/* Attach File Button (To Attachment Tray) */}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isProcessingAttachments}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-text-muted hover:text-text hover:bg-input transition-colors"
+                title="Anexar arquivos ao e-mail"
+              >
+                <PaperClipIcon className="w-4 h-4" />
+                <span className="text-xs">Anexar</span>
+              </button>
+
+              {/* Insert Inline Image Button */}
+              <button
+                type="button"
+                onClick={() => imageInputInlineRef.current?.click()}
+                disabled={isProcessingAttachments}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-text-muted hover:text-text hover:bg-input transition-colors"
+                title="Inserir imagem no corpo da mensagem"
+              >
+                <PhotoIcon className="w-4 h-4" />
+                <span className="text-xs">Inserir Imagem</span>
+              </button>
+
+              {isProcessingAttachments && (
+                <div className="flex items-center gap-1.5 text-[11px] text-text-muted">
+                  <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                  <span>Processando...</span>
+                </div>
+              )}
+
+              <div className="h-4 w-px bg-border/60 mx-1" />
 
               <label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer hover:text-text select-none">
                 <input
@@ -434,27 +1124,133 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
         </form>
       )}
 
-      {/* Right-click Context Menu for Recipient Deletion */}
-      {contextMenu && contextMenu.visible && (
+      {/* Image Lightbox Preview Modal */}
+      {previewImage && (
         <div
-          className="fixed z-60 bg-card border border-border rounded-xl shadow-glass-lg py-1 px-1 text-xs text-text animate-fade-in"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
-          onClick={(e) => e.stopPropagation()}
+          onClick={() => setPreviewImage(null)}
+          className="fixed inset-0 z-60 bg-bg/80 backdrop-blur-sm flex items-center justify-center p-6 animate-fade-in cursor-zoom-out"
         >
-          <button
-            type="button"
-            onClick={() => {
-              const updated = deleteRecipient(contextMenu.email)
-              setRecentRecipients(updated)
-              setContextMenu(null)
-            }}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-accent hover:bg-input text-left font-medium transition-colors"
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-card border border-border rounded-2xl shadow-glass-lg max-w-2xl max-h-[80vh] overflow-hidden flex flex-col cursor-default animate-scale-up"
           >
-            <TrashIcon className="w-3.5 h-3.5" />
-            <span>Excluir do preenchimento automático</span>
-          </button>
+            <div className="flex items-center justify-between px-4 py-2.5 bg-sidebar border-b border-border select-none">
+              <span className="text-xs font-semibold text-text truncate">{previewImage.name}</span>
+              <button
+                type="button"
+                onClick={() => setPreviewImage(null)}
+                className="p-1 rounded-lg hover:bg-input text-text-muted hover:text-text transition-colors"
+              >
+                <XMarkIcon className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 flex items-center justify-center overflow-auto bg-sidebar/20">
+              <img
+                src={previewImage.url}
+                alt={previewImage.name}
+                className="max-h-[60vh] max-w-full object-contain rounded-lg shadow-sm"
+              />
+            </div>
+          </div>
         </div>
+      )}
+
+      {/* Body Editor Context Menu (Right Click) */}
+      {bodyContextMenu && bodyContextMenu.visible && (
+        <ContextMenu
+          x={bodyContextMenu.x}
+          y={bodyContextMenu.y}
+          onClose={() => setBodyContextMenu(null)}
+          items={[
+            {
+              id: 'paste',
+              label: 'Colar',
+              shortcut: 'Ctrl+V',
+              onClick: handleContextMenuPaste
+            },
+            {
+              id: 'copy',
+              label: 'Copiar',
+              shortcut: 'Ctrl+C',
+              onClick: () => {
+                if (editorRef.current) editorRef.current.focus()
+                document.execCommand('copy')
+              }
+            },
+            {
+              id: 'cut',
+              label: 'Recortar',
+              shortcut: 'Ctrl+X',
+              onClick: () => {
+                if (editorRef.current) editorRef.current.focus()
+                document.execCommand('cut')
+                if (editorRef.current) setBody(editorRef.current.innerHTML)
+              }
+            },
+            {
+              id: 'insert-inline-img',
+              label: 'Inserir Imagem no Conteúdo',
+              onClick: () => {
+                imageInputInlineRef.current?.click()
+              }
+            },
+            {
+              id: 'attach-file',
+              label: 'Anexar Arquivo...',
+              onClick: () => {
+                fileInputRef.current?.click()
+              }
+            },
+            {
+              id: 'select-all',
+              label: 'Selecionar Tudo',
+              shortcut: 'Ctrl+A',
+              onClick: () => {
+                if (editorRef.current) {
+                  editorRef.current.focus()
+                  document.execCommand('selectAll')
+                }
+              }
+            },
+            {
+              id: 'clear-formatting',
+              label: 'Limpar Formatação',
+              onClick: () => {
+                if (editorRef.current) {
+                  editorRef.current.focus()
+                  document.execCommand('removeFormat')
+                  setBody(editorRef.current.innerHTML)
+                }
+              }
+            }
+          ]}
+          minWidth={220}
+        />
+      )}
+
+      {/* Recipient Context Menu */}
+      {recipientContextMenu && recipientContextMenu.visible && (
+        <ContextMenu
+          x={recipientContextMenu.x}
+          y={recipientContextMenu.y}
+          onClose={() => setRecipientContextMenu(null)}
+          items={[
+            {
+              id: 'delete-recipient',
+              label: 'Excluir do preenchimento automático',
+              shortcut: 'Del',
+              danger: true,
+              onClick: () => {
+                const updated = deleteRecipient(recipientContextMenu.email)
+                setRecentRecipients(updated)
+              }
+            }
+          ]}
+          minWidth={200}
+        />
       )}
     </div>
   )
 }
+
+export default EmailComposer

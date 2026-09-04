@@ -12,10 +12,12 @@ import {
   PaperClipIcon,
   CodeBracketIcon,
   DocumentTextIcon,
-  PaperAirplaneIcon
+  PaperAirplaneIcon,
+  ShieldCheckIcon
 } from '@heroicons/react/24/outline'
 import { EmailAvatar } from './EmailAvatar'
-import type { EmailMessage } from '../services/types'
+import { AttachmentBadge } from './AttachmentBadge'
+import type { EmailMessage, EmailAttachment } from '../services/types'
 
 interface EmailReaderProps {
   email: EmailMessage | null
@@ -26,6 +28,8 @@ interface EmailReaderProps {
   onDelete: (id: string) => void
   onMarkUnread: (id: string) => void
   onQuickSendReply: (body: string) => Promise<boolean>
+  onOpenAttachment?: (email: EmailMessage, attachment: EmailAttachment) => Promise<any> | void
+  onSaveAttachment?: (email: EmailMessage, attachment: EmailAttachment) => Promise<any> | void
 }
 
 export const EmailReader: React.FC<EmailReaderProps> = ({
@@ -36,7 +40,9 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
   onForward,
   onDelete,
   onMarkUnread,
-  onQuickSendReply
+  onQuickSendReply,
+  onOpenAttachment,
+  onSaveAttachment
 }) => {
   const [viewHtml, setViewHtml] = useState(true)
   const [quickReplyText, setQuickReplyText] = useState('')
@@ -224,35 +230,78 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
           )}
         </div>
 
-        {/* Attachments Section */}
+        {/* Attachments Section (Gmail style) */}
         {email.attachments && email.attachments.length > 0 && (
-          <div className="space-y-2 pt-4 border-t border-border">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-text">
-              <PaperClipIcon className="w-4 h-4 text-accent" />
-              <span>Anexos ({email.attachments.length})</span>
+          <div className="space-y-3.5 pt-6 border-t border-border/80">
+            {/* Header: "1 anexo • Verificado por MomAI" */}
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2 text-text">
+                <span className="font-semibold text-sm">
+                  {email.attachments.length === 1
+                    ? '1 anexo'
+                    : `${email.attachments.length} anexos`}
+                </span>
+                <span className="text-text-muted">•</span>
+                <div className="flex items-center gap-1.5 text-text-muted text-xs">
+                  <ShieldCheckIcon className="w-4 h-4 text-emerald-500" />
+                  <span>Verificado por MomAI</span>
+                </div>
+              </div>
+
+              {email.attachments.length > 1 && onOpenAttachment && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (email.attachments && email.attachments.length > 0) {
+                      onOpenAttachment(email, email.attachments[0])
+                    }
+                  }}
+                  className="text-xs text-text-muted hover:text-accent font-medium transition-colors"
+                >
+                  Abrir documento
+                </button>
+              )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+            {/* Attachments Cards Grid with Realistic Previews */}
+            <div className="flex items-start gap-4 flex-wrap">
               {email.attachments.map((att, idx) => (
-                <div
+                <AttachmentBadge
                   key={idx}
-                  className="flex items-center gap-2.5 p-2.5 rounded-lg border border-border bg-input/30 text-xs text-text"
-                >
-                  <DocumentTextIcon className="w-5 h-5 text-text-muted shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <span className="font-medium truncate block">{att.filename}</span>
-                    <span className="text-[10px] text-text-muted">
-                      {(att.size / 1024).toFixed(1)} KB
-                    </span>
-                  </div>
-                </div>
+                  attachment={att}
+                  variant="card"
+                  messageId={email.id}
+                  folder={email.folder}
+                  onOpen={onOpenAttachment ? () => onOpenAttachment(email, att) : undefined}
+                  onSave={onSaveAttachment ? () => onSaveAttachment(email, att) : undefined}
+                />
               ))}
             </div>
           </div>
         )}
 
+        {/* Action Pills: Responder & Encaminhar (Gmail style) */}
+        <div className="flex items-center gap-2.5 pt-4">
+          <button
+            type="button"
+            onClick={() => onReply(email, false)}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-border/80 hover:border-accent/60 bg-input/40 hover:bg-input text-xs font-semibold text-text transition-all cursor-pointer shadow-xs"
+          >
+            <ArrowUturnLeftIcon className="w-3.5 h-3.5" />
+            <span>Responder</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onForward(email)}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-border/80 hover:border-accent/60 bg-input/40 hover:bg-input text-xs font-semibold text-text transition-all cursor-pointer shadow-xs"
+          >
+            <ArrowUturnRightIcon className="w-3.5 h-3.5" />
+            <span>Encaminhar</span>
+          </button>
+        </div>
+
         {/* Quick Reply Box */}
-        <div className="pt-6 border-t border-border space-y-3">
+        <div className="pt-4 border-t border-border space-y-3">
           <div className="flex items-center gap-2 text-xs font-semibold text-text">
             <ArrowUturnLeftIcon className="w-4 h-4 text-accent" />
             <span>Resposta Rápida</span>

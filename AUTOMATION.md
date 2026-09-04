@@ -59,3 +59,12 @@ A extensão MomAI E-mails permite criar automações ricas baseadas em recebimen
    - Ação: `momai-whatsapp.send_message`
      - `contact`: `"Meu Número"`
      - `message`: `"🚨 Novo e-mail da diretoria recebido: {{trigger.payload.subject}}"`
+
+## Modelo Se-em-lista (Hub de Automações)
+
+- **Vários gatilhos (OU)**: `trigger_ids: ["momai-emails.new_email", "<outra_ext>.<evento>"]` — qualquer um dispara. `trigger_configs` leva params por gatilho.
+- **Condições (E)** em `global_conditions`, cada uma com `kind`:
+  - `"trigger_field"` (padrão): `trigger.payload.<campo>` (ex: `from`, `subject`, `containsKeyword`);
+  - `"time_window"`: `time.time` (HH:MM, `between`/`equals`), `time.weekday` (`in`, 0=dom–6=sáb), `time.hour`, `time.date` — ex: notificar urgentes só em horário comercial;
+  - `"extension_state"`: `extension.<id>.enabled` true/false.
+- **Frequência (`policy`)**: `cooldownSeconds` (ex: 20), `maxPerDay`, `weekdays`, `startTime`/`endTime` (HH:MM, suporta 22:00–06:00), `expiresAt`. Omita para executar sempre.

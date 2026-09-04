@@ -1,46 +1,6 @@
 ---
-id: momai-emails
 name: E-mails
-description: Gerencie e-mails via SMTP/IMAP, liste mensagens, leia e-mails, responda, encaminhe e envie mensagens.
-icon: ✉️
-author: WesleyQDev
-version: 1.0.0
-intents:
-  - enviar email
-  - mandar email
-  - ler email
-  - ver meus emails
-  - checar caixa de entrada
-  - buscar email
-  - responder email
-  - encaminhar email
-  - apagar email
-  - marcar email como lido
-  - email
-  - correio
-tags:
-  - email
-  - correio
-  - comunicacao
-  - imap
-  - smtp
-tools:
-  - list_accounts
-  - list_emails
-  - read_email
-  - search_emails
-  - send_email
-  - reply_email
-  - forward_email
-  - mark_as_read
-  - mark_as_unread
-  - delete_email
-  - move_email
-triggers:
-  - email
-  - e-mail
-  - mensagens
-  - caixa de entrada
+description: Gerencie e-mails via SMTP/IMAP, liste mensagens, leia e-mails, responda, encaminhe e envie mensagens. Use quando o usuario falar de email, e-mail, correio, caixa de entrada, mensagem eletronica, ler, enviar ou responder emails.
 ---
 
 ## Instruções para o Assistente MomAI

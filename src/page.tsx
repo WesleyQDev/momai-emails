@@ -6,7 +6,7 @@ import sdk from 'momai:sdk'
 import { useExtensionEvents } from 'momai:events'
 import { emailApi } from './services/api'
 import { emailStorageCache } from './services/cache'
-import type { PublicEmailAccount, EmailFolder, EmailMessage, SendEmailPayload } from './services/types'
+import type { PublicEmailAccount, EmailFolder, EmailMessage, EmailAttachment, SendEmailPayload } from './services/types'
 import { EmailsHeader } from './components/EmailsHeader'
 import { ConnectAccountView } from './components/ConnectAccountView'
 import { Sidebar } from './components/Sidebar'
@@ -231,6 +231,10 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
     setSearchQuery(query)
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
 
+    if (query.trim()) {
+      setSelectedEmail(null)
+    }
+
     if (!query.trim()) {
       // Exit search mode — restore normal folder emails
       setIsSearchMode(false)
@@ -349,8 +353,21 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
     const cacheKey = `${accId}:${msg.id}`
     const cached = emailBodyCacheRef.current.get(cacheKey) || (accId ? emailStorageCache.getEmailBody(accId, msg.id) : null)
 
-    // SWR: If full email body is in cache, open immediately in 0ms!
-    if (cached) {
+    // SWR: If full email body is in cache, check if attachments need preview enrichment
+    const hasUnenrichedAttachments = Boolean(
+      cached &&
+      cached.attachments &&
+      cached.attachments.some(
+        (a: any) =>
+          (a.filename?.toLowerCase().endsWith('.pdf') ||
+            a.contentType?.includes('pdf') ||
+            a.contentType?.startsWith('image/')) &&
+          !a.base64Data &&
+          !a.previewDataUrl
+      )
+    )
+
+    if (cached && !hasUnenrichedAttachments) {
       emailBodyCacheRef.current.set(cacheKey, cached)
       setSelectedEmail(cached)
       setLoadingEmailContent(false)
@@ -360,8 +377,12 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
       return
     }
 
-    setSelectedEmail(msg)
-    setLoadingEmailContent(true)
+    if (cached) {
+      setSelectedEmail(cached)
+    } else {
+      setSelectedEmail(msg)
+      setLoadingEmailContent(true)
+    }
     try {
       const res = await emailApi.readEmail(msg.id, activeFolder, accId)
       if (res.ok && res.email) {
@@ -487,7 +508,47 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
     }
   }
 
-  // 7. Compose & Reply actions
+  // 7. Open Document Attachment with OS Default App
+  const handleOpenAttachment = async (msg: EmailMessage, attachment: EmailAttachment) => {
+    try {
+      const res = await emailApi.openAttachment({
+        messageId: msg.id || msg.uid,
+        filename: attachment.filename,
+        part: attachment.part,
+        folder: msg.folder || activeFolder,
+        accountId: activeAccountId || undefined
+      })
+      if (!res.ok) {
+        console.warn('[momai-emails] Falha ao abrir anexo:', res.error)
+      }
+      return res
+    } catch (err) {
+      console.error('[momai-emails] Erro ao abrir anexo:', err)
+      return { ok: false, error: String(err) }
+    }
+  }
+
+  // 7.1 Save Document Attachment with Native OS Dialog
+  const handleSaveAttachment = async (msg: EmailMessage, attachment: EmailAttachment) => {
+    try {
+      const res = await emailApi.saveAttachment({
+        messageId: msg.id || msg.uid,
+        filename: attachment.filename,
+        part: attachment.part,
+        folder: msg.folder || activeFolder,
+        accountId: activeAccountId || undefined
+      })
+      if (!res.ok && !res.cancelled) {
+        console.warn('[momai-emails] Falha ao salvar anexo:', res.error)
+      }
+      return res
+    } catch (err) {
+      console.error('[momai-emails] Erro ao salvar anexo:', err)
+      return { ok: false, error: String(err) }
+    }
+  }
+
+  // 8. Compose & Reply actions
   const handleOpenCompose = () => {
     setComposeInitialData(undefined)
     setIsComposeOpen(true)
@@ -573,13 +634,15 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
 
   return (
     <div className="w-full h-full flex flex-col bg-bg text-text overflow-hidden font-sans">
-      {/* 1. Header with Provider Logo (left) and Account Profile Switcher (right) */}
+      {/* 1. Header with Provider Logo (left), Centered Search (center), and Profile Switcher (right) */}
       <EmailsHeader
         accounts={accounts}
         activeAccountId={activeAccountId}
         onSelectAccount={handleSelectAccount}
         onOpenAddModal={() => setIsAddingAccount(true)}
         onRemoveAccount={handleRemoveAccount}
+        searchQuery={searchQuery}
+        onSearchChange={handleSearchChange}
       />
 
       {/* 2. Main Workspace */}
@@ -606,6 +669,8 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
             onDelete={handleDelete}
             onMarkUnread={handleMarkUnread}
             onQuickSendReply={handleQuickSendReply}
+            onOpenAttachment={(email, att) => handleOpenAttachment(email, att)}
+            onSaveAttachment={(email, att) => handleSaveAttachment(email, att)}
           />
         ) : (
           <EmailList
@@ -624,6 +689,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
             onDelete={handleDelete}
             onBatchDelete={handleBatchDelete}
             onBatchMarkRead={handleBatchMarkRead}
+            onOpenAttachment={handleOpenAttachment}
             hasMore={hasMoreMessages}
             loadingMore={loadingMoreMessages}
             onLoadMore={loadMoreEmails}

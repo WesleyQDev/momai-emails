@@ -15,11 +15,14 @@ import {
   InformationCircleIcon,
   CheckCircleIcon,
   ChevronLeftIcon,
-  ChevronRightIcon
+  ChevronRightIcon,
+  PaperClipIcon
 } from '@heroicons/react/24/outline'
 import { StarIcon as StarOutline } from '@heroicons/react/24/outline'
-import type { EmailMessage } from '../services/types'
+import type { EmailMessage, EmailAttachment } from '../services/types'
 import { EmailAvatar } from './EmailAvatar'
+import { AttachmentBadge } from './AttachmentBadge'
+import ContextMenu from './ContextMenu'
 import { CATEGORY_TRANSLATIONS } from '../services/i18n'
 
 interface EmailListProps {
@@ -38,6 +41,7 @@ interface EmailListProps {
   onDelete: (id: string) => void
   onBatchDelete: (ids: string[]) => void
   onBatchMarkRead: (ids: string[]) => void
+  onOpenAttachment?: (msg: EmailMessage, attachment: EmailAttachment) => Promise<any> | void
   hasMore?: boolean
   loadingMore?: boolean
   onLoadMore?: () => void
@@ -60,6 +64,7 @@ export const EmailList: React.FC<EmailListProps> = ({
   onDelete,
   onBatchDelete,
   onBatchMarkRead,
+  onOpenAttachment,
   hasMore = false,
   loadingMore = false,
   onLoadMore,
@@ -68,6 +73,7 @@ export const EmailList: React.FC<EmailListProps> = ({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [unreadOnly, setUnreadOnly] = useState(false)
   const [activeCategory, setActiveCategory] = useState<'primary' | 'promotions' | 'social' | 'updates'>('primary')
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; msg: EmailMessage } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
 
@@ -229,21 +235,8 @@ export const EmailList: React.FC<EmailListProps> = ({
           )}
         </div>
 
-        {/* Right: Search box + Gmail pagination counter */}
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-          <div className="w-36 sm:w-52 md:w-60 flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-lg bg-input border border-border focus-within:border-accent transition-all">
-            <MagnifyingGlassIcon className="w-4 h-4 text-text-muted shrink-0 pointer-events-none" />
-            <input
-              type="text"
-              placeholder="Pesquisar e-mails..."
-              value={searchQuery}
-              onChange={(e) => onSearchChange(e.target.value)}
-              className="w-full bg-transparent border-0 p-0 text-xs text-text placeholder:text-text-muted focus:outline-hidden"
-            />
-          </div>
-
-          {/* Gmail Pagination Counter (e.g. 1-50 de 5.989) */}
-          <div className="flex items-center gap-1.5 text-xs text-text-muted select-none pl-1">
+        {/* Right: Gmail pagination counter */}
+        <div className="flex items-center gap-1.5 text-xs text-text-muted select-none pl-1 shrink-0">
             <span className="font-mono text-[11px] whitespace-nowrap">
               {messages.length === 0
                 ? '0 de 0'
@@ -275,7 +268,6 @@ export const EmailList: React.FC<EmailListProps> = ({
             </div>
           </div>
         </div>
-      </div>
 
       {/* Gmail Category Tabs: Principal, Promoções, Social, Atualizações (only in INBOX) */}
       {isInbox && (
@@ -353,7 +345,12 @@ export const EmailList: React.FC<EmailListProps> = ({
               <div
                 key={msg.id}
                 onClick={() => onSelectEmail(msg)}
-                className={`group flex items-center gap-3 px-4 py-2.5 cursor-pointer text-xs transition-colors relative ${
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setContextMenu({ x: e.clientX, y: e.clientY, msg })
+                }}
+                className={`group flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 cursor-pointer text-xs transition-colors relative flex-nowrap min-w-0 overflow-hidden ${
                   isSelected
                     ? 'bg-accent/10 border-l-2 border-l-accent'
                     : isChecked
@@ -364,7 +361,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                 }`}
               >
                 {/* Left check & star */}
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                   <input
                     type="checkbox"
                     checked={isChecked}
@@ -388,28 +385,58 @@ export const EmailList: React.FC<EmailListProps> = ({
                   </button>
                 </div>
 
-                {/* Sender */}
-                <div className="w-48 shrink-0 flex items-center gap-2.5 truncate">
+                {/* Sender (responsive width for windowed mode) */}
+                <div className="w-28 sm:w-40 md:w-48 shrink-0 flex items-center gap-2 truncate">
                   <EmailAvatar name={msg.from.name} address={msg.from.address} size="sm" />
                   <span className={`truncate ${msg.read ? 'text-text-muted font-normal' : 'text-text font-bold'}`}>
                     {msg.from.name || msg.from.address}
                   </span>
                 </div>
 
-                {/* Subject & snippet */}
-                <div className="flex-1 min-w-0 flex items-center gap-2 truncate">
-                  <span className={`truncate ${msg.read ? 'text-text/80 font-normal' : 'text-text font-bold'}`}>
+                {/* Subject, snippet & Attachment Chips — RIGOROSAMENTE NA MESMA LINHA */}
+                <div className="flex-1 min-w-0 flex items-center gap-2 overflow-hidden whitespace-nowrap">
+                  <span className={`truncate shrink-0 max-w-[50%] sm:max-w-[60%] md:max-w-none ${msg.read ? 'text-text/80 font-normal' : 'text-text font-bold'}`}>
                     {msg.subject || '(Sem assunto)'}
                   </span>
                   {msg.snippet && (
-                    <span className="text-text-muted font-normal truncate hidden sm:inline">
+                    <span className="text-text-muted font-normal truncate hidden lg:inline min-w-0 flex-1">
                       — {msg.snippet}
                     </span>
                   )}
+
+                  {/* Attachment chip (Gmail style) NA MESMA LINHA */}
+                  {msg.attachments && msg.attachments.length > 0 && (() => {
+                    const firstAtt = msg.attachments![0]
+                    return (
+                      <div className="shrink-0 flex items-center gap-1.5 overflow-hidden">
+                        <AttachmentBadge
+                          attachment={firstAtt}
+                          variant="chip"
+                          messageId={msg.id}
+                          folder={msg.folder}
+                          className="max-w-[120px] sm:max-w-[150px] py-0.5 px-2 text-[10px]"
+                          onOpen={onOpenAttachment ? () => onOpenAttachment(msg, firstAtt) : undefined}
+                        />
+                        {msg.attachments!.length > 1 && (
+                          <span
+                            className="text-[10px] text-text-muted px-1.5 py-0.5 rounded-full border border-border/70 bg-input/40 select-none shrink-0"
+                            title={`${msg.attachments!.length} anexos`}
+                          >
+                            +{msg.attachments!.length - 1}
+                          </span>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </div>
 
-                {/* Right: Date or Hover Actions */}
-                <div className="shrink-0 flex items-center gap-2">
+                {/* Right: Clip, Date or Hover Actions */}
+                <div className="shrink-0 flex items-center gap-2 ml-auto text-right whitespace-nowrap">
+                  {/* Paperclip indicator */}
+                  {(msg.hasAttachments || (msg.attachments && msg.attachments.length > 0)) && (
+                    <PaperClipIcon className="w-3.5 h-3.5 text-text-muted shrink-0" title="Contém anexos" />
+                  )}
+
                   {/* Action buttons on hover */}
                   <div className="hidden group-hover:flex items-center gap-1">
                     {msg.read ? (
@@ -480,6 +507,63 @@ export const EmailList: React.FC<EmailListProps> = ({
           </div>
         )}
       </div>
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={() => setContextMenu(null)}
+          items={[
+            {
+              id: 'open',
+              label: 'Abrir',
+              onClick: () => onSelectEmail(contextMenu.msg)
+            },
+            {
+              id: 'star',
+              label: contextMenu.msg.starred ? 'Desfavoritar' : 'Favoritar',
+              onClick: () => onToggleStarred(contextMenu.msg.id, contextMenu.msg.starred)
+            },
+            contextMenu.msg.read
+              ? {
+                  id: 'unread',
+                  label: 'Marcar como não lido',
+                  onClick: () => onMarkUnread(contextMenu.msg.id)
+                }
+              : {
+                  id: 'read',
+                  label: 'Marcar como lido',
+                  onClick: () => onMarkRead(contextMenu.msg.id)
+                },
+            {
+              id: 'copy-subject',
+              label: 'Copiar assunto',
+              onClick: () => {
+                try {
+                  void navigator.clipboard?.writeText?.(contextMenu.msg.subject || '(Sem assunto)')
+                } catch {}
+              }
+            },
+            {
+              id: 'copy-from',
+              label: 'Copiar remetente',
+              onClick: () => {
+                try {
+                  const from = contextMenu.msg.from?.name
+                    ? `${contextMenu.msg.from.name} <${contextMenu.msg.from.address}>`
+                    : contextMenu.msg.from?.address || ''
+                  void navigator.clipboard?.writeText?.(from)
+                } catch {}
+              }
+            },
+            {
+              id: 'delete',
+              label: 'Excluir',
+              danger: true,
+              onClick: () => onDelete(contextMenu.msg.id)
+            }
+          ]}
+        />
+      )}
     </div>
   )
 }

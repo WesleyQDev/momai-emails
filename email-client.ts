@@ -5,6 +5,10 @@
 
 'use strict'
 
+const fs = require('node:fs')
+const path = require('node:path')
+const os = require('node:os')
+const { exec, execFile } = require('node:child_process')
 const { ImapFlow } = require('imapflow')
 const nodemailer = require('nodemailer')
 const { simpleParser } = require('mailparser')
@@ -211,6 +215,54 @@ async function getMailboxStatus(account: any, folder = 'INBOX') {
 }
 
 /**
+ * Helper to traverse ImapFlow bodyStructure tree and extract attachments metadata.
+ */
+function extractAttachmentsFromBodyStructure(structure: any): any[] {
+  const attachments: any[] = []
+  if (!structure) return attachments
+
+  function traverse(node: any) {
+    if (!node) return
+    if (Array.isArray(node.childNodes) && node.childNodes.length > 0) {
+      for (const child of node.childNodes) {
+        traverse(child)
+      }
+      return
+    }
+
+    const disposition = (node.disposition || '').toLowerCase()
+    const rawFilename =
+      node.dispositionParameters?.filename ||
+      node.parameters?.name ||
+      node.parameters?.filename ||
+      ''
+    const filename = String(rawFilename || '').trim().replace(/^["']|["']$/g, '')
+
+    const type = (node.type || 'application').toLowerCase()
+    const subtype = (node.subtype || 'octet-stream').toLowerCase()
+    const mimeType = `${type}/${subtype}`
+
+    const isExplicitAttachment = disposition === 'attachment'
+    const hasFileName = filename.length > 0
+    const isNotStandardBody = mimeType !== 'text/plain' && mimeType !== 'text/html'
+
+    // Consider as attachment if explicit attachment or has a file name and is not plain body
+    if (isExplicitAttachment || (hasFileName && (isNotStandardBody || disposition !== 'inline'))) {
+      attachments.push({
+        id: node.id || (node.part ? String(node.part) : filename),
+        part: node.part ? String(node.part) : undefined,
+        filename: filename || `anexo-${node.part || '1'}.${subtype}`,
+        contentType: mimeType,
+        size: typeof node.size === 'number' ? node.size : 0
+      })
+    }
+  }
+
+  traverse(structure)
+  return attachments
+}
+
+/**
  * Fetch messages list from a mailbox using warm connection.
  * Supports offset-based pagination for infinite scroll.
  */
@@ -233,12 +285,13 @@ async function fetchMessages(account: any, folder = 'INBOX', limit = 50, unreadO
       const hasMore = (offset + limit) < uids.length
       for await (const msg of client.fetch(
         targetUids.join(','),
-        { uid: true, envelope: true, flags: true, bodyStructure: false, size: true },
+        { uid: true, envelope: true, flags: true, bodyStructure: true, size: true },
         { uid: true }
       )) {
         const env = msg.envelope || {}
         const fromAddr = env.from?.[0] || { name: '', address: 'desconhecido@email.com' }
         const toAddrs = (env.to || []).map((t: any) => ({ name: t.name || '', address: t.address || '' }))
+        const atts = extractAttachmentsFromBodyStructure(msg.bodyStructure)
         messages.push({
           id: String(msg.uid || msg.seq),
           uid: msg.uid || msg.seq,
@@ -251,7 +304,9 @@ async function fetchMessages(account: any, folder = 'INBOX', limit = 50, unreadO
           timestamp: env.date ? new Date(env.date).getTime() : Date.now(),
           read: msg.flags ? msg.flags.has('\\Seen') : false,
           starred: msg.flags ? msg.flags.has('\\Flagged') : false,
-          snippet: ''
+          snippet: '',
+          hasAttachments: atts.length > 0,
+          attachments: atts
         })
       }
       messages.sort((a, b) => b.timestamp - a.timestamp)
@@ -265,12 +320,13 @@ async function fetchMessages(account: any, folder = 'INBOX', limit = 50, unreadO
       const range = `${startSeq}:${endSeq}`
       for await (const msg of client.fetch(
         range,
-        { uid: true, envelope: true, flags: true, bodyStructure: false, size: true },
+        { uid: true, envelope: true, flags: true, bodyStructure: true, size: true },
         { uid: false }
       )) {
         const env = msg.envelope || {}
         const fromAddr = env.from?.[0] || { name: '', address: 'desconhecido@email.com' }
         const toAddrs = (env.to || []).map((t: any) => ({ name: t.name || '', address: t.address || '' }))
+        const atts = extractAttachmentsFromBodyStructure(msg.bodyStructure)
         messages.push({
           id: String(msg.uid || msg.seq),
           uid: msg.uid || msg.seq,
@@ -283,7 +339,9 @@ async function fetchMessages(account: any, folder = 'INBOX', limit = 50, unreadO
           timestamp: env.date ? new Date(env.date).getTime() : Date.now(),
           read: msg.flags ? msg.flags.has('\\Seen') : false,
           starred: msg.flags ? msg.flags.has('\\Flagged') : false,
-          snippet: ''
+          snippet: '',
+          hasAttachments: atts.length > 0,
+          attachments: atts
         })
       }
       const hasMore = startSeq > 1
@@ -296,9 +354,110 @@ async function fetchMessages(account: any, folder = 'INBOX', limit = 50, unreadO
 }
 
 /**
+ * Generates a real PNG thumbnail of the first page/sheet of a document (PDF, DOCX, XLSX, etc.)
+ * using native Windows WinRT and Office headless automation.
+ */
+async function generateDocumentThumbnail(docPath: string, width = 400): Promise<string | null> {
+  if (process.platform !== 'win32') return null
+  if (!docPath || !fs.existsSync(docPath)) return null
+
+  const thumbPath = `${docPath}.thumb.png`
+  if (fs.existsSync(thumbPath)) {
+    try {
+      const st = fs.statSync(thumbPath)
+      if (st.size > 0) {
+        const buf = fs.readFileSync(thumbPath)
+        return `data:image/png;base64,${buf.toString('base64')}`
+      }
+    } catch {}
+  }
+
+  const ext = path.extname(docPath).toLowerCase()
+  const isPdf = ext === '.pdf'
+  const isOffice = ['.docx', '.doc', '.rtf', '.odt', '.xlsx', '.xls', '.csv'].includes(ext)
+
+  if (!isPdf && !isOffice) return null
+
+  const scriptName = isPdf ? 'render-pdf-thumb.ps1' : 'render-office-thumb.ps1'
+  const scriptCandidates = [
+    path.join(__dirname, 'scripts', scriptName),
+    path.join(__dirname, '..', 'scripts', scriptName),
+    path.join(process.cwd(), 'scripts', scriptName)
+  ]
+  const scriptPath = scriptCandidates.find((p) => fs.existsSync(p))
+  if (!scriptPath) {
+    console.warn(`[momai-emails] ${scriptName} não encontrado`)
+    return null
+  }
+
+  return new Promise((resolve) => {
+    const args = isPdf
+      ? [
+          '-NoProfile',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          scriptPath,
+          '-PdfPath',
+          docPath,
+          '-PngPath',
+          thumbPath,
+          '-Width',
+          String(width)
+        ]
+      : [
+          '-NoProfile',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          scriptPath,
+          '-DocPath',
+          docPath,
+          '-OutPngPath',
+          thumbPath
+        ]
+
+    execFile('powershell.exe', args, { timeout: 25000 }, (err: any) => {
+      if (err) {
+        console.warn(`[momai-emails] Falha ao renderizar thumb de ${ext}:`, err?.message || err)
+        return resolve(null)
+      }
+      try {
+        if (fs.existsSync(thumbPath)) {
+          const buf = fs.readFileSync(thumbPath)
+          if (buf.length > 0) {
+            return resolve(`data:image/png;base64,${buf.toString('base64')}`)
+          }
+        }
+      } catch {}
+      resolve(null)
+    })
+  })
+}
+
+const generatePdfThumbnail = generateDocumentThumbnail
+
+/**
  * Fetch full message details including parsed body (HTML/Text) and attachments.
  */
 async function fetchFullMessage(account: any, uidOrMessageId: string | number, folder = 'INBOX') {
+  const accKey = String(account.email || account.id || 'default').toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_')
+  const targetUidNum = typeof uidOrMessageId === 'number' ? uidOrMessageId : parseInt(String(uidOrMessageId), 10)
+
+  // 0ms Disk Cache: If message was parsed and cached before, return immediately without network overhead
+  if (!isNaN(targetUidNum)) {
+    const quickCacheBaseDir = path.join(os.tmpdir(), 'momai-emails-attachments', accKey, String(targetUidNum))
+    const quickMetaFile = path.join(quickCacheBaseDir, 'message_parsed.json')
+    if (fs.existsSync(quickMetaFile)) {
+      try {
+        const cachedJson = JSON.parse(fs.readFileSync(quickMetaFile, 'utf8'))
+        if (cachedJson && cachedJson.id) {
+          return cachedJson
+        }
+      } catch {}
+    }
+  }
+
   const client = await getConnectedImapClient(account)
   const lock = await client.getMailboxLock(folder)
   try {
@@ -309,6 +468,17 @@ async function fetchFullMessage(account: any, uidOrMessageId: string | number, f
       const found = await client.search({ header: ['message-id', uidOrMessageId] }, { uid: true })
       if (found && found.length > 0) resolvedUid = found[0]
       else return null
+    }
+
+    const cacheBaseDir = path.join(os.tmpdir(), 'momai-emails-attachments', accKey, String(resolvedUid))
+    const metaFile = path.join(cacheBaseDir, 'message_parsed.json')
+    if (fs.existsSync(metaFile)) {
+      try {
+        const cachedJson = JSON.parse(fs.readFileSync(metaFile, 'utf8'))
+        if (cachedJson && cachedJson.id) {
+          return cachedJson
+        }
+      } catch {}
     }
 
     const download = await client.download(resolvedUid, undefined, { uid: true })
@@ -329,15 +499,77 @@ async function fetchFullMessage(account: any, uidOrMessageId: string | number, f
       }
     }
 
-    const attachments = (parsed.attachments || []).map((att: any) => ({
-      id: att.cid || att.filename,
-      filename: att.filename || 'anexo',
-      contentType: att.contentType || 'application/octet-stream',
-      size: att.size || (att.content ? att.content.length : 0),
-      contentId: att.cid
-    }))
+    try {
+      if (!fs.existsSync(cacheBaseDir)) fs.mkdirSync(cacheBaseDir, { recursive: true })
+    } catch {}
 
-    return {
+    const attachments: any[] = []
+    for (const att of (parsed.attachments || [])) {
+      const filename = att.filename || 'anexo'
+      const cleanName = path.basename(filename)
+      let localPath: string | undefined
+      let previewDataUrl: string | undefined
+      let base64Data: string | undefined
+
+      const filePath = path.join(cacheBaseDir, cleanName)
+
+      if (att.content && Buffer.isBuffer(att.content)) {
+        try {
+          fs.writeFileSync(filePath, att.content)
+          localPath = filePath
+        } catch {}
+
+        const mime = (att.contentType || '').toLowerCase()
+        const ext = path.extname(filename).toLowerCase()
+
+        if (mime.startsWith('image/')) {
+          previewDataUrl = `data:${att.contentType};base64,${att.content.toString('base64')}`
+        } else if (
+          ext === '.pdf' ||
+          mime.includes('pdf') ||
+          ['.docx', '.doc', '.rtf', '.odt', '.xlsx', '.xls', '.csv'].includes(ext) ||
+          mime.includes('word') ||
+          mime.includes('spreadsheet') ||
+          mime.includes('excel')
+        ) {
+          if (att.content.length <= 15 * 1024 * 1024 && (ext === '.pdf' || mime.includes('pdf'))) {
+            base64Data = att.content.toString('base64')
+          }
+          if (localPath) {
+            try {
+              const docThumb = await generateDocumentThumbnail(localPath, 400)
+              if (docThumb) {
+                previewDataUrl = docThumb
+              }
+            } catch (err) {
+              console.warn('[momai-emails] Erro ao gerar thumbnail de documento:', err)
+            }
+          }
+        }
+      } else if (fs.existsSync(filePath)) {
+        localPath = filePath
+        const ext = path.extname(filename).toLowerCase()
+        if (['.pdf', '.docx', '.doc', '.rtf', '.odt', '.xlsx', '.xls', '.csv'].includes(ext)) {
+          try {
+            const docThumb = await generateDocumentThumbnail(localPath, 400)
+            if (docThumb) previewDataUrl = docThumb
+          } catch {}
+        }
+      }
+
+      attachments.push({
+        id: att.cid || filename,
+        filename,
+        contentType: att.contentType || 'application/octet-stream',
+        size: att.size || (att.content ? att.content.length : 0),
+        contentId: att.cid,
+        localPath,
+        previewDataUrl,
+        base64Data
+      })
+    }
+
+    const resultEmail = {
       id: String(resolvedUid),
       uid: resolvedUid,
       messageId: parsed.messageId || String(resolvedUid),
@@ -357,6 +589,12 @@ async function fetchFullMessage(account: any, uidOrMessageId: string | number, f
       hasAttachments: attachments.length > 0,
       attachments
     }
+
+    try {
+      fs.writeFileSync(path.join(cacheBaseDir, 'message_parsed.json'), JSON.stringify(resultEmail), 'utf8')
+    } catch {}
+
+    return resultEmail
   } finally {
     lock.release()
   }
@@ -382,12 +620,13 @@ async function searchMessages(account: any, query: string, folder = 'INBOX', lim
 
     for await (const msg of client.fetch(
       targetUids.join(','),
-      { uid: true, envelope: true, flags: true },
+      { uid: true, envelope: true, flags: true, bodyStructure: true },
       { uid: true }
     )) {
       const env = msg.envelope || {}
       const fromAddr = env.from?.[0] || { name: '', address: '' }
       const toAddrs = (env.to || []).map((t: any) => ({ name: t.name || '', address: t.address || '' }))
+      const atts = extractAttachmentsFromBodyStructure(msg.bodyStructure)
       messages.push({
         id: String(msg.uid),
         uid: msg.uid,
@@ -400,7 +639,9 @@ async function searchMessages(account: any, query: string, folder = 'INBOX', lim
         timestamp: env.date ? new Date(env.date).getTime() : Date.now(),
         read: msg.flags ? msg.flags.has('\\Seen') : false,
         starred: msg.flags ? msg.flags.has('\\Flagged') : false,
-        snippet: ''
+        snippet: '',
+        hasAttachments: atts.length > 0,
+        attachments: atts
       })
     }
   } finally {
@@ -435,6 +676,30 @@ async function sendEmail(account: any, payload: any) {
     if (payload.inReplyTo) {
       mailOptions.inReplyTo = payload.inReplyTo
       mailOptions.references = payload.references || payload.inReplyTo
+    }
+
+    if (Array.isArray(payload.attachments) && payload.attachments.length > 0) {
+      mailOptions.attachments = payload.attachments.map((att: any) => {
+        const item: any = {
+          filename: att.filename || 'anexo'
+        }
+        if (att.contentType) item.contentType = att.contentType
+        if (att.content) {
+          const raw = typeof att.content === 'string' && att.content.includes(';base64,')
+            ? att.content.split(';base64,')[1]
+            : att.content
+          item.content = Buffer.from(raw, 'base64')
+        } else if (att.base64Data) {
+          const raw = typeof att.base64Data === 'string' && att.base64Data.includes(';base64,')
+            ? att.base64Data.split(';base64,')[1]
+            : att.base64Data
+          item.content = Buffer.from(raw, 'base64')
+        } else if (att.path || att.localPath) {
+          item.path = att.path || att.localPath
+        }
+        if (att.cid || att.contentId) item.cid = att.cid || att.contentId
+        return item
+      })
     }
 
     const info = await transporter.sendMail(mailOptions)
@@ -515,6 +780,180 @@ async function moveMessage(account: any, uid: number, fromFolder: string, toFold
   }
 }
 
+/**
+ * Downloads a specific attachment from an email and saves it to a persistent temp folder.
+ * If already downloaded, returns the cached file path immediately (0ms).
+ */
+async function downloadAttachmentToFile(
+  account: any,
+  uidOrMessageId: string | number,
+  folder = 'INBOX',
+  filename?: string,
+  part?: string
+): Promise<string | null> {
+  const accKey = String(account.email || account.id || 'default').toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_')
+  const resolvedUidStr = String(uidOrMessageId)
+  const cacheBaseDir = path.join(os.tmpdir(), 'momai-emails-attachments', accKey, resolvedUidStr)
+
+  try {
+    if (!fs.existsSync(cacheBaseDir)) fs.mkdirSync(cacheBaseDir, { recursive: true })
+  } catch {}
+
+  // Check if file is already cached
+  if (filename) {
+    const cleanName = path.basename(filename)
+    const cachedFile = path.join(cacheBaseDir, cleanName)
+    if (fs.existsSync(cachedFile)) {
+      const st = fs.statSync(cachedFile)
+      if (st.size > 0) return cachedFile
+    }
+  }
+
+  const client = await getConnectedImapClient(account)
+  const lock = await client.getMailboxLock(folder)
+  try {
+    const targetUid = typeof uidOrMessageId === 'number' ? uidOrMessageId : parseInt(String(uidOrMessageId), 10)
+    let resolvedUid = targetUid
+
+    if (isNaN(resolvedUid)) {
+      const found = await client.search({ header: ['message-id', uidOrMessageId] }, { uid: true })
+      if (found && found.length > 0) resolvedUid = found[0]
+      else return null
+    }
+
+    const download = await client.download(resolvedUid, undefined, { uid: true })
+    if (!download || !download.content) return null
+
+    const parsed = await simpleParser(download.content)
+    let matchedPath: string | null = null
+
+    for (const att of parsed.attachments || []) {
+      const attName = att.filename || 'anexo'
+      const cleanAttName = path.basename(attName)
+      const savePath = path.join(cacheBaseDir, cleanAttName)
+      if (att.content && Buffer.isBuffer(att.content)) {
+        fs.writeFileSync(savePath, att.content)
+      }
+
+      const ext = path.extname(cleanAttName).toLowerCase()
+      if (['.pdf', '.docx', '.doc', '.rtf', '.odt', '.xlsx', '.xls', '.csv'].includes(ext) && fs.existsSync(savePath)) {
+        generateDocumentThumbnail(savePath, 400).catch(() => {})
+      }
+
+      if (!matchedPath) {
+        if (!filename || cleanAttName.toLowerCase() === path.basename(filename).toLowerCase()) {
+          matchedPath = savePath
+        }
+      }
+    }
+
+    if (!matchedPath && (parsed.attachments || []).length > 0) {
+      const firstAtt = parsed.attachments[0]
+      const firstPath = path.join(cacheBaseDir, path.basename(firstAtt.filename || 'anexo'))
+      if (fs.existsSync(firstPath)) matchedPath = firstPath
+    }
+
+    return matchedPath
+  } finally {
+    lock.release()
+  }
+}
+
+/**
+ * Opens a local document file using the operating system's default viewer/application
+ * (e.g. Word for .docx, Excel for .xlsx, Acrobat/browser for .pdf).
+ */
+function openFileWithDefaultApp(filePath: string): Promise<{ ok: boolean; path?: string; error?: string }> {
+  return new Promise((resolve) => {
+    const normalized = path.resolve(String(filePath).trim())
+    if (!fs.existsSync(normalized)) {
+      return resolve({ ok: false, error: 'Arquivo não encontrado no disco local.' })
+    }
+
+    // Windows: 'start "" "filepath"' safely handles spaces and launches the default shell program
+    const cmd = process.platform === 'win32'
+      ? `start "" "${normalized}"`
+      : process.platform === 'darwin'
+        ? `open "${normalized}"`
+        : `xdg-open "${normalized}"`
+
+    exec(cmd, (err: any) => {
+      if (err) {
+        console.error('[momai-emails] Erro ao abrir arquivo no sistema:', err)
+        return resolve({ ok: false, error: err?.message || String(err) })
+      }
+      return resolve({ ok: true, path: normalized })
+    })
+  })
+}
+
+/**
+ * Prompts the user with a native Windows SaveFileDialog (via PowerShell) to choose
+ * where to save the attachment file. If confirmed, copies the file to the chosen path.
+ */
+function saveAttachmentWithDialog(sourceFilePath: string, suggestedName?: string): Promise<{ ok: boolean; savedPath?: string; cancelled?: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    const normalized = path.resolve(String(sourceFilePath).trim())
+    if (!fs.existsSync(normalized)) {
+      return resolve({ ok: false, error: 'Arquivo fonte não encontrado no disco local.' })
+    }
+
+    const scriptPath = path.join(__dirname, 'scripts', 'save-attachment-dialog.ps1')
+    const fileName = suggestedName ? path.basename(suggestedName) : path.basename(normalized)
+
+    if (process.platform === 'win32' && fs.existsSync(scriptPath)) {
+      const args = [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        scriptPath,
+        '-SourcePath',
+        normalized,
+        '-InitialFileName',
+        fileName
+      ]
+
+      execFile('powershell.exe', args, { windowsHide: true }, (err: any, stdout: string, stderr: string) => {
+        if (err) {
+          console.error('[momai-emails] Erro no diálogo de salvar anexo:', err, stderr)
+          return resolve({ ok: false, error: stderr || err?.message || 'Falha ao abrir diálogo de salvamento.' })
+        }
+
+        const out = String(stdout).trim()
+        if (out.startsWith('SAVED:')) {
+          const destPath = out.slice('SAVED:'.length).trim()
+          return resolve({ ok: true, savedPath: destPath })
+        } else if (out.includes('CANCELLED')) {
+          return resolve({ ok: true, cancelled: true })
+        }
+
+        return resolve({ ok: false, error: out || 'Operação cancelada ou sem resposta.' })
+      })
+    } else {
+      // Fallback non-Windows or if script missing: copy to user's Downloads directory
+      try {
+        const downloadsDir = path.join(os.homedir(), 'Downloads')
+        if (!fs.existsSync(downloadsDir)) {
+          fs.mkdirSync(downloadsDir, { recursive: true })
+        }
+        let targetPath = path.join(downloadsDir, fileName)
+        let counter = 1
+        const ext = path.extname(fileName)
+        const nameWithoutExt = path.basename(fileName, ext)
+        while (fs.existsSync(targetPath)) {
+          targetPath = path.join(downloadsDir, `${nameWithoutExt} (${counter})${ext}`)
+          counter++
+        }
+        fs.copyFileSync(normalized, targetPath)
+        return resolve({ ok: true, savedPath: targetPath })
+      } catch (copyErr: any) {
+        return resolve({ ok: false, error: copyErr?.message || String(copyErr) })
+      }
+    }
+  })
+}
+
 module.exports = {
   createImapClient,
   createSmtpTransporter,
@@ -530,5 +969,10 @@ module.exports = {
   setMessageReadStatus,
   setMessageStarredStatus,
   deleteMessage,
-  moveMessage
+  moveMessage,
+  downloadAttachmentToFile,
+  openFileWithDefaultApp,
+  saveAttachmentWithDialog,
+  generatePdfThumbnail,
+  generateDocumentThumbnail
 }

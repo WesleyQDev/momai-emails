@@ -3,7 +3,8 @@
   "name": "MomAI E-mails",
   "kind": "packaged",
   "is_official": true,
-  "description": "Cliente de e-mail completo com suporte a SMTP/IMAP, múltiplas contas, automações e integração com o assistente MomAI.",
+  "description": "Leia, envie e organize seus e-mails por voz ou texto, sem abrir o navegador.",
+  "author": "WesleyQDev",
   "icon_bg": "#4f46e5",
   "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#ffffff\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"2\" y=\"4\" width=\"20\" height=\"16\" rx=\"3\" fill=\"#ffffff\" fill-opacity=\"0.18\" stroke=\"#ffffff\"/><path d=\"M22 7l-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7\" stroke=\"#ffffff\"/></svg>",
   "sidebar_icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#6366f1\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"2\" y=\"4\" width=\"20\" height=\"16\" rx=\"3\" fill=\"#6366f1\" fill-opacity=\"0.1\" stroke=\"#6366f1\"/><path d=\"M22 7l-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7\" stroke=\"#6366f1\"/></svg>",
@@ -82,6 +83,53 @@
         "required": ["messageId"],
         "properties": {
           "messageId": { "type": "string", "description": "ID ou UID da mensagem" },
+          "accountId": { "type": "string", "description": "ID ou e-mail da conta (opcional)" },
+          "folder": { "type": "string", "description": "Pasta da mensagem (padrão: INBOX)" }
+        }
+      }
+    },
+    {
+      "name": "open_attachment",
+      "label": "Abrir Anexo",
+      "description": "Baixa e abre um documento anexado ao e-mail (PDF, Word, Excel, etc.) utilizando a ferramenta/aplicativo padrão do computador.",
+      "parameters": {
+        "type": "object",
+        "required": ["messageId"],
+        "properties": {
+          "messageId": { "type": "string", "description": "ID ou UID da mensagem" },
+          "filename": { "type": "string", "description": "Nome do arquivo anexo a abrir" },
+          "part": { "type": "string", "description": "Número da parte MIME do anexo (opcional)" },
+          "accountId": { "type": "string", "description": "ID ou e-mail da conta (opcional)" },
+          "folder": { "type": "string", "description": "Pasta da mensagem (padrão: INBOX)" }
+        }
+      }
+    },
+    {
+      "name": "save_attachment",
+      "label": "Salvar Anexo Como...",
+      "description": "Exibe o diálogo nativo para o usuário escolher a pasta e salvar o anexo do e-mail no computador.",
+      "parameters": {
+        "type": "object",
+        "required": ["messageId"],
+        "properties": {
+          "messageId": { "type": "string", "description": "ID ou UID da mensagem" },
+          "filename": { "type": "string", "description": "Nome do arquivo anexo a salvar" },
+          "part": { "type": "string", "description": "Número da parte MIME do anexo (opcional)" },
+          "accountId": { "type": "string", "description": "ID ou e-mail da conta (opcional)" },
+          "folder": { "type": "string", "description": "Pasta da mensagem (padrão: INBOX)" }
+        }
+      }
+    },
+    {
+      "name": "get_attachment_preview",
+      "label": "Obter Prévia de Anexo",
+      "description": "Gera ou obtém a miniatura/prévia em imagem de um documento anexo (ex: primeira página de PDF).",
+      "parameters": {
+        "type": "object",
+        "required": ["messageId"],
+        "properties": {
+          "messageId": { "type": "string", "description": "ID ou UID da mensagem" },
+          "filename": { "type": "string", "description": "Nome do arquivo anexo" },
           "accountId": { "type": "string", "description": "ID ou e-mail da conta (opcional)" },
           "folder": { "type": "string", "description": "Pasta da mensagem (padrão: INBOX)" }
         }
@@ -207,6 +255,80 @@
           "accountId": { "type": "string", "description": "ID da conta (opcional)" }
         }
       }
+    },
+    {
+      "name": "add_account",
+      "label": "Adicionar conta",
+      "description": "Cadastra uma nova conta SMTP/IMAP.",
+      "parameters": {
+        "type": "object",
+        "required": ["provider", "email", "password"],
+        "properties": {
+          "provider": { "type": "string", "description": "Provedor (ex: gmail, outlook, custom)" },
+          "email": { "type": "string", "description": "Endereço de e-mail" },
+          "password": { "type": "string", "description": "Senha ou app password" }
+        }
+      }
+    },
+    {
+      "name": "remove_account",
+      "label": "Remover conta",
+      "description": "Remove uma conta de e-mail cadastrada.",
+      "parameters": {
+        "type": "object",
+        "required": ["accountId"],
+        "properties": {
+          "accountId": { "type": "string", "description": "ID ou e-mail da conta" }
+        }
+      }
+    },
+    {
+      "name": "set_active_account",
+      "label": "Definir conta ativa",
+      "description": "Define qual conta é usada por padrão nas operações.",
+      "parameters": {
+        "type": "object",
+        "required": ["accountId"],
+        "properties": {
+          "accountId": { "type": "string", "description": "ID ou e-mail da conta" }
+        }
+      }
+    },
+    {
+      "name": "test_account",
+      "label": "Testar conta",
+      "description": "Testa a conexão SMTP/IMAP de uma conta.",
+      "parameters": {
+        "type": "object",
+        "required": ["accountId"],
+        "properties": {
+          "accountId": { "type": "string", "description": "ID ou e-mail da conta" }
+        }
+      }
+    },
+    {
+      "name": "list_folders",
+      "label": "Listar pastas",
+      "description": "Lista as pastas IMAP de uma conta.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "accountId": { "type": "string", "description": "ID ou e-mail da conta (opcional)" }
+        }
+      }
+    },
+    {
+      "name": "toggle_starred",
+      "label": "Favoritar e-mail",
+      "description": "Marca ou desmarca um e-mail como favorito.",
+      "parameters": {
+        "type": "object",
+        "required": ["messageId"],
+        "properties": {
+          "messageId": { "type": "string", "description": "ID ou UID da mensagem" },
+          "accountId": { "type": "string", "description": "ID da conta (opcional)" }
+        }
+      }
     }
   ],
   "routes": [
@@ -216,7 +338,7 @@
     { "method": "POST", "path": "/accounts/test", "tool": "test_account" }
   ],
   "storage": {
-    "description": "Contas de e-mail e credenciais criptografadas em repouso, histórico e configurações locais.",
+    "description": "Guarda suas contas e mensagens neste computador, com as senhas protegidas.",
     "locations": ["accounts.json.enc", "cache/"]
   },
   "theme": {

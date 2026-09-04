@@ -177,7 +177,7 @@ class AccountManager {
     const providerId = (data.provider || detected) as string
     const preset = (PROVIDERS as any)[providerId] || PROVIDERS.custom
 
-    const id = data.id || `acc_${Buffer.from(email).toString('hex').slice(0, 10)}_${Date.now()}`
+    const id = data.id || `acc_${Buffer.from(email.toLowerCase()).toString('hex').slice(0, 16)}`
     const accountConfig: any = {
       id,
       name: data.name || email.split('@')[0],
