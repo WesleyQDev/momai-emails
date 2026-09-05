@@ -14,7 +14,8 @@ import {
   KeyIcon
 } from '@heroicons/react/24/outline'
 import { GmailIcon, OutlookIcon, YahooIcon, CustomMailIcon } from './ProviderIcons'
-import { PROVIDERS, ProviderId, detectProviderFromEmail } from '../services/providers'
+import { PROVIDERS, ProviderId, detectProviderFromEmail, getLocalizedProvider } from '../services/providers'
+import { useExtensionLocale, type ExtensionLocale } from '../services/i18n'
 
 interface ConnectAccountViewProps {
   onSave: (data: any) => Promise<{ ok: boolean; error?: string }>
@@ -79,6 +80,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
   onCancel,
   canCancel = false
 }) => {
+  const { locale, t } = useExtensionLocale()
   const [selectedProvider, setSelectedProvider] = useState<ProviderId | null>(null)
 
   // Form states (ordered: Email -> Password -> Display Name)
@@ -235,7 +237,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
 
       const res = await onSave(payload)
       if (!res.ok) {
-        setError(res.error || 'Falha ao conectar à conta de e-mail. Verifique suas credenciais.')
+        setError(res.error || t('connect.errorFallback'))
       } else {
         // Save to autofill if rememberCredentials is on
         if (rememberCredentials) {
@@ -259,7 +261,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
         setSuccess(true)
       }
     } catch (err: any) {
-      setError(err?.message || 'Erro inesperado ao conectar conta.')
+      setError(err?.message || t('connect.unexpected'))
     } finally {
       setLoading(false)
     }
@@ -276,7 +278,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
             className="absolute top-6 left-6 flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border text-xs text-text-muted hover:text-text hover:bg-card transition-all"
           >
             <ArrowLeftIcon className="w-3.5 h-3.5" />
-            <span>Voltar para Caixa de Entrada</span>
+            <span>{t('connect.backToInbox')}</span>
           </button>
         )}
 
@@ -286,7 +288,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
             MomAI Emails
           </h1>
           <p className="text-xs text-text-muted max-w-sm mx-auto">
-            Selecione seu provedor de e-mail para conectar sua conta com segurança via IMAP e SMTP.
+            {t('connect.subtitle')}
           </p>
         </div>
 
@@ -344,7 +346,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
               <CustomMailIcon className="w-16 h-16" />
             </div>
             <span className="text-sm font-semibold text-text group-hover:text-accent transition-colors">
-              Outros
+              {t('connect.other')}
             </span>
           </button>
         </div>
@@ -355,11 +357,11 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
   // 2. STEP 2: Full-screen connection view (no nested card in card)
   const preset = PROVIDERS[selectedProvider]
   const providerNames: Record<ProviderId, string> = {
-    gmail: 'Gmail',
-    outlook: 'Outlook / Hotmail',
-    hotmail: 'Hotmail',
-    yahoo: 'Yahoo Mail',
-    custom: 'Outro Provedor (SMTP / IMAP)'
+    gmail: t('providers.gmail.name'),
+    outlook: t('providers.outlookFull'),
+    hotmail: t('providers.hotmail.name'),
+    yahoo: t('providers.yahoo.name'),
+    custom: t('providers.customFull')
   }
 
   // Filter autofill suggestions for email input
@@ -386,7 +388,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
             className="inline-flex items-center gap-2 text-xs font-medium text-text-muted hover:text-text px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-input transition-colors"
           >
             <ArrowLeftIcon className="w-4 h-4" />
-            <span>Voltar</span>
+            <span>{t('connect.back')}</span>
           </button>
 
           <div className="flex items-center gap-3">
@@ -405,10 +407,10 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
         {/* Title */}
         <div>
           <h2 className="text-2xl font-bold text-text">
-            Conectar conta {providerNames[selectedProvider]}
+            {t('connect.formTitle', { provider: providerNames[selectedProvider] })}
           </h2>
           <p className="text-xs text-text-muted mt-1">
-            {preset.description}
+            {getLocalizedProvider(selectedProvider, locale).description}
           </p>
         </div>
 
@@ -417,7 +419,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
           <div className="p-3.5 rounded-xl bg-input/60 border border-border text-xs text-text flex items-start gap-2.5">
             <ExclamationCircleIcon className="w-4 h-4 text-accent shrink-0 mt-0.5" />
             <div>
-              <p className="font-semibold">Erro de conexão</p>
+              <p className="font-semibold">{t('connect.errorTitle')}</p>
               <p className="text-text-muted mt-0.5">{error}</p>
             </div>
           </div>
@@ -428,8 +430,8 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
           <div className="p-3.5 rounded-xl bg-input/60 border border-accent/40 text-xs text-text flex items-center gap-2.5">
             <CheckCircleIcon className="w-4 h-4 text-accent shrink-0" />
             <div>
-              <p className="font-semibold text-accent">Conta conectada com sucesso!</p>
-              <p className="text-text-muted mt-0.5">Sincronizando suas mensagens...</p>
+              <p className="font-semibold text-accent">{t('connect.successTitle')}</p>
+              <p className="text-text-muted mt-0.5">{t('connect.successSubtitle')}</p>
             </div>
           </div>
         )}
@@ -439,7 +441,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
           {/* 1. Email with Autocomplete Dropdown */}
           <div className="relative">
             <label className="block text-xs font-semibold text-text mb-1.5">
-              Endereço de E-mail *
+              {t('connect.email')}
             </label>
             <input
               ref={emailInputRef}
@@ -496,7 +498,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
                       <button
                         type="button"
                         onClick={(e) => handleDeleteSuggestion(item.id, e)}
-                        title="Excluir do preenchimento automático"
+                        title={t('connect.autofill.delete')}
                         className="p-1 rounded-md text-text-muted hover:text-accent hover:bg-sidebar transition-colors opacity-0 group-hover:opacity-100"
                       >
                         <TrashIcon className="w-3.5 h-3.5" />
@@ -512,7 +514,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="block text-xs font-semibold text-text">
-                Senha de Aplicativo *
+                {t('connect.password')}
               </label>
               {preset.appPasswordHelpUrl && (
                 <a
@@ -552,7 +554,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
           {/* 3. Display Name (opcional) */}
           <div>
             <label className="block text-xs font-semibold text-text mb-1.5">
-              Nome de Exibição <span className="text-text-muted font-normal">(opcional)</span>
+              {t('connect.displayName')} <span className="text-text-muted font-normal">{t('connect.optional')}</span>
             </label>
             <input
               type="text"
@@ -567,13 +569,13 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
           {selectedProvider === 'custom' && (
             <div className="p-4 rounded-xl border border-border bg-sidebar/30 space-y-4 pt-3">
               <span className="text-xs font-bold text-text uppercase tracking-wider block">
-                Configuração de Servidores
+                {t('connect.servers')}
               </span>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* IMAP */}
                 <div className="space-y-2">
-                  <span className="text-[11px] font-semibold text-accent block">Servidor de Entrada (IMAP)</span>
+                  <span className="text-[11px] font-semibold text-accent block">{t('connect.imap')}</span>
                   <input
                     type="text"
                     placeholder="imap.seudominio.com"
@@ -604,7 +606,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
 
                 {/* SMTP */}
                 <div className="space-y-2">
-                  <span className="text-[11px] font-semibold text-accent block">Servidor de Saída (SMTP)</span>
+                  <span className="text-[11px] font-semibold text-accent block">{t('connect.smtp')}</span>
                   <input
                     type="text"
                     placeholder="smtp.seudominio.com"
@@ -654,7 +656,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
                 onChange={(e) => setRememberCredentials(e.target.checked)}
                 className="w-4 h-4 rounded border-border text-accent focus:ring-accent accent-accent"
               />
-              <span>Guardar senha com segurança para reconexão automática</span>
+              <span>{t('connect.remember')}</span>
             </label>
 
             <label className="flex items-center gap-2.5 text-xs text-text cursor-pointer select-none">
@@ -664,7 +666,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
                 onChange={(e) => setNotifyOnNewEmails(e.target.checked)}
                 className="w-4 h-4 rounded border-border text-accent focus:ring-accent accent-accent"
               />
-              <span>Receber notificações no sistema ao chegar novos e-mails</span>
+              <span>{t('connect.notify')}</span>
             </label>
           </div>
 
@@ -677,10 +679,10 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
             {loading ? (
               <>
                 <div className="w-4 h-4 border-2 border-bg border-t-transparent rounded-full animate-spin" />
-                <span>Conectando...</span>
+                <span>{t('connect.connecting')}</span>
               </>
             ) : (
-              <span>Conectar conta</span>
+              <span>{t('connect.submit')}</span>
             )}
           </button>
         </form>
@@ -688,7 +690,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
         {/* Clean FAQ: Texto objetivo com links dos passos */}
         <div className="pt-6 border-t border-border text-xs text-text-muted space-y-2.5">
           <p className="font-semibold text-text">
-            Como obter a senha de aplicativo:
+            {t('connect.faqTitle')}
           </p>
 
           {selectedProvider === 'gmail' && (
@@ -783,7 +785,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
             className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-accent hover:bg-input text-left font-medium transition-colors"
           >
             <TrashIcon className="w-3.5 h-3.5" />
-            <span>Excluir do preenchimento automático</span>
+            <span>{t('connect.autofill.delete')}</span>
           </button>
         </div>
       )}

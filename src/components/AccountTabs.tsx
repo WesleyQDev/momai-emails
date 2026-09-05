@@ -4,6 +4,7 @@
 import React from 'react'
 import { PlusIcon, TrashIcon, CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import type { PublicEmailAccount } from '../services/types'
+import { useExtensionLocale } from '../services/i18n'
 
 interface AccountTabsProps {
   accounts: PublicEmailAccount[]
@@ -20,6 +21,7 @@ export const AccountTabs: React.FC<AccountTabsProps> = ({
   onOpenAddModal,
   onRemoveAccount
 }) => {
+  const { t } = useExtensionLocale()
   return (
     <div className="flex items-center justify-between border-b border-border bg-sidebar/50 px-4 py-2 select-none">
       {/* Tabs list */}
@@ -55,9 +57,9 @@ export const AccountTabs: React.FC<AccountTabsProps> = ({
 
               {/* Status indicator */}
               {acc.status === 'connected' ? (
-                <CheckCircleIcon className="w-3.5 h-3.5 text-accent opacity-75" title="Conectado" />
+                <CheckCircleIcon className="w-3.5 h-3.5 text-accent opacity-75" title={t('tabs.connected')} />
               ) : acc.status === 'error' ? (
-                <ExclamationTriangleIcon className="w-3.5 h-3.5 text-text-muted" title={acc.lastError || 'Erro de conexão'} />
+                <ExclamationTriangleIcon className="w-3.5 h-3.5 text-text-muted" title={acc.lastError || t('tabs.connectionError')} />
               ) : null}
 
               {/* Remove button (appears on hover) */}
@@ -65,12 +67,12 @@ export const AccountTabs: React.FC<AccountTabsProps> = ({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation()
-                  if (confirm(`Remover a conta ${acc.email}?`)) {
+                  if (confirm(t('header.accounts.removeConfirm', { email: acc.email }))) {
                     onRemoveAccount(acc.id)
                   }
                 }}
                 className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-input text-text-muted hover:text-text transition-opacity ml-1"
-                title="Remover conta"
+                title={t('header.accounts.remove')}
               >
                 <TrashIcon className="w-3 h-3" />
               </button>
@@ -85,7 +87,7 @@ export const AccountTabs: React.FC<AccountTabsProps> = ({
           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-input/40 hover:bg-input text-text-muted hover:text-text border border-dashed border-border transition-colors whitespace-nowrap"
         >
           <PlusIcon className="w-3.5 h-3.5" />
-          <span>Adicionar Conta</span>
+          <span>{t('tabs.add')}</span>
         </button>
       </div>
     </div>

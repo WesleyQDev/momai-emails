@@ -26,6 +26,10 @@ declare module 'momai:sdk' {
       }>
       writeImage: (dataUrl: string) => Promise<{ ok: boolean; error?: string }>
     }
+    i18n?: {
+      getLocale: () => string
+      onLocaleChange: (callback: (locale: string) => void) => () => void
+    }
     [key: string]: any
   }
   export default sdk

@@ -10,6 +10,7 @@ import {
   CheckIcon
 } from '@heroicons/react/24/outline'
 import type { EmailAttachment } from '../services/types'
+import { useExtensionLocale } from '../services/i18n'
 import { renderPdfFirstPageToDataUrl } from '../services/pdf-preview'
 import { emailApi } from '../services/api'
 import {
@@ -137,6 +138,7 @@ export const AttachmentBadge: React.FC<AttachmentBadgeProps> = ({
   const [savedSuccess, setSavedSuccess] = useState(false)
   const [realThumbnail, setRealThumbnail] = useState<string | null>(attachment.previewDataUrl || null)
   const [renderingThumb, setRenderingThumb] = useState(false)
+  const { t } = useExtensionLocale()
   const fileInfo = getAttachmentFileInfo(attachment.filename, attachment.contentType)
 
   React.useEffect(() => {
@@ -223,7 +225,7 @@ export const AttachmentBadge: React.FC<AttachmentBadgeProps> = ({
         type="button"
         onClick={handleClickOpen}
         disabled={opening}
-        title={`${attachment.filename} ${attachment.size ? `(${formatFileSize(attachment.size)})` : ''} — Clique para abrir no computador`}
+        title={`${attachment.filename} ${attachment.size ? `(${formatFileSize(attachment.size)})` : ''} — ${t('attachment.openTitle')}`}
         className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-border/80 bg-input/50 hover:bg-input hover:border-accent/60 text-text transition-all shadow-xs group/att cursor-pointer max-w-[150px] shrink-0 select-none whitespace-nowrap overflow-hidden ${
           opening ? 'opacity-70 pointer-events-none' : ''
         } ${className}`}
@@ -235,11 +237,11 @@ export const AttachmentBadge: React.FC<AttachmentBadgeProps> = ({
         )}
 
         <span className="truncate text-[10px] font-medium text-text group-hover/att:text-accent transition-colors">
-          {attachment.filename || 'Documento'}
+          {attachment.filename || t('attachment.document')}
         </span>
 
         {opening && (
-          <span className="text-[9px] text-text-muted shrink-0">Abrindo...</span>
+          <span className="text-[9px] text-text-muted shrink-0">{t('attachment.opening')}</span>
         )}
       </button>
     )
@@ -251,7 +253,7 @@ export const AttachmentBadge: React.FC<AttachmentBadgeProps> = ({
       onClick={handleClickOpen}
       role="button"
       tabIndex={0}
-      title="Clique para abrir com o aplicativo padrão do computador"
+      title={t('attachment.openCardTitle')}
       className={`group/card w-52 sm:w-56 rounded-lg overflow-hidden border border-border/80 bg-card hover:border-accent/50 shadow-xs hover:shadow-md transition-all cursor-pointer select-none flex flex-col ${
         opening ? 'opacity-70 pointer-events-none' : ''
       } ${className}`}
@@ -286,7 +288,7 @@ export const AttachmentBadge: React.FC<AttachmentBadgeProps> = ({
         ) : renderingThumb ? (
           <div className="flex flex-col items-center justify-center gap-1.5 text-slate-500">
             <ArrowPathIcon className="w-5 h-5 animate-spin text-accent" />
-            <span className="text-[10px] font-medium">Carregando prévia...</span>
+            <span className="text-[10px] font-medium">{t('attachment.loadingPreview')}</span>
           </div>
         ) : fileInfo.category === 'pdf' ? (
           /* PDF Page Document Fallback */
@@ -380,12 +382,12 @@ export const AttachmentBadge: React.FC<AttachmentBadgeProps> = ({
           {opening ? (
             <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white text-slate-900 text-xs font-semibold shadow-lg">
               <ArrowPathIcon className="w-4 h-4 animate-spin text-accent" />
-              <span>Abrindo no computador...</span>
+              <span>{t('attachment.openingComputer')}</span>
             </div>
           ) : savedSuccess ? (
             <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-600 text-white text-xs font-semibold shadow-lg">
               <CheckIcon className="w-4 h-4 stroke-2" />
-              <span>Salvo com sucesso!</span>
+              <span>{t('attachment.saved')}</span>
             </div>
           ) : (
             <div className="flex items-center gap-3">
@@ -395,7 +397,7 @@ export const AttachmentBadge: React.FC<AttachmentBadgeProps> = ({
                   type="button"
                   onClick={handleClickOpen}
                   className="w-10 h-10 rounded-full bg-white/95 hover:bg-white text-slate-800 flex items-center justify-center shadow-lg transition-transform hover:scale-110 active:scale-95 cursor-pointer"
-                  title="Abrir com o aplicativo padrão do computador"
+                  title={t('attachment.openComputer')}
                 >
                   <ArrowTopRightOnSquareIcon className="w-5 h-5 text-slate-800 stroke-2" />
                 </button>
@@ -407,7 +409,7 @@ export const AttachmentBadge: React.FC<AttachmentBadgeProps> = ({
                   type="button"
                   onClick={handleClickSave}
                   className="w-10 h-10 rounded-full bg-white/95 hover:bg-white text-slate-800 flex items-center justify-center shadow-lg transition-transform hover:scale-110 active:scale-95 cursor-pointer"
-                  title="Fazer download / Salvar como..."
+                  title={t('attachment.download')}
                 >
                   <ArrowDownTrayIcon className="w-5 h-5 text-slate-800 stroke-2" />
                 </button>
@@ -426,7 +428,7 @@ export const AttachmentBadge: React.FC<AttachmentBadgeProps> = ({
             className="text-xs font-medium text-text truncate block group-hover/card:text-accent transition-colors"
             title={attachment.filename}
           >
-            {attachment.filename || 'Documento'}
+            {attachment.filename || t('attachment.document')}
           </span>
         </div>
 
@@ -443,7 +445,7 @@ export const AttachmentBadge: React.FC<AttachmentBadgeProps> = ({
               type="button"
               onClick={handleClickSave}
               disabled={saving}
-              title="Salvar como..."
+              title={t('attachment.saveAs')}
               className="p-1 rounded-md hover:bg-input text-text-muted hover:text-accent transition-colors cursor-pointer"
             >
               {savedSuccess ? (

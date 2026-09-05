@@ -12,6 +12,7 @@ import {
 import { GmailIcon, OutlookIcon, YahooIcon, CustomMailIcon } from './ProviderIcons'
 import { detectProviderFromEmail, PROVIDERS, ProviderId } from '../services/providers'
 import type { PublicEmailAccount } from '../services/types'
+import { useExtensionLocale } from '../services/i18n'
 
 // Authentic Gmail Material color palette per letter
 const GMAIL_PALETTE: Record<string, string> = {
@@ -63,6 +64,7 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
   onSearchChange
 }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false)
+  const { t } = useExtensionLocale()
   const dropdownRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -150,7 +152,7 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
   const activeAvatar = activeAccount ? avatarMap[activeAccount.id] : null
 
   return (
-    <header className="flex items-center justify-between gap-4 border-b border-border bg-sidebar/70 backdrop-blur-xs px-5 py-2.5 select-none relative z-30">
+    <header className="flex items-center justify-between gap-4 bg-sidebar/70 backdrop-blur-xs px-5 py-2.5 select-none relative z-30">
       {/* 1. Left: Provider SVG & Provider Title */}
       <div className="flex items-center gap-2.5 shrink-0 min-w-[120px]">
         <div className="flex items-center justify-center shrink-0 drop-shadow-xs">
@@ -168,7 +170,7 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
             <MagnifyingGlassIcon className="w-4 h-4 text-text-muted shrink-0 pointer-events-none" />
             <input
               type="text"
-              placeholder="Pesquisar nos e-mails..."
+              placeholder={t('header.search.placeholder')}
               value={searchQuery}
               onChange={(e) => onSearchChange(e.target.value)}
               className="w-full bg-transparent border-0 p-0 text-xs text-text placeholder:text-text-muted focus:outline-hidden"
@@ -178,7 +180,7 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
                 type="button"
                 onClick={() => onSearchChange('')}
                 className="text-text-muted hover:text-text p-0.5 rounded-full cursor-pointer transition-colors"
-                title="Limpar pesquisa"
+                title={t('header.search.clear')}
               >
                 <XMarkIcon className="w-3.5 h-3.5" />
               </button>
@@ -193,12 +195,12 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
           type="button"
           onClick={() => setDropdownOpen((prev) => !prev)}
           className="relative rounded-full focus:outline-hidden group cursor-pointer transition-transform active:scale-95 block"
-          title={`${activeAccount?.name || activeAccount?.email || 'Perfil'} (Clique para alternar contas)`}
+          title={`${activeAccount?.name || activeAccount?.email || t('header.profile.alt')} (${t('header.profile.switch')})`}
         >
           {activeAvatar ? (
             <img
               src={activeAvatar}
-              alt="Perfil"
+              alt={t('header.profile.alt')}
               className="w-8 h-8 rounded-full object-cover shadow-xs"
             />
           ) : (
@@ -224,12 +226,12 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
                     fileInputRef.current?.click()
                   }}
                   className="relative cursor-pointer shrink-0"
-                  title="Carregar foto personalizada de perfil"
+                  title={t('header.avatar.change')}
                 >
                   {activeAvatar ? (
                     <img
                       src={activeAvatar}
-                      alt="Perfil"
+                      alt={t('header.profile.alt')}
                       className="w-12 h-12 rounded-full object-cover shadow-xs"
                     />
                   ) : (
@@ -260,7 +262,7 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
             {accounts.length > 1 && (
               <div className="space-y-1">
                 <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-                  Outras contas conectadas
+                  {t('header.accounts.other')}
                 </div>
                 <div className="max-h-44 overflow-y-auto space-y-1 pr-0.5">
                   {accounts
@@ -307,12 +309,12 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation()
-                              if (confirm(`Remover a conta ${acc.email}?`)) {
+                              if (confirm(t('header.accounts.removeConfirm', { email: acc.email }))) {
                                 onRemoveAccount(acc.id)
                               }
                             }}
                             className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-card text-text-muted hover:text-text transition-all"
-                            title="Remover conta"
+                            title={t('header.accounts.remove')}
                           >
                             <TrashIcon className="w-3.5 h-3.5" />
                           </button>
@@ -334,7 +336,7 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
                 className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-input/50 hover:bg-input border border-dashed border-border text-text font-medium transition-colors cursor-pointer"
               >
                 <PlusIcon className="w-4 h-4 text-accent" />
-                <span>Adicionar outra conta</span>
+                <span>{t('header.accounts.add')}</span>
               </button>
 
               {/* Option to disconnect active account */}
@@ -343,14 +345,14 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
                   type="button"
                   onClick={() => {
                     setDropdownOpen(false)
-                    if (confirm(`Remover a conta ativa (${activeAccount.email})?`)) {
+                    if (confirm(t('header.accounts.removeActiveConfirm', { email: activeAccount.email }))) {
                       onRemoveAccount(activeAccount.id)
                     }
                   }}
                   className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[11px] text-text-muted hover:text-text transition-colors"
                 >
                   <TrashIcon className="w-3 h-3" />
-                  <span>Desconectar esta conta</span>
+                  <span>{t('header.accounts.disconnect')}</span>
                 </button>
               )}
             </div>

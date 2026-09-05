@@ -23,7 +23,7 @@ import type { EmailMessage, EmailAttachment } from '../services/types'
 import { EmailAvatar } from './EmailAvatar'
 import { AttachmentBadge } from './AttachmentBadge'
 import ContextMenu from './ContextMenu'
-import { CATEGORY_TRANSLATIONS } from '../services/i18n'
+import { CATEGORY_TRANSLATIONS, useExtensionLocale, getCategoryInfo, formatListDate } from '../services/i18n'
 
 interface EmailListProps {
   messages: EmailMessage[]
@@ -76,6 +76,7 @@ export const EmailList: React.FC<EmailListProps> = ({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; msg: EmailMessage } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
+  const { locale, t } = useExtensionLocale()
 
   // Reset category when folder changes
   useEffect(() => {
@@ -153,20 +154,7 @@ export const EmailList: React.FC<EmailListProps> = ({
     return msgs
   }, [messages, unreadOnly, isInbox, activeCategory, classifyEmail])
 
-  const formatDate = (dateStr: string, timestamp: number) => {
-    if (!timestamp) return ''
-    const msgDate = new Date(timestamp)
-    const today = new Date()
-    const isToday =
-      msgDate.getDate() === today.getDate() &&
-      msgDate.getMonth() === today.getMonth() &&
-      msgDate.getFullYear() === today.getFullYear()
-
-    if (isToday) {
-      return msgDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-    }
-    return msgDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })
-  }
+  const formatDate = (dateStr: string, timestamp: number) => formatListDate(timestamp, locale)
 
   return (
     <div className="flex-1 min-w-0 flex flex-col bg-card overflow-hidden select-none">
@@ -179,7 +167,7 @@ export const EmailList: React.FC<EmailListProps> = ({
             checked={messages.length > 0 && selectedIds.size === messages.length}
             onChange={toggleSelectAll}
             className="rounded border-border cursor-pointer accent-accent"
-            title="Selecionar todos"
+            title={t('list.selectAll')}
           />
 
           <button
@@ -187,14 +175,14 @@ export const EmailList: React.FC<EmailListProps> = ({
             onClick={onRefresh}
             disabled={loading}
             className="p-1.5 rounded-lg hover:bg-input text-text-muted hover:text-text transition-colors"
-            title="Atualizar pasta"
+                title={t('list.refresh')}
           >
             <ArrowPathIcon className={`w-4 h-4 ${loading ? 'animate-spin text-accent' : ''}`} />
           </button>
 
           {selectedIds.size > 0 ? (
             <div className="flex items-center gap-1 pl-2 border-l border-border animate-fade-in text-xs">
-              <span className="text-text-muted font-medium mr-1">{selectedIds.size} selecionado(s)</span>
+                <span className="text-text-muted font-medium mr-1">{t('list.selected', { count: selectedIds.size })}</span>
               <button
                 type="button"
                 onClick={() => {
@@ -202,7 +190,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                   setSelectedIds(new Set())
                 }}
                 className="p-1.5 rounded-lg hover:bg-input text-text-muted hover:text-text"
-                title="Marcar como lido"
+                title={t('list.markRead')}
               >
                 <EnvelopeOpenIcon className="w-4 h-4" />
               </button>
@@ -213,7 +201,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                   setSelectedIds(new Set())
                 }}
                 className="p-1.5 rounded-lg hover:bg-input text-text-muted hover:text-text"
-                title="Excluir selecionados"
+                title={t('list.deleteSelected')}
               >
                 <TrashIcon className="w-4 h-4" />
               </button>
@@ -229,7 +217,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                     : 'bg-input/40 border-border text-text-muted hover:text-text'
                 }`}
               >
-                Não Lidos
+                {t('list.unreadOnly')}
               </button>
             </div>
           )}
@@ -250,7 +238,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                   if (scrollRef.current) scrollRef.current.scrollTop = 0
                 }}
                 className="p-1 rounded hover:bg-input text-text-muted hover:text-text disabled:opacity-30 disabled:pointer-events-none transition-colors"
-                title="Voltar ao início"
+                title={t('list.backToTop')}
               >
                 <ChevronLeftIcon className="w-3.5 h-3.5" />
               </button>
@@ -261,7 +249,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                   if (onLoadMore && hasMore && !loadingMore) onLoadMore()
                 }}
                 className="p-1 rounded hover:bg-input text-text-muted hover:text-text disabled:opacity-30 disabled:pointer-events-none transition-colors"
-                title="Carregar mais 50 e-mails"
+                title={t('list.loadMore')}
               >
                 <ChevronRightIcon className={`w-3.5 h-3.5 ${loadingMore ? 'animate-spin' : ''}`} />
               </button>
@@ -269,8 +257,10 @@ export const EmailList: React.FC<EmailListProps> = ({
           </div>
         </div>
 
-      {/* Gmail Category Tabs: Principal, Promoções, Social, Atualizações (only in INBOX) */}
-      {isInbox && (
+      {/* Main Email Content (below toolbar, with lateral separator from sidebar) */}
+      <div className="flex-1 min-h-0 flex flex-col border-l border-border overflow-hidden">
+        {/* Gmail Category Tabs: Principal, Promoções, Social, Atualizações (only in INBOX) */}
+        {isInbox && (
         <div className="w-full flex items-stretch border-b border-border bg-transparent select-none overflow-x-auto no-scrollbar">
           {([
             { id: 'primary' as const, Icon: InboxIcon },
@@ -279,7 +269,7 @@ export const EmailList: React.FC<EmailListProps> = ({
             { id: 'updates' as const, Icon: InformationCircleIcon }
           ]).map(({ id, Icon }) => {
             const isActive = activeCategory === id
-            const info = CATEGORY_TRANSLATIONS[id] || { label: id, description: '' }
+            const info = getCategoryInfo(id, locale)
             const unreadCount = messages.filter((m) => classifyEmail(m) === id && !m.read).length
             return (
               <button
@@ -316,9 +306,9 @@ export const EmailList: React.FC<EmailListProps> = ({
       {/* Error banner */}
       {error && (
         <div className="p-3 bg-input/40 border-b border-border text-xs text-text flex items-center justify-between">
-          <span>{error}</span>
+            <span>{error}</span>
           <button type="button" onClick={onRefresh} className="text-accent underline font-medium">
-            Tentar novamente
+            {t('list.retry')}
           </button>
         </div>
       )}
@@ -328,13 +318,13 @@ export const EmailList: React.FC<EmailListProps> = ({
         {loading && messages.length === 0 ? (
           <div className="p-8 flex flex-col items-center justify-center text-text-muted space-y-3">
             <ArrowPathIcon className="w-6 h-6 animate-spin text-accent" />
-            <span className="text-xs">Carregando mensagens do servidor...</span>
+            <span className="text-xs">{t('list.loading')}</span>
           </div>
         ) : filteredMessages.length === 0 ? (
           <div className="p-12 flex flex-col items-center justify-center text-text-muted space-y-2">
             <CheckCircleIcon className="w-10 h-10 opacity-30 text-accent" />
-            <span className="text-sm font-medium text-text">Nenhuma mensagem nesta pasta</span>
-            <span className="text-xs text-text-muted">Sua caixa de entrada está limpa e atualizada.</span>
+            <span className="text-sm font-medium text-text">{t('list.emptyTitle')}</span>
+            <span className="text-xs text-text-muted">{t('list.emptySubtitle')}</span>
           </div>
         ) : (
           filteredMessages.map((msg) => {
@@ -396,7 +386,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                 {/* Subject, snippet & Attachment Chips — RIGOROSAMENTE NA MESMA LINHA */}
                 <div className="flex-1 min-w-0 flex items-center gap-2 overflow-hidden whitespace-nowrap">
                   <span className={`truncate shrink-0 max-w-[50%] sm:max-w-[60%] md:max-w-none ${msg.read ? 'text-text/80 font-normal' : 'text-text font-bold'}`}>
-                    {msg.subject || '(Sem assunto)'}
+                    {msg.subject || t('list.noSubject')}
                   </span>
                   {msg.snippet && (
                     <span className="text-text-muted font-normal truncate hidden lg:inline min-w-0 flex-1">
@@ -420,7 +410,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                         {msg.attachments!.length > 1 && (
                           <span
                             className="text-[10px] text-text-muted px-1.5 py-0.5 rounded-full border border-border/70 bg-input/40 select-none shrink-0"
-                            title={`${msg.attachments!.length} anexos`}
+                            title={t('list.attachmentsTitle', { count: msg.attachments!.length })}
                           >
                             +{msg.attachments!.length - 1}
                           </span>
@@ -434,7 +424,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                 <div className="shrink-0 flex items-center gap-2 ml-auto text-right whitespace-nowrap">
                   {/* Paperclip indicator */}
                   {(msg.hasAttachments || (msg.attachments && msg.attachments.length > 0)) && (
-                    <PaperClipIcon className="w-3.5 h-3.5 text-text-muted shrink-0" title="Contém anexos" />
+                    <PaperClipIcon className="w-3.5 h-3.5 text-text-muted shrink-0" title={t('list.hasAttachments')} />
                   )}
 
                   {/* Action buttons on hover */}
@@ -447,7 +437,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                           onMarkUnread(msg.id)
                         }}
                         className="p-1 rounded hover:bg-input text-text-muted hover:text-text"
-                        title="Marcar como não lido"
+                        title={t('list.markUnread')}
                       >
                         <EnvelopeIcon className="w-3.5 h-3.5" />
                       </button>
@@ -459,7 +449,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                           onMarkRead(msg.id)
                         }}
                         className="p-1 rounded hover:bg-input text-text-muted hover:text-text"
-                        title="Marcar como lido"
+                title={t('list.markRead')}
                       >
                         <EnvelopeOpenIcon className="w-3.5 h-3.5" />
                       </button>
@@ -471,7 +461,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                         onDelete(msg.id)
                       }}
                       className="p-1 rounded hover:bg-input text-text-muted hover:text-text"
-                      title="Excluir"
+                      title={t('list.delete')}
                     >
                       <TrashIcon className="w-3.5 h-3.5" />
                     </button>
@@ -493,20 +483,22 @@ export const EmailList: React.FC<EmailListProps> = ({
             {loadingMore ? (
               <div className="flex items-center gap-2">
                 <ArrowPathIcon className="w-4 h-4 animate-spin text-accent" />
-                <span>Carregando mais e-mails...</span>
+                <span>{t('list.loadingMore')}</span>
               </div>
             ) : (
-              <span className="opacity-50">Rolar para carregar mais</span>
+              <span className="opacity-50">{t('list.scrollForMore')}</span>
             )}
           </div>
         )}
 
         {!hasMore && messages.length > 0 && !loading && (
           <div className="flex items-center justify-center py-3 text-[11px] text-text-muted opacity-50">
-            Todos os e-mails foram carregados
+            {t('list.allLoaded')}
           </div>
         )}
       </div>
+      </div>
+
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x}
@@ -515,37 +507,37 @@ export const EmailList: React.FC<EmailListProps> = ({
           items={[
             {
               id: 'open',
-              label: 'Abrir',
+              label: t('list.open'),
               onClick: () => onSelectEmail(contextMenu.msg)
             },
             {
               id: 'star',
-              label: contextMenu.msg.starred ? 'Desfavoritar' : 'Favoritar',
+              label: contextMenu.msg.starred ? t('list.unfavorite') : t('list.favorite'),
               onClick: () => onToggleStarred(contextMenu.msg.id, contextMenu.msg.starred)
             },
             contextMenu.msg.read
               ? {
                   id: 'unread',
-                  label: 'Marcar como não lido',
+                  label: t('list.markUnread'),
                   onClick: () => onMarkUnread(contextMenu.msg.id)
                 }
               : {
                   id: 'read',
-                  label: 'Marcar como lido',
+                  label: t('list.markRead'),
                   onClick: () => onMarkRead(contextMenu.msg.id)
                 },
             {
               id: 'copy-subject',
-              label: 'Copiar assunto',
+              label: t('list.copySubject'),
               onClick: () => {
                 try {
-                  void navigator.clipboard?.writeText?.(contextMenu.msg.subject || '(Sem assunto)')
+                  void navigator.clipboard?.writeText?.(contextMenu.msg.subject || t('list.noSubject'))
                 } catch {}
               }
             },
             {
               id: 'copy-from',
-              label: 'Copiar remetente',
+              label: t('list.copyFrom'),
               onClick: () => {
                 try {
                   const from = contextMenu.msg.from?.name
@@ -557,7 +549,7 @@ export const EmailList: React.FC<EmailListProps> = ({
             },
             {
               id: 'delete',
-              label: 'Excluir',
+              label: t('list.delete'),
               danger: true,
               onClick: () => onDelete(contextMenu.msg.id)
             }

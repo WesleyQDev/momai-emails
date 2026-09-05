@@ -14,7 +14,7 @@ import {
   FolderIcon
 } from '@heroicons/react/24/outline'
 import type { EmailFolder } from '../services/types'
-import { formatFolderName } from '../services/i18n'
+import { formatFolderName, useExtensionLocale } from '../services/i18n'
 
 interface SidebarProps {
   folders: EmailFolder[]
@@ -29,6 +29,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectFolder,
   onOpenCompose
 }) => {
+  const { locale, t } = useExtensionLocale()
   const getFolderIcon = (role?: string, name?: string) => {
     const clean = (name || '').toLowerCase()
     if (clean.includes('starred') || clean.includes('estrela') || role === 'starred') return StarIcon
@@ -62,26 +63,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
   }
 
   return (
-    <aside className="w-56 shrink-0 border-r border-border bg-sidebar/40 p-3 flex flex-col justify-between select-none">
+    <aside className="w-48 shrink-0 bg-sidebar/40 px-2.5 py-3 flex flex-col justify-between select-none">
       <div className="space-y-4">
         {/* Compose Button */}
         <button
           type="button"
           onClick={onOpenCompose}
-          className="w-full flex items-center justify-center gap-2.5 px-4 py-3 rounded-xl font-semibold text-xs bg-accent text-bg shadow-glass-sm hover:opacity-90 active:scale-95 transition-all"
+          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl font-semibold text-xs bg-accent text-bg shadow-glass-sm hover:opacity-90 active:scale-95 transition-all"
         >
           <PencilSquareIcon className="w-4 h-4 stroke-2" />
-          <span>Escrever E-mail</span>
+          <span>{t('sidebar.compose')}</span>
         </button>
 
         {/* Folders List */}
         <div className="space-y-1">
           <span className="px-2 text-[10px] font-bold uppercase tracking-wider text-text-muted block mb-1">
-            Pastas
+            {t('sidebar.folders')}
           </span>
 
           {folders.length === 0 ? (
-            <div className="px-3 py-2 text-xs text-text-muted italic">Carregando pastas...</div>
+            <div className="px-3 py-2 text-xs text-text-muted italic">{t('sidebar.loadingFolders')}</div>
           ) : (
             folders
               .filter((f) => {
@@ -104,7 +105,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               })
               .map((f) => {
               const Icon = getFolderIcon(f.role, f.name)
-              const displayName = formatFolderName(f.name, f.role)
+              const displayName = formatFolderName(f.name, f.role, locale)
               const isActive = activeFolder.toLowerCase() === f.path.toLowerCase()
 
               return (
@@ -112,13 +113,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   key={f.path}
                   type="button"
                   onClick={() => onSelectFolder(f.path)}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                     isActive
                       ? 'bg-accent/10 text-accent font-semibold'
                       : 'text-text-muted hover:text-text hover:bg-input/60'
                   }`}
                 >
-                  <div className="flex items-center gap-2.5 truncate">
+                  <div className="flex items-center gap-2 truncate">
                     <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-accent' : 'text-text-muted'}`} />
                     <span className="truncate">{displayName}</span>
                   </div>

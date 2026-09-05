@@ -1,6 +1,8 @@
 // src/services/providers.ts
 // Presets and metadata for known email providers
 
+import { translate, type ExtensionLocale } from './i18n'
+
 export type ProviderId = 'gmail' | 'outlook' | 'hotmail' | 'yahoo' | 'custom'
 
 export interface ProviderConfig {
@@ -115,6 +117,35 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
 }
 
 /**
+ * Return the provider preset with user-facing strings localized.
+ * Static PROVIDERS values stay as pt-BR defaults for worker compatibility.
+ */
+export function getLocalizedProvider(id: ProviderId, locale: ExtensionLocale): ProviderConfig {
+  const base = PROVIDERS[id]
+  return {
+    ...base,
+    imap: { ...base.imap },
+    smtp: { ...base.smtp },
+    name: translate(locale, `providers.${id}.name`),
+    description: translate(locale, `providers.${id}.description`),
+    appPasswordDocLabel: translate(locale, `providers.${id}.docLabel`)
+  }
+}
+
+/**
+ * Return all provider presets with user-facing strings localized.
+ */
+export function getLocalizedProviders(locale: ExtensionLocale): Record<ProviderId, ProviderConfig> {
+  return {
+    gmail: getLocalizedProvider('gmail', locale),
+    outlook: getLocalizedProvider('outlook', locale),
+    hotmail: getLocalizedProvider('hotmail', locale),
+    yahoo: getLocalizedProvider('yahoo', locale),
+    custom: getLocalizedProvider('custom', locale)
+  }
+}
+
+/**
  * Detect provider ID from email domain
  */
 export function detectProviderFromEmail(email: string): ProviderId {
@@ -128,6 +159,6 @@ export function detectProviderFromEmail(email: string): ProviderId {
 
 const _mod = typeof module !== 'undefined' ? module : null
 if (_mod && _mod.exports) {
-  _mod.exports = { PROVIDERS, detectProviderFromEmail }
+  _mod.exports = { PROVIDERS, detectProviderFromEmail, getLocalizedProvider, getLocalizedProviders }
 }
 

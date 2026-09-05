@@ -5,6 +5,46 @@
 const path = require('node:path')
 const fs = require('node:fs')
 
+// ---------- Locale helpers (inline, no external deps) ----------
+const _WORKER_LOCALE = (() => {
+  const raw = (process.env.MOMAI_LOCALE || '').trim().toLowerCase()
+  if (raw.startsWith('en')) return 'en-US'
+  return 'pt-BR'
+})()
+
+const _WORKER_STRINGS = {
+  'pt-BR': {
+    notifications_newEmail: 'Novo e-mail',
+    notifications_unknownSender: 'Desconhecido',
+    notifications_noSubject: '(Sem assunto)',
+    reply_originalHeader: '--- Mensagem Original ---',
+    reply_from: 'De',
+    reply_date: 'Data',
+    forward_header: '---------- Mensagem Encaminhada ----------',
+    forward_from: 'De',
+    forward_date: 'Data',
+    forward_subject: 'Assunto',
+    forward_to: 'Para'
+  },
+  'en-US': {
+    notifications_newEmail: 'New email',
+    notifications_unknownSender: 'Unknown',
+    notifications_noSubject: '(No subject)',
+    reply_originalHeader: '--- Original Message ---',
+    reply_from: 'From',
+    reply_date: 'Date',
+    forward_header: '---------- Forwarded Message ----------',
+    forward_from: 'From',
+    forward_date: 'Date',
+    forward_subject: 'Subject',
+    forward_to: 'To'
+  }
+}
+
+function _wtr(key) {
+  return (_WORKER_STRINGS[_WORKER_LOCALE] || _WORKER_STRINGS['pt-BR'])[key] || key
+}
+
 function safeSend(msg: any) {
   try {
     if (typeof process.send === 'function') process.send(msg)
@@ -44,7 +84,7 @@ const accountManager = new AccountManager()
 // Setup event emission on new emails
 accountManager.setOnNewEmail(({ accountId, email, totalUnread }: any) => {
   try {
-    const fromStr = email.from ? (email.from.name ? `${email.from.name} <${email.from.address}>` : email.from.address) : 'Desconhecido'
+    const fromStr = email.from ? (email.from.name ? `${email.from.name} <${email.from.address}>` : email.from.address) : _wtr('notifications_unknownSender')
     const toStr = Array.isArray(email.to) ? email.to.map((t: any) => t.address || t.name).join(', ') : ''
 
     // 1. Emit general new_email event
@@ -55,7 +95,7 @@ accountManager.setOnNewEmail(({ accountId, email, totalUnread }: any) => {
         accountId,
         from: fromStr,
         to: toStr,
-        subject: email.subject || '(Sem assunto)',
+        subject: email.subject || _wtr('notifications_noSubject'),
         snippet: email.snippet || '',
         date: email.date,
         messageId: email.messageId || email.id
@@ -87,15 +127,15 @@ accountManager.setOnNewEmail(({ accountId, email, totalUnread }: any) => {
     // 4. Emit native OS notification directly from background worker
     const senderName =
       email.from && typeof email.from === 'object'
-        ? email.from.name || email.from.address || 'Novo e-mail'
-        : email.from || 'Novo e-mail'
+        ? email.from.name || email.from.address || _wtr('notifications_newEmail')
+        : email.from || _wtr('notifications_newEmail')
 
     safeSend({
       type: 'event',
       eventType: 'notification',
       data: {
         title: senderName,
-        body: email.subject || '(Sem assunto)',
+        body: email.subject || _wtr('notifications_noSubject'),
         action: 'momai-emails:open'
       }
     })
@@ -212,7 +252,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
           directResponse: result.messages.length === 0
             ? `Nenhum e-mail recente na pasta ${folder}.`
             : `Aqui estão os ${result.messages.length} e-mails mais recentes de ${account.email}:\n` +
-              result.messages.slice(0, 5).map((m: any) => `- De: ${m.from?.name || m.from?.address} | Assunto: "${m.subject}"`).join('\n')
+              result.messages.slice(0, 5).map((m: any) => `- ${_wtr('reply_from')}: ${m.from?.name || m.from?.address} | ${_wtr('forward_subject')}: "${m.subject}"`).join('\n')
         }
       } catch (err: any) {
         return { ok: false, error: err?.message || String(err) }
@@ -235,7 +275,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
           ok: true,
           email,
           instruction: `E-mail de ${email.from.name || email.from.address}: "${email.subject}".`,
-          directResponse: `Assunto: ${email.subject}\nDe: ${email.from.name || email.from.address}\nData: ${email.date}\n\n${email.text || email.snippet || '(Sem conteúdo de texto)'}`
+          directResponse: `${_wtr('forward_subject')}: ${email.subject}\n${_wtr('reply_from')}: ${email.from.name || email.from.address}\n${_wtr('reply_date')}: ${email.date}\n\n${email.text || email.snippet || '(No text content)'}`
         }
       } catch (err: any) {
         return { ok: false, error: err?.message || String(err) }
@@ -352,7 +392,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
           directResponse: result.total === 0
             ? `Nenhum e-mail encontrado para o termo "${query}".`
             : `Encontrados ${result.total} e-mails para "${query}":\n` +
-              result.messages.slice(0, 10).map((m: any) => `- De: ${m.from?.name || m.from?.address} | Assunto: "${m.subject}"`).join('\n')
+              result.messages.slice(0, 10).map((m: any) => `- ${_wtr('reply_from')}: ${m.from?.name || m.from?.address} | ${_wtr('forward_subject')}: "${m.subject}"`).join('\n')
         }
       } catch (err: any) {
         return { ok: false, error: err?.message || String(err) }
@@ -413,7 +453,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
           replyCc = origEmail.cc.map((c: any) => c.address).filter((addr: string) => addr !== account.email).join(', ')
         }
 
-        const formattedBody = args.body + `\n\n--- Mensagem Original ---\nDe: ${origEmail.from.name || origEmail.from.address}\nData: ${origEmail.date}\n\n${origEmail.text || origEmail.snippet}`
+        const formattedBody = args.body + `\n\n${_wtr('reply_originalHeader')}\n${_wtr('reply_from')}: ${origEmail.from.name || origEmail.from.address}\n${_wtr('reply_date')}: ${origEmail.date}\n\n${origEmail.text || origEmail.snippet}`
 
         const result = await sendEmail(account, {
           to: replyToAddress,
@@ -451,7 +491,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
           : `Fwd: ${origEmail.subject}`
 
         const comment = args.comment ? `${args.comment}\n\n` : ''
-        const formattedBody = `${comment}---------- Mensagem Encaminhada ----------\nDe: ${origEmail.from.name || origEmail.from.address}\nData: ${origEmail.date}\nAssunto: ${origEmail.subject}\nPara: ${origEmail.to.map((t: any) => t.address).join(', ')}\n\n${origEmail.text || origEmail.snippet}`
+        const formattedBody = `${comment}${_wtr('forward_header')}\n${_wtr('forward_from')}: ${origEmail.from.name || origEmail.from.address}\n${_wtr('forward_date')}: ${origEmail.date}\n${_wtr('forward_subject')}: ${origEmail.subject}\n${_wtr('forward_to')}: ${origEmail.to.map((t: any) => t.address).join(', ')}\n\n${origEmail.text || origEmail.snippet}`
 
         const result = await sendEmail(account, {
           to: args.to,

@@ -7,6 +7,7 @@ import { useExtensionEvents } from 'momai:events'
 import { emailApi } from './services/api'
 import { emailStorageCache } from './services/cache'
 import type { PublicEmailAccount, EmailFolder, EmailMessage, EmailAttachment, SendEmailPayload } from './services/types'
+import { useExtensionLocale } from './services/i18n'
 import { EmailsHeader } from './components/EmailsHeader'
 import { ConnectAccountView } from './components/ConnectAccountView'
 import { Sidebar } from './components/Sidebar'
@@ -16,6 +17,7 @@ import { EmailComposer } from './components/EmailComposer'
 
 export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => {
   const [, startTransition] = useTransition()
+  const { t } = useExtensionLocale()
 
   // In-memory SWR caches & request tracking
   const folderCacheRef = useRef<Map<string, EmailMessage[]>>(new Map())
@@ -182,12 +184,12 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
           }
         }
       } else if (!cached) {
-        setMessagesError('Não foi possível carregar as mensagens.')
+        setMessagesError(t('page.errors.loadMessages'))
       }
     } catch (err: any) {
       if (reqSeq !== currentReqSeqRef.current) return
       if (!cached) {
-        setMessagesError(err?.message || 'Erro de conexão ao carregar e-mails.')
+        setMessagesError(err?.message || t('page.errors.connection'))
       }
     } finally {
       if (reqSeq === currentReqSeqRef.current) {
@@ -281,9 +283,9 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
       const { accountId, subject, from, messageId } = event.data || {}
 
       // Extrai apenas o nome do remetente limpo para a notificação
-      let senderName = 'Novo e-mail'
+      let senderName = t('notifications.newEmail')
       if (typeof from === 'object' && from !== null) {
-        senderName = from.name || from.address || 'Novo e-mail'
+        senderName = from.name || from.address || t('notifications.newEmail')
       } else if (typeof from === 'string' && from) {
         const match = from.match(/^([^<]+)<.*>$/)
         senderName = match ? match[1].trim().replace(/^["']|["']$/g, '') : from
@@ -569,7 +571,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
       subject: replySubject,
       inReplyTo: email.messageId,
       references: email.messageId,
-      body: `\n\nEm ${email.date}, ${email.from.name || email.from.address} escreveu:\n> ${email.text || email.snippet}`
+      body: `\n\n${t('page.replyQuote', { date: email.date, name: email.from.name || email.from.address })}\n> ${email.text || email.snippet}`
     })
     setIsComposeOpen(true)
   }
@@ -582,7 +584,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
     setComposeInitialData({
       accountId: activeAccountId || undefined,
       subject: forwardSubject,
-      body: `\n\n---------- Mensagem Encaminhada ----------\nDe: ${email.from.name || email.from.address}\nData: ${email.date}\nAssunto: ${email.subject}\nPara: ${email.to.map((t) => t.address).join(', ')}\n\n${email.text || email.snippet}`
+      body: `\n\n---------- ${t('page.forwardHeader')} ----------\n${t('page.forwardFrom')}: ${email.from.name || email.from.address}\n${t('page.forwardDate')}: ${email.date}\n${t('page.forwardSubject')}: ${email.subject}\n${t('page.forwardTo')}: ${email.to.map((t) => t.address).join(', ')}\n\n${email.text || email.snippet}`
     })
     setIsComposeOpen(true)
   }
