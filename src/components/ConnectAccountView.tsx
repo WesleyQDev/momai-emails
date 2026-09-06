@@ -693,34 +693,236 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
             {t('connect.faqTitle')}
           </p>
 
-          {selectedProvider === 'gmail' && (
-            <div className="space-y-1.5 leading-relaxed">
-              <p>
-                1. Ative a verificação em duas etapas em{' '}
-                <a
-                  href="https://myaccount.google.com/security"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-accent underline inline-flex items-center gap-0.5"
-                >
-                  myaccount.google.com/security
-                  <ArrowTopRightOnSquareIcon className="w-3 h-3" />
-                </a>.
-              </p>
-              <p>
-                2. Acesse a página de{' '}
-                <a
-                  href="https://myaccount.google.com/apppasswords"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-accent underline font-medium inline-flex items-center gap-0.5"
-                >
-                  Senhas de aplicativo
-                  <ArrowTopRightOnSquareIcon className="w-3 h-3" />
-                </a>, crie um novo app com o nome <strong>MomAI</strong> e copie os 16 caracteres gerados.
-              </p>
-            </div>
-          )}
+          {selectedProvider === 'gmail' &&
+            (locale.startsWith('pt') ? (
+              <div className="space-y-3 leading-relaxed">
+                {/* Step 1: detailed verification guide for non-technical users */}
+                <div className="space-y-2">
+                  <p className="font-medium text-text">
+                    1. Ative a verificação em duas etapas{' '}
+                    <span className="font-normal text-text-muted">
+                      (obrigatório — sem isso o Google não mostra a opção “Senhas de app”)
+                    </span>
+                    :
+                  </p>
+                  <ol className="list-[lower-alpha] list-inside ml-3 space-y-1.5 text-text-muted">
+                    <li>
+                      Abra{' '}
+                      <a
+                        href="https://myaccount.google.com/signinoptions/two-step-verification"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-accent underline inline-flex items-center gap-0.5 font-medium"
+                      >
+                        myaccount.google.com/signinoptions/two-step-verification
+                        <ArrowTopRightOnSquareIcon className="w-3 h-3" />
+                      </a>{' '}
+                      e faça login com a mesma conta do Gmail que você quer conectar.
+                    </li>
+                    <li>
+                      Clique em <strong className="text-text">Ativar a verificação em duas etapas</strong> →{' '}
+                      <strong className="text-text">Começar</strong> e siga as instruções na tela: confirme seu
+                      número de celular, escolha receber o código por <strong className="text-text">SMS</strong> ou
+                      notificação do Google e digite o código recebido.
+                    </li>
+                    <li>
+                      Ao terminar, a página deve mostrar{' '}
+                      <strong className="text-text">“A verificação em duas etapas está ATIVADA”</strong>. Se ainda
+                      mostrar “DESATIVADA”, repita o passo anterior.
+                    </li>
+                  </ol>
+                  <p className="ml-3 flex flex-wrap items-center gap-1">
+                    <span>📘 Passo a passo com imagens (oficial Google, em português):</span>
+                    <a
+                      href="https://support.google.com/accounts/answer/185834?hl=pt-BR"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-accent underline inline-flex items-center gap-0.5 font-medium"
+                    >
+                      Como ativar a verificação em duas etapas
+                      <ArrowTopRightOnSquareIcon className="w-3 h-3" />
+                    </a>
+                  </p>
+                  <p className="ml-3 text-[11px] leading-relaxed bg-sidebar/40 border border-border rounded-lg px-3 py-2">
+                    <span className="font-semibold text-text">Dica:</span> Se o Google disser “Senhas de app não
+                    disponíveis” depois, é porque o passo 1 ainda não foi concluído ou você está logado em outra
+                    conta. Contas corporativas/escolares podem ter essa opção bloqueada pelo administrador — nesse
+                    caso, fale com o TI da empresa/escola.
+                  </p>
+                </div>
+
+                {/* Step 2: generate app password */}
+                <div className="space-y-2">
+                  <p className="font-medium text-text">2. Gere a senha de aplicativo (16 letras):</p>
+                  <ol className="list-[lower-alpha] list-inside ml-3 space-y-1.5 text-text-muted">
+                    <li>
+                      Acesse{' '}
+                      <a
+                        href="https://myaccount.google.com/apppasswords"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-accent underline font-medium inline-flex items-center gap-0.5"
+                      >
+                        myaccount.google.com/apppasswords
+                        <ArrowTopRightOnSquareIcon className="w-3 h-3" />
+                      </a>{' '}
+                      (faça login novamente se o Google pedir).
+                    </li>
+                    <li>
+                      No campo <strong className="text-text">“Nome do app”</strong> digite{' '}
+                      <strong className="text-text">MomAI</strong> e clique em{' '}
+                      <strong className="text-text">Criar</strong> ou <strong className="text-text">Gerar</strong>.
+                    </li>
+                    <li>
+                      Copie os <strong className="text-text">16 caracteres</strong> mostrados (ex.:{' '}
+                      <span className="font-mono text-text">abcd efgh ijkl mnop</span>) — você pode colar com ou sem
+                      espaços no campo “Senha de Aplicativo” acima. Guarde em local seguro; o Google só mostra essa
+                      senha uma vez.
+                    </li>
+                  </ol>
+                  <p className="ml-3 flex flex-wrap items-center gap-1">
+                    <span>📘 Guia oficial (pt-BR):</span>
+                    <a
+                      href="https://support.google.com/accounts/answer/185839?hl=pt-BR"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-accent underline inline-flex items-center gap-0.5 font-medium"
+                    >
+                      Fazer login com senhas de app
+                      <ArrowTopRightOnSquareIcon className="w-3 h-3" />
+                    </a>
+                  </p>
+                </div>
+
+                <p className="text-[11px] text-text-muted border-t border-border/60 pt-2 mt-1">
+                  Atalho alternativo: você também pode ir em{' '}
+                  <a
+                    href="https://myaccount.google.com/security"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-accent underline inline-flex items-center gap-0.5"
+                  >
+                    myaccount.google.com/security
+                    <ArrowTopRightOnSquareIcon className="w-3 h-3" />
+                  </a>{' '}
+                  → “Como fazer login no Google” → “Verificação em duas etapas”.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3 leading-relaxed">
+                {/* Step 1: detailed verification guide for non-technical users (EN) */}
+                <div className="space-y-2">
+                  <p className="font-medium text-text">
+                    1. Turn on 2-Step Verification{' '}
+                    <span className="font-normal text-text-muted">
+                      (required — without it Google won&apos;t show &quot;App passwords&quot;)
+                    </span>
+                    :
+                  </p>
+                  <ol className="list-[lower-alpha] list-inside ml-3 space-y-1.5 text-text-muted">
+                    <li>
+                      Open{' '}
+                      <a
+                        href="https://myaccount.google.com/signinoptions/two-step-verification"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-accent underline inline-flex items-center gap-0.5 font-medium"
+                      >
+                        myaccount.google.com/signinoptions/two-step-verification
+                        <ArrowTopRightOnSquareIcon className="w-3 h-3" />
+                      </a>{' '}
+                      and sign in with the same Gmail account you want to connect.
+                    </li>
+                    <li>
+                      Click <strong className="text-text">Turn on 2-Step Verification</strong> →{' '}
+                      <strong className="text-text">Get started</strong> and follow the on-screen instructions:
+                      confirm your phone number, choose to receive the code via{' '}
+                      <strong className="text-text">SMS</strong> or Google prompt, and enter the code.
+                    </li>
+                    <li>
+                      When finished, the page should show{' '}
+                      <strong className="text-text">&quot;2-Step Verification is ON&quot;</strong>. If it still
+                      shows &quot;OFF&quot;, repeat the previous step.
+                    </li>
+                  </ol>
+                  <p className="ml-3 flex flex-wrap items-center gap-1">
+                    <span>📘 Step-by-step with screenshots (official Google guide):</span>
+                    <a
+                      href="https://support.google.com/accounts/answer/185834?hl=en"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-accent underline inline-flex items-center gap-0.5 font-medium"
+                    >
+                      How to turn on 2-Step Verification
+                      <ArrowTopRightOnSquareIcon className="w-3 h-3" />
+                    </a>
+                  </p>
+                  <p className="ml-3 text-[11px] leading-relaxed bg-sidebar/40 border border-border rounded-lg px-3 py-2">
+                    <span className="font-semibold text-text">Tip:</span> If Google later says &quot;App passwords
+                    not available&quot;, step 1 hasn&apos;t been completed or you&apos;re signed in to a different
+                    account. Work or school accounts may have this option disabled by the administrator — contact
+                    your IT admin in that case.
+                  </p>
+                </div>
+
+                {/* Step 2: generate app password */}
+                <div className="space-y-2">
+                  <p className="font-medium text-text">2. Generate the app password (16 letters):</p>
+                  <ol className="list-[lower-alpha] list-inside ml-3 space-y-1.5 text-text-muted">
+                    <li>
+                      Go to{' '}
+                      <a
+                        href="https://myaccount.google.com/apppasswords"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-accent underline font-medium inline-flex items-center gap-0.5"
+                      >
+                        myaccount.google.com/apppasswords
+                        <ArrowTopRightOnSquareIcon className="w-3 h-3" />
+                      </a>{' '}
+                      (sign in again if Google asks).
+                    </li>
+                    <li>
+                      In the <strong className="text-text">&quot;App name&quot;</strong> field type{' '}
+                      <strong className="text-text">MomAI</strong> and click{' '}
+                      <strong className="text-text">Create</strong> or <strong className="text-text">Generate</strong>.
+                    </li>
+                    <li>
+                      Copy the <strong className="text-text">16 characters</strong> shown (e.g.{' '}
+                      <span className="font-mono text-text">abcd efgh ijkl mnop</span>) — you can paste with or
+                      without spaces into the &quot;App Password&quot; field above. Save it securely; Google shows
+                      it only once.
+                    </li>
+                  </ol>
+                  <p className="ml-3 flex flex-wrap items-center gap-1">
+                    <span>📘 Official guide:</span>
+                    <a
+                      href="https://support.google.com/accounts/answer/185839?hl=en"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-accent underline inline-flex items-center gap-0.5 font-medium"
+                    >
+                      Sign in with app passwords
+                      <ArrowTopRightOnSquareIcon className="w-3 h-3" />
+                    </a>
+                  </p>
+                </div>
+
+                <p className="text-[11px] text-text-muted border-t border-border/60 pt-2 mt-1">
+                  Shortcut: you can also go to{' '}
+                  <a
+                    href="https://myaccount.google.com/security"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-accent underline inline-flex items-center gap-0.5"
+                  >
+                    myaccount.google.com/security
+                    <ArrowTopRightOnSquareIcon className="w-3 h-3" />
+                  </a>{' '}
+                  → &quot;How you sign in to Google&quot; → &quot;2-Step Verification&quot;.
+                </p>
+              </div>
+            ))}
 
           {selectedProvider === 'outlook' && (
             <div className="space-y-1.5 leading-relaxed">
