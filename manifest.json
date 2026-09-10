@@ -781,8 +781,7 @@
   "storage": {
     "description": "Guarda suas contas e mensagens neste computador, com as senhas protegidas.",
     "locations": [
-      "accounts.json.enc",
-      "cache/"
+      "accounts.json.enc"
     ]
   },
   "theme": {

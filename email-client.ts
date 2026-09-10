@@ -13,6 +13,26 @@ const { ImapFlow } = require('imapflow')
 const nodemailer = require('nodemailer')
 const { simpleParser } = require('mailparser')
 
+// Base folder for parsed-message and attachment disk cache. Prefers the
+// unified <userData>/cache/extensions/momai-emails/attachments folder and
+// falls back to the legacy OS temp dir when no data dir is configured.
+let attachmentsBaseOverride: string | null = null
+
+function setAttachmentsBaseDir(dir: string | null) {
+  attachmentsBaseOverride = typeof dir === 'string' && dir.length > 0 ? dir : null
+}
+
+function getAttachmentsBaseDir(): string {
+  if (attachmentsBaseOverride) return attachmentsBaseOverride
+  const dataDir =
+    process.env.MOMAI_DATA_DIR || process.env.MOMAI_NODE_CORE_DATA_DIR || ''
+  if (dataDir) {
+    const base = path.basename(dataDir) === 'data' ? path.dirname(dataDir) : dataDir
+    return path.join(base, 'app-cache', 'extensions', 'momai-emails', 'cache', 'attachments')
+  }
+  return path.join(os.tmpdir(), 'momai-emails-attachments')
+}
+
 interface ConnectionTestResult {
   ok: boolean
   imapOk: boolean
@@ -446,7 +466,7 @@ async function fetchFullMessage(account: any, uidOrMessageId: string | number, f
 
   // 0ms Disk Cache: If message was parsed and cached before, return immediately without network overhead
   if (!isNaN(targetUidNum)) {
-    const quickCacheBaseDir = path.join(os.tmpdir(), 'momai-emails-attachments', accKey, String(targetUidNum))
+    const quickCacheBaseDir = path.join(getAttachmentsBaseDir(), accKey, String(targetUidNum))
     const quickMetaFile = path.join(quickCacheBaseDir, 'message_parsed.json')
     if (fs.existsSync(quickMetaFile)) {
       try {
@@ -470,7 +490,7 @@ async function fetchFullMessage(account: any, uidOrMessageId: string | number, f
       else return null
     }
 
-    const cacheBaseDir = path.join(os.tmpdir(), 'momai-emails-attachments', accKey, String(resolvedUid))
+    const cacheBaseDir = path.join(getAttachmentsBaseDir(), accKey, String(resolvedUid))
     const metaFile = path.join(cacheBaseDir, 'message_parsed.json')
     if (fs.existsSync(metaFile)) {
       try {
@@ -793,7 +813,7 @@ async function downloadAttachmentToFile(
 ): Promise<string | null> {
   const accKey = String(account.email || account.id || 'default').toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_')
   const resolvedUidStr = String(uidOrMessageId)
-  const cacheBaseDir = path.join(os.tmpdir(), 'momai-emails-attachments', accKey, resolvedUidStr)
+  const cacheBaseDir = path.join(getAttachmentsBaseDir(), accKey, resolvedUidStr)
 
   try {
     if (!fs.existsSync(cacheBaseDir)) fs.mkdirSync(cacheBaseDir, { recursive: true })
@@ -974,5 +994,7 @@ module.exports = {
   openFileWithDefaultApp,
   saveAttachmentWithDialog,
   generatePdfThumbnail,
-  generateDocumentThumbnail
+  generateDocumentThumbnail,
+  getAttachmentsBaseDir,
+  setAttachmentsBaseDir
 }
