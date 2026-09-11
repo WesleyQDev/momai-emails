@@ -24,6 +24,10 @@ function setAttachmentsBaseDir(dir: string | null) {
 
 function getAttachmentsBaseDir(): string {
   if (attachmentsBaseOverride) return attachmentsBaseOverride
+  // MOMAI_EXTENSION_CACHE_DIR is mode-scoped (Symlink vs Testar Loja), so
+  // cached message bodies never leak across environments.
+  const cacheDir = process.env.MOMAI_EXTENSION_CACHE_DIR || ''
+  if (cacheDir) return path.join(cacheDir, 'attachments')
   const dataDir =
     process.env.MOMAI_DATA_DIR || process.env.MOMAI_NODE_CORE_DATA_DIR || ''
   if (dataDir) {
@@ -174,9 +178,51 @@ async function testAccountConnection(account: any): Promise<ConnectionTestResult
 }
 
 /**
- * List folders/mailboxes for an account.
+ * Start of the unread badge window. Folder badges count only unread messages
+ * received inside the recent window so historic backlogs do not inflate them.
  */
-async function listMailboxes(account: any) {
+const UNREAD_WINDOW_MS = 48 * 60 * 60 * 1000
+
+function normalizeWindowHours(value: any): number {
+  return value === 24 ? 24 : 48
+}
+
+function getUnreadWindowStart(windowHours?: number): Date {
+  const hours = normalizeWindowHours(windowHours ?? 48)
+  return new Date(Date.now() - hours * 60 * 60 * 1000)
+}
+
+function getStartOfToday(): Date {
+  return getUnreadWindowStart()
+}
+
+/**
+ * Count unread messages received inside the badge window in a single folder.
+ * Returns null when the search fails so callers can fall back to STATUS.
+ */
+async function countUnreadInWindowInFolder(client: any, folderPath: string, windowHours?: number): Promise<number | null> {
+  try {
+    const lock = await client.getMailboxLock(folderPath)
+    try {
+      const uids = await client.search({ seen: false, since: getUnreadWindowStart(windowHours) }, { uid: true })
+      return Array.isArray(uids) ? uids.length : 0
+    } finally {
+      lock.release()
+    }
+  } catch {
+    return null
+  }
+}
+
+async function countUnreadTodayInFolder(client: any, folderPath: string): Promise<number | null> {
+  return countUnreadInWindowInFolder(client, folderPath)
+}
+
+/**
+ * List folders/mailboxes for an account.
+ * Badges show only unread messages inside the recent window (SINCE + UNSEEN).
+ */
+async function listMailboxes(account: any, windowHours?: number) {
   const client = await getConnectedImapClient(account)
   const list = await client.list()
   const validItems = list.filter((item: any) => !(item.flags && item.flags.has('\\Noselect')))
@@ -187,6 +233,8 @@ async function listMailboxes(account: any) {
       const special = item.specialUse || ''
       const pathLower = item.path.toLowerCase()
       if (special === '\\Inbox' || pathLower === 'inbox') role = 'inbox'
+      else if (special === '\\Important' || pathLower.includes('important') || pathLower.includes('importante')) role = 'important'
+      else if (special === '\\Flagged' || pathLower.includes('starred') || pathLower.includes('estrela') || pathLower.includes('favorit')) role = 'starred'
       else if (special === '\\Sent' || pathLower.includes('sent') || pathLower.includes('enviad')) role = 'sent'
       else if (special === '\\Drafts' || pathLower.includes('draft') || pathLower.includes('rascunh')) role = 'drafts'
       else if (special === '\\Trash' || pathLower.includes('trash') || pathLower.includes('lixeir')) role = 'trash'
@@ -207,6 +255,20 @@ async function listMailboxes(account: any) {
       }
     })
   )
+
+  // Sequential window recount: IMAP selects one mailbox at a time,
+  // so parallel searches would conflict on the shared connection.
+  for (const folder of folders) {
+    try {
+      const windowCount = await countUnreadInWindowInFolder(client, folder.path, windowHours)
+      if (typeof windowCount === 'number') {
+        ;(folder as any).totalUnread = folder.unreadCount
+        ;(folder as any).unreadToday = windowCount
+        ;(folder as any).unreadWindow = windowCount
+        folder.unreadCount = windowCount
+      }
+    } catch {}
+  }
 
   folders.sort((a, b) => {
     if (a.role === 'inbox') return -1
@@ -996,5 +1058,9 @@ module.exports = {
   generatePdfThumbnail,
   generateDocumentThumbnail,
   getAttachmentsBaseDir,
-  setAttachmentsBaseDir
+  setAttachmentsBaseDir,
+  getStartOfToday,
+  countUnreadTodayInFolder,
+  getUnreadWindowStart,
+  countUnreadInWindowInFolder
 }

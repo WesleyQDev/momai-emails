@@ -24,6 +24,8 @@ import { EmailAvatar } from './EmailAvatar'
 import { AttachmentBadge } from './AttachmentBadge'
 import ContextMenu from './ContextMenu'
 import { CATEGORY_TRANSLATIONS, useExtensionLocale, getCategoryInfo, formatListDate } from '../services/i18n'
+import { isWithinUnreadWindow, UNREAD_WINDOW_MS } from '../services/unread-today'
+import { classifyEmailCategory, type EmailCategory } from '../services/email-categories'
 
 interface EmailListProps {
   messages: EmailMessage[]
@@ -46,6 +48,8 @@ interface EmailListProps {
   loadingMore?: boolean
   onLoadMore?: () => void
   totalCount?: number
+  showCategoryTabs?: boolean
+  unreadWindowMs?: number
 }
 
 export const EmailList: React.FC<EmailListProps> = ({
@@ -68,7 +72,9 @@ export const EmailList: React.FC<EmailListProps> = ({
   hasMore = false,
   loadingMore = false,
   onLoadMore,
-  totalCount
+  totalCount,
+  showCategoryTabs = true,
+  unreadWindowMs = UNREAD_WINDOW_MS
 }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [unreadOnly, setUnreadOnly] = useState(false)
@@ -116,43 +122,21 @@ export const EmailList: React.FC<EmailListProps> = ({
     setSelectedIds(next)
   }
 
-  // Gmail-style category classification (heuristic, client-side)
-  const classifyEmail = useCallback((msg: EmailMessage): 'primary' | 'promotions' | 'social' | 'updates' => {
-    const from = (msg.from?.address || '').toLowerCase()
-    const name = (msg.from?.name || '').toLowerCase()
-    const subject = (msg.subject || '').toLowerCase()
-
-    // Social: social networks, forums, communities
-    const socialDomains = ['facebook', 'twitter', 'linkedin', 'instagram', 'tiktok', 'pinterest', 'reddit', 'discord', 'slack', 'whatsapp', 'telegram', 'snapchat', 'youtube', 'twitch', 'github', 'gitlab', 'meetup', 'quora', 'tumblr']
-    if (socialDomains.some((d) => from.includes(d))) return 'social'
-    const socialKeywords = ['friend request', 'solicitação de amizade', 'seguiu você', 'followed you', 'mentioned you', 'mencionou você', 'commented', 'comentou', 'liked', 'curtiu', 'shared', 'compartilhou', 'tagged', 'marcou', 'invite', 'convite', 'joined', 'entrou']
-    if (socialKeywords.some((k) => subject.includes(k) || name.includes(k))) return 'social'
-
-    // Promotions: marketing, deals, newsletters
-    const promoDomains = ['newsletter', 'marketing', 'promo', 'noreply', 'no-reply', 'news@', 'offers', 'deals', 'shop', 'store', 'sale', 'mailer', 'campaign', 'mailchimp', 'sendgrid', 'hubspot', 'mailgun']
-    if (promoDomains.some((d) => from.includes(d))) return 'promotions'
-    const promoKeywords = ['unsubscribe', 'cancelar inscrição', 'descadastrar', 'oferta', 'offer', 'promoção', 'promotion', 'desconto', 'discount', 'cupom', 'coupon', 'sale', 'deal', 'newsletter', 'black friday', 'frete grátis', 'free shipping', 'compre', 'buy now', 'limited time', 'tempo limitado', 'exclusivo', 'exclusive']
-    if (promoKeywords.some((k) => subject.includes(k))) return 'promotions'
-
-    // Updates: notifications, transactional, automated
-    const updateDomains = ['notify', 'notification', 'alert', 'update', 'security', 'account', 'billing', 'support', 'service', 'info@', 'system', 'admin', 'postmaster', 'mailer-daemon']
-    if (updateDomains.some((d) => from.includes(d))) return 'updates'
-    const updateKeywords = ['verificação', 'verification', 'confirmação', 'confirmation', 'senha', 'password', 'código', 'code', 'login', 'acesso', 'segurança', 'security', 'atualização', 'update', 'fatura', 'invoice', 'recibo', 'receipt', 'pagamento', 'payment', 'entrega', 'delivery', 'rastreio', 'tracking', 'pedido', 'order']
-    if (updateKeywords.some((k) => subject.includes(k))) return 'updates'
-
-    // Default: Primary (personal, direct correspondence)
-    return 'primary'
+  // Gmail category for inbox tabs (shared rules with the background notifier)
+  const classifyEmail = useCallback((msg: EmailMessage): EmailCategory => {
+    return classifyEmailCategory({ from: msg.from, subject: msg.subject })
   }, [])
 
-  // Filter by unreadOnly toggle + category (only in INBOX)
+  // Filter by unreadOnly toggle + category (categories only apply in INBOX with tabs visible)
   const isInbox = activeFolder.toLowerCase() === 'inbox'
+  const useCategories = isInbox && showCategoryTabs
   const filteredMessages = React.useMemo(() => {
     let msgs = unreadOnly ? messages.filter((m) => !m.read) : messages
-    if (isInbox) {
+    if (useCategories) {
       msgs = msgs.filter((m) => classifyEmail(m) === activeCategory)
     }
     return msgs
-  }, [messages, unreadOnly, isInbox, activeCategory, classifyEmail])
+  }, [messages, unreadOnly, useCategories, activeCategory, classifyEmail])
 
   const formatDate = (dateStr: string, timestamp: number) => formatListDate(timestamp, locale)
 
@@ -260,7 +244,7 @@ export const EmailList: React.FC<EmailListProps> = ({
       {/* Main Email Content (below toolbar, with lateral separator from sidebar) */}
       <div className="flex-1 min-h-0 flex flex-col border-l border-border overflow-hidden">
         {/* Gmail Category Tabs: Principal, Promoções, Social, Atualizações (only in INBOX) */}
-        {isInbox && (
+        {useCategories && (
         <div className="w-full flex items-stretch border-b border-border bg-transparent select-none overflow-x-auto no-scrollbar">
           {([
             { id: 'primary' as const, Icon: InboxIcon },
@@ -270,7 +254,9 @@ export const EmailList: React.FC<EmailListProps> = ({
           ]).map(({ id, Icon }) => {
             const isActive = activeCategory === id
             const info = getCategoryInfo(id, locale)
-            const unreadCount = messages.filter((m) => classifyEmail(m) === id && !m.read).length
+            const unreadCount = messages.filter(
+              (m) => classifyEmail(m) === id && !m.read && isWithinUnreadWindow(m.timestamp, Date.now(), unreadWindowMs)
+            ).length
             return (
               <button
                 key={id}

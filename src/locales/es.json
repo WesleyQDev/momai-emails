@@ -189,5 +189,21 @@
   "page.forwardTo": "Para",
   "notifications.newEmail": "Correo nuevo",
   "notifications.unknownSender": "Desconocido",
-  "notifications.noSubject": "(Sin asunto)"
+  "notifications.noSubject": "(Sin asunto)",
+  "settings.title": "Ajustes",
+  "settings.back": "Volver",
+  "settings.notificationsSection": "Notificaciones",
+  "settings.inboxSection": "Bandeja de entrada",
+  "settings.accountSection": "Cuenta",
+  "settings.unreadSummary": "{count} no leídos ({window} h)",
+  "settings.notifyPrimaryOnly": "Notificar solo Principal",
+  "settings.notifyPrimaryOnlyHint": "Promociones, Social y Actualizaciones en silencio",
+  "settings.showCategoryTabs": "Pestañas de categorías",
+  "settings.showCategoryTabsHint": "Mostrar Principal, Promociones, Social y Actualizaciones",
+  "settings.unreadWindow": "Insignias de no leídos",
+  "settings.unreadWindowHint": "Período de las insignias en carpetas y pestañas",
+  "settings.unreadWindowHours": "{hours} h",
+  "settings.autoMarkRead": "Marcar como leído al abrir",
+  "settings.autoMarkReadHint": "Los mensajes abiertos salen del conteo",
+  "settings.syncNow": "Sincronizar ahora"
 }

@@ -189,5 +189,21 @@
   "page.forwardTo": "An",
   "notifications.newEmail": "Neue E-Mail",
   "notifications.unknownSender": "Unbekannt",
-  "notifications.noSubject": "(Kein Betreff)"
+  "notifications.noSubject": "(Kein Betreff)",
+  "settings.title": "Einstellungen",
+  "settings.back": "Zurück",
+  "settings.notificationsSection": "Benachrichtigungen",
+  "settings.inboxSection": "Posteingang",
+  "settings.accountSection": "Konto",
+  "settings.unreadSummary": "{count} ungelesen ({window} Std.)",
+  "settings.notifyPrimaryOnly": "Nur Primär benachrichtigen",
+  "settings.notifyPrimaryOnlyHint": "Werbung, Soziale Netzwerke und Mitteilungen bleiben stumm",
+  "settings.showCategoryTabs": "Kategorie-Tabs",
+  "settings.showCategoryTabsHint": "Primär, Werbung, Soziale Netzwerke und Mitteilungen anzeigen",
+  "settings.unreadWindow": "Ungelesene-Zähler",
+  "settings.unreadWindowHint": "Zeitraum der Zähler in Ordnern und Tabs",
+  "settings.unreadWindowHours": "{hours} Std.",
+  "settings.autoMarkRead": "Beim Öffnen als gelesen markieren",
+  "settings.autoMarkReadHint": "Geöffnete Nachrichten verlassen die Zählung",
+  "settings.syncNow": "Jetzt synchronisieren"
 }

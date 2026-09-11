@@ -189,5 +189,21 @@
   "page.forwardTo": "To",
   "notifications.newEmail": "New email",
   "notifications.unknownSender": "Unknown",
-  "notifications.noSubject": "(No subject)"
+  "notifications.noSubject": "(No subject)",
+  "settings.title": "Settings",
+  "settings.back": "Back",
+  "settings.notificationsSection": "Notifications",
+  "settings.inboxSection": "Inbox",
+  "settings.accountSection": "Account",
+  "settings.unreadSummary": "{count} unread ({window}h)",
+  "settings.notifyPrimaryOnly": "Notify Primary only",
+  "settings.notifyPrimaryOnlyHint": "Promotions, Social and Updates stay silent",
+  "settings.showCategoryTabs": "Category tabs",
+  "settings.showCategoryTabsHint": "Show Primary, Promotions, Social and Updates",
+  "settings.unreadWindow": "Unread badges",
+  "settings.unreadWindowHint": "Badge window for folders and tabs",
+  "settings.unreadWindowHours": "{hours}h",
+  "settings.autoMarkRead": "Mark as read on open",
+  "settings.autoMarkReadHint": "Opened messages leave the count",
+  "settings.syncNow": "Sync now"
 }

@@ -61,6 +61,7 @@ process.on('unhandledRejection', (reason) => {
 })
 
 const { AccountManager } = require('./account-manager.ts')
+const { classifyEmailCategory, shouldNotifyForCategory } = require('./email-categories.ts')
 const {
   testAccountConnection,
   listMailboxes,
@@ -87,7 +88,10 @@ accountManager.setOnNewEmail(({ accountId, email, totalUnread }: any) => {
     const fromStr = email.from ? (email.from.name ? `${email.from.name} <${email.from.address}>` : email.from.address) : _wtr('notifications_unknownSender')
     const toStr = Array.isArray(email.to) ? email.to.map((t: any) => t.address || t.name).join(', ') : ''
 
-    // 1. Emit general new_email event
+    const category = classifyEmailCategory({ from: email.from, subject: email.subject })
+    const wantsNotice = shouldNotifyForCategory(category, accountManager.getNotificationPrefs().primaryOnly)
+
+    // 1. Emit general new_email event (always: drives list refresh and automations)
     safeSend({
       type: 'event',
       eventType: 'new_email',
@@ -98,7 +102,8 @@ accountManager.setOnNewEmail(({ accountId, email, totalUnread }: any) => {
         subject: email.subject || _wtr('notifications_noSubject'),
         snippet: email.snippet || '',
         date: email.date,
-        messageId: email.messageId || email.id
+        messageId: email.messageId || email.id,
+        category
       }
     })
 
@@ -113,6 +118,9 @@ accountManager.setOnNewEmail(({ accountId, email, totalUnread }: any) => {
         messageId: email.messageId || email.id
       }
     })
+
+    // Promotions, Social and Updates stay silent when Primary-only mode is on.
+    if (!wantsNotice) return
 
     // 3. Emit badge_update so sidebar lights up with clean red dot (no numbers)
     safeSend({
@@ -225,7 +233,8 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
       const account = accountManager.getAccount(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail configurada.' }
       try {
-        const folders = await listMailboxes(account)
+        const windowHours = accountManager.getNotificationPrefs().unreadWindowHours
+        const folders = await listMailboxes(account, windowHours)
         return { ok: true, folders }
       } catch (err: any) {
         return { ok: false, error: err?.message || String(err) }
@@ -268,8 +277,10 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
         const email = await fetchFullMessage(account, messageId, folder)
         if (!email) return { ok: false, error: 'E-mail não encontrado.' }
 
-        // Mark as read automatically when opened
-        setMessageReadStatus(account, email.uid, true, folder).catch(() => {})
+        // Mark as read automatically when opened, unless the reader opted out
+        if (args.markRead !== false) {
+          setMessageReadStatus(account, email.uid, true, folder).catch(() => {})
+        }
 
         return {
           ok: true,
@@ -570,6 +581,18 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
       const uid = parseInt(args.messageId || args.uid, 10)
       const ok = await moveMessage(account, uid, args.fromFolder || 'INBOX', args.toFolder)
       return { ok, instruction: `E-mail movido para ${args.toFolder}.` }
+    }
+
+    case 'get_notification_prefs': {
+      return { ok: true, ...accountManager.getNotificationPrefs() }
+    }
+
+    case 'set_notification_prefs': {
+      const prefs = accountManager.setNotificationPrefs({
+        primaryOnly: typeof args.primaryOnly === 'boolean' ? args.primaryOnly : undefined,
+        unreadWindowHours: typeof args.unreadWindowHours === 'number' ? args.unreadWindowHours : undefined
+      })
+      return { ok: true, ...prefs }
     }
 
     case 'sync': {

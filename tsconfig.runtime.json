@@ -16,6 +16,7 @@
     "runtime.ts",
     "account-manager.ts",
     "email-client.ts",
+    "email-categories.ts",
     "providers-data.ts",
     "secure-storage-bridge.ts",
     "runtime-shim.d.ts"

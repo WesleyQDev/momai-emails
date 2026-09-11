@@ -21,6 +21,11 @@ describe('getAttachmentsBaseDir (unified extension cache)', () => {
     expect(getAttachmentsBaseDir()).toContain('momai-emails-attachments')
   })
 
+  it('uses the mode-scoped cache dir supplied by the host', () => {
+    vi.stubEnv('MOMAI_EXTENSION_CACHE_DIR', 'D:\\mode\\cache')
+    expect(getAttachmentsBaseDir()).toBe('D:\\mode\\cache\\attachments')
+  })
+
   it('honors an explicit override (tests and custom setups)', () => {
     setAttachmentsBaseDir('D:\\custom\\cache')
     expect(getAttachmentsBaseDir()).toBe('D:\\custom\\cache')

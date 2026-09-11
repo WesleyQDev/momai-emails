@@ -45,9 +45,12 @@ export interface EmailMessage {
 export interface EmailFolder {
   path: string
   name: string
-  role?: 'inbox' | 'sent' | 'drafts' | 'trash' | 'junk' | 'archive' | 'starred' | 'all' | 'custom'
+  role?: 'inbox' | 'important' | 'sent' | 'drafts' | 'trash' | 'junk' | 'archive' | 'starred' | 'all' | 'custom'
   unreadCount: number
   totalCount: number
+  unreadToday?: number
+  unreadWindow?: number
+  totalUnread?: number
 }
 
 export interface EmailAccountConfig {

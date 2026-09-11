@@ -7,7 +7,8 @@ import {
   TrashIcon,
   CameraIcon,
   MagnifyingGlassIcon,
-  XMarkIcon
+  XMarkIcon,
+  Cog6ToothIcon
 } from '@heroicons/react/24/outline'
 import { GmailIcon, OutlookIcon, YahooIcon, CustomMailIcon } from './ProviderIcons'
 import { detectProviderFromEmail, PROVIDERS, ProviderId } from '../services/providers'
@@ -52,6 +53,7 @@ interface EmailsHeaderProps {
   onRemoveAccount: (id: string) => void
   searchQuery?: string
   onSearchChange?: (q: string) => void
+  onOpenSettings?: () => void
 }
 
 export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
@@ -61,7 +63,8 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
   onOpenAddModal,
   onRemoveAccount,
   searchQuery = '',
-  onSearchChange
+  onSearchChange,
+  onOpenSettings
 }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const { t } = useExtensionLocale()
@@ -189,8 +192,18 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
         </div>
       )}
 
-      {/* 3. Right: ONLY the circular Profile Avatar (no green/purple status dots) */}
-      <div className="relative shrink-0 min-w-[120px] flex justify-end" ref={dropdownRef}>
+      {/* 3. Right: settings gear + circular Profile Avatar (no green/purple status dots) */}
+      <div className="relative shrink-0 min-w-[120px] flex justify-end items-center gap-1" ref={dropdownRef}>
+        {onOpenSettings && (
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="p-2 rounded-full hover:bg-input text-text-muted hover:text-text transition-colors cursor-pointer"
+            title={t('settings.title')}
+          >
+            <Cog6ToothIcon className="w-5 h-5" />
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setDropdownOpen((prev) => !prev)}

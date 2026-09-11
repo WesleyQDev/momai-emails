@@ -6,6 +6,9 @@ import sdk from 'momai:sdk'
 import { useExtensionEvents } from 'momai:events'
 import { emailApi } from './services/api'
 import { emailStorageCache } from './services/cache'
+import { loadEmailSettings, saveEmailSettings, unreadWindowMs, type EmailSettings as EmailSettingsState } from './services/settings'
+import { adjustFolderUnread, getFolderDisplayUnread } from './services/unread-today'
+import { classifyEmailCategory, shouldNotifyForCategory } from './services/email-categories'
 import type { PublicEmailAccount, EmailFolder, EmailMessage, EmailAttachment, SendEmailPayload } from './services/types'
 import { useExtensionLocale } from './services/i18n'
 import { EmailsHeader } from './components/EmailsHeader'
@@ -14,6 +17,8 @@ import { Sidebar } from './components/Sidebar'
 import { EmailList } from './components/EmailList'
 import { EmailReader } from './components/EmailReader'
 import { EmailComposer } from './components/EmailComposer'
+import { EmailSettings } from './components/EmailSettings'
+import { PROVIDERS, detectProviderFromEmail } from './services/providers'
 
 export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => {
   const [, startTransition] = useTransition()
@@ -67,6 +72,31 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
   // Composer state
   const [isComposeOpen, setIsComposeOpen] = useState(false)
   const [composeInitialData, setComposeInitialData] = useState<Partial<SendEmailPayload> | undefined>(undefined)
+
+  // Gear-menu preferences (Primary-only alerts + Gmail category tabs)
+  const [settings, setSettings] = useState<EmailSettingsState>(() => loadEmailSettings())
+  const [syncing, setSyncing] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+
+  const handleSettingsChange = useCallback((patch: Partial<EmailSettingsState>) => {
+    setSettings((prev) => {
+      const next = { ...prev, ...patch }
+      saveEmailSettings(next)
+      emailApi
+        .setNotificationPrefs({ primaryOnly: next.notifyPrimaryOnly, unreadWindowHours: next.unreadWindowHours })
+        .catch(() => {})
+      return next
+    })
+  }, [])
+
+  // Push the worker-owned choices on startup as well,
+  // so OS badges keep working while this page is closed.
+  useEffect(() => {
+    const initial = loadEmailSettings()
+    emailApi
+      .setNotificationPrefs({ primaryOnly: initial.notifyPrimaryOnly, unreadWindowHours: initial.unreadWindowHours })
+      .catch(() => {})
+  }, [])
 
   // 1. Load accounts on startup (and keep persistent cache up to date)
   const loadAccounts = useCallback(async () => {
@@ -131,6 +161,16 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
       sdk.badge.clear('momai-emails')
     }
   }, [isActive])
+
+  // Recount folder badges when the 24h/48h window changes (skips the first run)
+  const windowReloadGuard = useRef(true)
+  useEffect(() => {
+    if (windowReloadGuard.current) {
+      windowReloadGuard.current = false
+      return
+    }
+    if (activeAccountId) loadFolders(activeAccountId)
+  }, [settings.unreadWindowHours, activeAccountId, loadFolders])
 
   // 3. Load emails with SWR (0ms instant display from memory + localStorage cache, background refresh with cancellation)
   const [hasMoreMessages, setHasMoreMessages] = useState(false)
@@ -317,9 +357,14 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
         loadFolders(activeAccountId || undefined)
       }
 
-      // Increment sidebar badge ONLY if the user is not actively viewing the emails page
+      // Sidebar dot only for wanted categories (Primary-only by default)
       if (!isActive) {
-        sdk.badge.set(true, 'momai-emails')
+        const category =
+          (event.data && event.data.category) ||
+          classifyEmailCategory({ from: typeof from === 'string' ? from : undefined, subject })
+        if (shouldNotifyForCategory(category, loadEmailSettings().notifyPrimaryOnly)) {
+          sdk.badge.set(true, 'momai-emails')
+        }
       }
     }
   })
@@ -328,6 +373,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
   const handleSelectAccount = async (id: string) => {
     setActiveAccountId(id)
     setSelectedEmail(null)
+    setShowSettings(false)
     await emailApi.setActiveAccount(id)
   }
 
@@ -373,7 +419,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
       emailBodyCacheRef.current.set(cacheKey, cached)
       setSelectedEmail(cached)
       setLoadingEmailContent(false)
-      if (!msg.read) {
+      if (!msg.read && settings.autoMarkRead) {
         handleMarkRead(msg.id)
       }
       return
@@ -386,17 +432,26 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
       setLoadingEmailContent(true)
     }
     try {
-      const res = await emailApi.readEmail(msg.id, activeFolder, accId)
+      const res = await emailApi.readEmail(msg.id, activeFolder, accId, settings.autoMarkRead)
       if (res.ok && res.email) {
         emailBodyCacheRef.current.set(cacheKey, res.email)
         if (accId) {
           emailStorageCache.setEmailBody(accId, msg.id, res.email)
         }
         setSelectedEmail(res.email)
-        // Mark as read in local list state
-        setMessages((prev) =>
-          prev.map((m) => (m.id === msg.id ? { ...m, read: true } : m))
-        )
+        // Mark as read in local list state (the server already flagged it)
+        if (!msg.read && settings.autoMarkRead) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === msg.id ? { ...m, read: true } : m))
+          )
+          if (activeAccountId) {
+            setFolders((prevFolders) => {
+              const updated = adjustFolderUnread(prevFolders, activeFolder, -1)
+              emailStorageCache.setFolders(activeAccountId, updated)
+              return updated
+            })
+          }
+        }
       }
     } catch (err) {
       console.error('[momai-emails] Error loading full email:', err)
@@ -427,6 +482,10 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
   }
 
   const handleMarkRead = async (id: string) => {
+    // Folder badges never refresh from the server here, so shift the active
+    // folder badge down the moment a previously unread message is opened.
+    const target = messages.find((m) => m.id === id) || (selectedEmail?.id === id ? selectedEmail : null)
+    const delta = target && !target.read ? -1 : 0
     setMessages((prev) => {
       const updated = prev.map((m) => (m.id === id ? { ...m, read: true } : m))
       if (activeAccountId) {
@@ -434,6 +493,13 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
       }
       return updated
     })
+    if (delta !== 0 && activeAccountId) {
+      setFolders((prev) => {
+        const updated = adjustFolderUnread(prev, activeFolder, delta)
+        emailStorageCache.setFolders(activeAccountId, updated)
+        return updated
+      })
+    }
     if (selectedEmail?.id === id) {
       setSelectedEmail({ ...selectedEmail, read: true })
     }
@@ -448,6 +514,8 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
   }
 
   const handleMarkUnread = async (id: string) => {
+    const target = messages.find((m) => m.id === id) || (selectedEmail?.id === id ? selectedEmail : null)
+    const delta = target && target.read ? 1 : 0
     setMessages((prev) => {
       const updated = prev.map((m) => (m.id === id ? { ...m, read: false } : m))
       if (activeAccountId) {
@@ -455,6 +523,13 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
       }
       return updated
     })
+    if (delta !== 0 && activeAccountId) {
+      setFolders((prev) => {
+        const updated = adjustFolderUnread(prev, activeFolder, delta)
+        emailStorageCache.setFolders(activeAccountId, updated)
+        return updated
+      })
+    }
     if (selectedEmail?.id === id) {
       setSelectedEmail({ ...selectedEmail, read: false })
       setSelectedEmail(null) // Return to list if marked unread from reader
@@ -469,6 +544,8 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
   }
 
   const handleDelete = async (id: string) => {
+    const target = messages.find((m) => m.id === id) || (selectedEmail?.id === id ? selectedEmail : null)
+    const delta = target && !target.read ? -1 : 0
     setMessages((prev) => {
       const updated = prev.filter((m) => m.id !== id)
       if (activeAccountId) {
@@ -476,6 +553,13 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
       }
       return updated
     })
+    if (delta !== 0 && activeAccountId) {
+      setFolders((prev) => {
+        const updated = adjustFolderUnread(prev, activeFolder, delta)
+        emailStorageCache.setFolders(activeAccountId, updated)
+        return updated
+      })
+    }
     if (selectedEmail?.id === id) {
       setSelectedEmail(null)
     }
@@ -491,7 +575,15 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
 
   const handleBatchDelete = async (ids: string[]) => {
     const idSet = new Set(ids)
+    const unreadRemoved = messages.filter((m) => idSet.has(m.id) && !m.read).length
     setMessages((prev) => prev.filter((m) => !idSet.has(m.id)))
+    if (unreadRemoved > 0 && activeAccountId) {
+      setFolders((prev) => {
+        const updated = adjustFolderUnread(prev, activeFolder, -unreadRemoved)
+        emailStorageCache.setFolders(activeAccountId, updated)
+        return updated
+      })
+    }
     if (selectedEmail && idSet.has(selectedEmail.id)) {
       setSelectedEmail(null)
     }
@@ -502,13 +594,34 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
 
   const handleBatchMarkRead = async (ids: string[]) => {
     const idSet = new Set(ids)
+    const newlyRead = messages.filter((m) => idSet.has(m.id) && !m.read).length
     setMessages((prev) =>
       prev.map((m) => (idSet.has(m.id) ? { ...m, read: true } : m))
     )
+    if (newlyRead > 0 && activeAccountId) {
+      setFolders((prev) => {
+        const updated = adjustFolderUnread(prev, activeFolder, -newlyRead)
+        emailStorageCache.setFolders(activeAccountId, updated)
+        return updated
+      })
+    }
     for (const id of ids) {
       await emailApi.markAsRead(id, activeFolder, activeAccountId || undefined)
     }
   }
+
+  const handleSyncNow = useCallback(async () => {
+    setSyncing(true)
+    try {
+      await emailApi.sync()
+      await loadFolders(activeAccountId || undefined)
+      await loadEmails(activeFolder, activeAccountId || undefined, true)
+    } catch {
+      // Sync failures surface through the list error state.
+    } finally {
+      setSyncing(false)
+    }
+  }, [activeAccountId, activeFolder, loadFolders, loadEmails])
 
   // 7. Open Document Attachment with OS Default App
   const handleOpenAttachment = async (msg: EmailMessage, attachment: EmailAttachment) => {
@@ -645,6 +758,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
         onRemoveAccount={handleRemoveAccount}
         searchQuery={searchQuery}
         onSearchChange={handleSearchChange}
+        onOpenSettings={() => setShowSettings((prev) => !prev)}
       />
 
       {/* 2. Main Workspace */}
@@ -656,12 +770,34 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
           onSelectFolder={(folderPath) => {
             setActiveFolder(folderPath)
             setSelectedEmail(null)
+            setShowSettings(false)
           }}
           onOpenCompose={handleOpenCompose}
         />
 
-        {/* Content View: EmailList or EmailReader */}
-        {selectedEmail ? (
+        {/* Content View: Settings page, EmailReader or EmailList */}
+        {showSettings ? (
+          <EmailSettings
+            accountEmail={accounts.find((a) => a.id === activeAccountId)?.email || ''}
+            providerName={
+              (() => {
+                const acc = accounts.find((a) => a.id === activeAccountId)
+                if (!acc) return ''
+                const pid = (acc.provider as keyof typeof PROVIDERS) || detectProviderFromEmail(acc.email)
+                return (PROVIDERS[pid] || PROVIDERS.custom).name
+              })()
+            }
+            unreadCount={getFolderDisplayUnread(
+              folders.find((f) => f.path.toLowerCase() === 'inbox') || { unreadCount: 0 }
+            )}
+            windowHours={settings.unreadWindowHours}
+            settings={settings}
+            syncing={syncing}
+            onChange={handleSettingsChange}
+            onSync={handleSyncNow}
+            onBack={() => setShowSettings(false)}
+          />
+        ) : selectedEmail ? (
           <EmailReader
             email={selectedEmail}
             loading={loadingEmailContent}
@@ -696,6 +832,8 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
             loadingMore={loadingMoreMessages}
             onLoadMore={loadMoreEmails}
             totalCount={folders.find((f) => f.path.toLowerCase() === activeFolder.toLowerCase())?.totalCount || messages.length}
+            showCategoryTabs={settings.showCategoryTabs}
+            unreadWindowMs={unreadWindowMs(settings.unreadWindowHours)}
           />
         )}
       </div>

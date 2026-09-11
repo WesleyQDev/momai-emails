@@ -13,6 +13,7 @@ const { testAccountConnection, fetchMessages, fetchFullMessage, getMailboxStatus
 class AccountManager {
   private storageDir: string
   private accountsFile: string
+  private notifyPrefsFile: string
   private accounts: Map<string, any> = new Map()
   private activeAccountId: string | null = null
   private pollInterval: any = null
@@ -24,8 +25,14 @@ class AccountManager {
 
   constructor(storageDir?: string) {
     const defaultDataDir = process.env.MOMAI_NODE_CORE_DATA_DIR || process.env.MOMAI_DATA_DIR || path.join(process.cwd(), 'data')
-    this.storageDir = storageDir || path.join(defaultDataDir, 'extensions', 'momai-emails')
+    // MOMAI_EXTENSION_STORAGE_DIR is mode-scoped (Symlink vs Testar Loja), so
+    // accounts and preferences never leak across environments.
+    this.storageDir =
+      storageDir ||
+      process.env.MOMAI_EXTENSION_STORAGE_DIR ||
+      path.join(defaultDataDir, 'extensions', 'momai-emails')
     this.accountsFile = path.join(this.storageDir, 'accounts.json.enc')
+    this.notifyPrefsFile = path.join(this.storageDir, 'notify-prefs.json')
     fs.mkdirSync(this.storageDir, { recursive: true })
   }
 
@@ -39,6 +46,34 @@ class AccountManager {
       total += count
     }
     return total
+  }
+
+  public getNotificationPrefs(): { primaryOnly: boolean; unreadWindowHours: 24 | 48 } {
+    try {
+      if (fs.existsSync(this.notifyPrefsFile)) {
+        const parsed = JSON.parse(fs.readFileSync(this.notifyPrefsFile, 'utf8')) || {}
+        return {
+          primaryOnly: typeof parsed.primaryOnly === 'boolean' ? parsed.primaryOnly : true,
+          unreadWindowHours: parsed.unreadWindowHours === 24 ? 24 : 48
+        }
+      }
+    } catch {}
+    return { primaryOnly: true, unreadWindowHours: 48 }
+  }
+
+  public setNotificationPrefs(prefs: { primaryOnly?: boolean; unreadWindowHours?: number }): {
+    primaryOnly: boolean
+    unreadWindowHours: 24 | 48
+  } {
+    const current = this.getNotificationPrefs()
+    const next = {
+      primaryOnly: typeof prefs.primaryOnly === 'boolean' ? prefs.primaryOnly : current.primaryOnly,
+      unreadWindowHours: (prefs.unreadWindowHours === 24 ? 24 : prefs.unreadWindowHours === 48 ? 48 : current.unreadWindowHours) as 24 | 48
+    }
+    try {
+      fs.writeFileSync(this.notifyPrefsFile, JSON.stringify(next), 'utf8')
+    } catch {}
+    return next
   }
 
   public async initialize(): Promise<void> {

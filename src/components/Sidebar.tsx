@@ -15,6 +15,7 @@ import {
 } from '@heroicons/react/24/outline'
 import type { EmailFolder } from '../services/types'
 import { formatFolderName, useExtensionLocale } from '../services/i18n'
+import { getFolderDisplayUnread } from '../services/unread-today'
 
 interface SidebarProps {
   folders: EmailFolder[]
@@ -107,6 +108,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               const Icon = getFolderIcon(f.role, f.name)
               const displayName = formatFolderName(f.name, f.role, locale)
               const isActive = activeFolder.toLowerCase() === f.path.toLowerCase()
+              const displayUnread = getFolderDisplayUnread(f)
 
               return (
                 <button
@@ -124,13 +126,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <span className="truncate">{displayName}</span>
                   </div>
 
-                  {f.unreadCount > 0 && (
+                  {displayUnread > 0 && (
                     <span
                       className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0 ${
                         isActive ? 'bg-accent text-bg' : 'bg-input text-text-muted'
                       }`}
                     >
-                      {f.unreadCount}
+                      {displayUnread}
                     </span>
                   )}
                 </button>
