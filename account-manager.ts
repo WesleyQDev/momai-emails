@@ -14,6 +14,11 @@ class AccountManager {
   private storageDir: string
   private accountsFile: string
   private notifyPrefsFile: string
+  private injectedStorage: {
+    get?: (key: string) => Promise<any>
+    set?: (key: string, value: any) => Promise<void>
+    delete?: (key: string) => Promise<void>
+  } | null = null
   private accounts: Map<string, any> = new Map()
   private activeAccountId: string | null = null
   private pollInterval: any = null
@@ -23,7 +28,13 @@ class AccountManager {
   private isChecking = false
   private onNewEmailCallback?: (event: { accountId: string; email: any; totalUnread: number }) => void
 
-  constructor(storageDir?: string) {
+  constructor(storageDir?: string, deps?: {
+    storage?: {
+      get?: (key: string) => Promise<any>
+      set?: (key: string, value: any) => Promise<void>
+      delete?: (key: string) => Promise<void>
+    }
+  }) {
     const defaultDataDir = process.env.MOMAI_NODE_CORE_DATA_DIR || process.env.MOMAI_DATA_DIR || path.join(process.cwd(), 'data')
     // MOMAI_EXTENSION_STORAGE_DIR is mode-scoped (Symlink vs Testar Loja), so
     // accounts and preferences never leak across environments.
@@ -33,7 +44,77 @@ class AccountManager {
       path.join(defaultDataDir, 'extensions', 'momai-emails')
     this.accountsFile = path.join(this.storageDir, 'accounts.json.enc')
     this.notifyPrefsFile = path.join(this.storageDir, 'notify-prefs.json')
+    if (deps && deps.storage) this.injectedStorage = deps.storage
     fs.mkdirSync(this.storageDir, { recursive: true })
+  }
+
+  private useHostStorage(): boolean {
+    return !!(
+      this.injectedStorage &&
+      typeof this.injectedStorage.get === 'function' &&
+      typeof this.injectedStorage.set === 'function'
+    )
+  }
+
+  private async readStoredText(key: string, legacyFile: string): Promise<string | null> {
+    if (this.useHostStorage()) {
+      try {
+        const stored = await this.injectedStorage!.get!(key)
+        if (typeof stored === 'string' && stored.length > 0) return stored
+        if (stored !== null && stored !== undefined && typeof stored !== 'string') {
+          return JSON.stringify(stored)
+        }
+      } catch {}
+      try {
+        if (fs.existsSync(legacyFile)) {
+          const raw = fs.readFileSync(legacyFile, 'utf8')
+          if (raw && raw.trim()) {
+            try {
+              await this.injectedStorage!.set!(key, raw)
+            } catch {}
+            return raw
+          }
+        }
+      } catch {}
+      return null
+    }
+    return null
+  }
+
+  private async writeStoredText(key: string, value: string, legacyFile: string): Promise<void> {
+    if (this.useHostStorage()) {
+      await this.injectedStorage!.set!(key, value)
+      return
+    }
+    fs.writeFileSync(legacyFile, value, 'utf8')
+  }
+
+  private async readStoredJson(key: string, legacyFile: string): Promise<any | null> {
+    if (this.useHostStorage()) {
+      try {
+        const stored = await this.injectedStorage!.get!(key)
+        if (stored !== null && stored !== undefined) return stored
+      } catch {}
+      try {
+        if (fs.existsSync(legacyFile)) {
+          const parsed = JSON.parse(fs.readFileSync(legacyFile, 'utf8'))
+          try {
+            await this.injectedStorage!.set!(key, parsed)
+          } catch {}
+          return parsed
+        }
+      } catch {}
+      return null
+    }
+    return null
+  }
+
+  private async writeStoredJson(key: string, value: any, legacyFile: string): Promise<void> {
+    if (this.useHostStorage()) {
+      await this.injectedStorage!.set!(key, value)
+      return
+    }
+    fs.writeFileSync(legacyFile, JSON.stringify(value), 'utf8')
   }
 
   public setOnNewEmail(callback: (event: { accountId: string; email: any; totalUnread: number }) => void) {
@@ -48,7 +129,19 @@ class AccountManager {
     return total
   }
 
-  public getNotificationPrefs(): { primaryOnly: boolean; unreadWindowHours: 24 | 48 } {
+  public async getNotificationPrefs(): Promise<{ primaryOnly: boolean; unreadWindowHours: 24 | 48 }> {
+    if (this.useHostStorage()) {
+      try {
+        const stored = await this.readStoredJson('notify-prefs', this.notifyPrefsFile)
+        if (stored && typeof stored === 'object') {
+          return {
+            primaryOnly: typeof stored.primaryOnly === 'boolean' ? stored.primaryOnly : true,
+            unreadWindowHours: stored.unreadWindowHours === 24 ? 24 : 48
+          }
+        }
+      } catch {}
+      return { primaryOnly: true, unreadWindowHours: 48 }
+    }
     try {
       if (fs.existsSync(this.notifyPrefsFile)) {
         const parsed = JSON.parse(fs.readFileSync(this.notifyPrefsFile, 'utf8')) || {}
@@ -61,17 +154,17 @@ class AccountManager {
     return { primaryOnly: true, unreadWindowHours: 48 }
   }
 
-  public setNotificationPrefs(prefs: { primaryOnly?: boolean; unreadWindowHours?: number }): {
+  public async setNotificationPrefs(prefs: { primaryOnly?: boolean; unreadWindowHours?: number }): Promise<{
     primaryOnly: boolean
     unreadWindowHours: 24 | 48
-  } {
-    const current = this.getNotificationPrefs()
+  }> {
+    const current = await this.getNotificationPrefs()
     const next = {
       primaryOnly: typeof prefs.primaryOnly === 'boolean' ? prefs.primaryOnly : current.primaryOnly,
       unreadWindowHours: (prefs.unreadWindowHours === 24 ? 24 : prefs.unreadWindowHours === 48 ? 48 : current.unreadWindowHours) as 24 | 48
     }
     try {
-      fs.writeFileSync(this.notifyPrefsFile, JSON.stringify(next), 'utf8')
+      await this.writeStoredJson('notify-prefs', next, this.notifyPrefsFile)
     } catch {}
     return next
   }
@@ -126,6 +219,30 @@ class AccountManager {
   }
 
   public async loadAccounts(): Promise<void> {
+    if (this.useHostStorage()) {
+      try {
+        const rawEnc = await this.readStoredText('accounts', this.accountsFile)
+        if (!rawEnc || !rawEnc.trim()) return
+
+        const decrypted = await decryptFromStorage(rawEnc)
+        if (!decrypted) return
+
+        const list: any[] = JSON.parse(decrypted)
+        this.accounts.clear()
+        for (const acc of list) {
+          this.accounts.set(acc.id, acc)
+          if (acc.active && !this.activeAccountId) {
+            this.activeAccountId = acc.id
+          }
+        }
+        if (!this.activeAccountId && this.accounts.size > 0) {
+          this.activeAccountId = Array.from(this.accounts.keys())[0]
+        }
+      } catch (err) {
+        console.error('[AccountManager] Failed to load accounts:', err)
+      }
+      return
+    }
     try {
       if (!fs.existsSync(this.accountsFile)) {
         return
@@ -157,7 +274,7 @@ class AccountManager {
       const list = Array.from(this.accounts.values())
       const plain = JSON.stringify(list, null, 2)
       const encrypted = await encryptForStorage(plain)
-      fs.writeFileSync(this.accountsFile, encrypted, 'utf8')
+      await this.writeStoredText('accounts', encrypted, this.accountsFile)
     } catch (err) {
       console.error('[AccountManager] Failed to save accounts:', err)
       throw err

@@ -80,16 +80,39 @@ const {
   generateDocumentThumbnail
 } = require('./email-client.ts')
 
-const accountManager = new AccountManager()
+let storageResponseListener: ((msg: any) => void) | null = null
+let ipcEmailsStorage: any = null
+function getIpcEmailsStorage(): any {
+  if (ipcEmailsStorage) return ipcEmailsStorage
+  const { createIpcEmailsStorage } = require('./storage-ipc.ts')
+  ipcEmailsStorage = createIpcEmailsStorage({
+    send: (msg: any) => safeSend(msg),
+    onResponse: (fn: (msg: any) => void) => {
+      storageResponseListener = fn
+    },
+    storageDir: 'momai-emails'
+  })
+  return ipcEmailsStorage
+}
+
+function useHostStorage(): boolean {
+  return typeof process.send === 'function'
+}
+
+const accountManager = new AccountManager(
+  undefined,
+  useHostStorage() ? { storage: getIpcEmailsStorage().storage } : undefined
+)
 
 // Setup event emission on new emails
-accountManager.setOnNewEmail(({ accountId, email, totalUnread }: any) => {
+accountManager.setOnNewEmail(async ({ accountId, email, totalUnread }: any) => {
   try {
     const fromStr = email.from ? (email.from.name ? `${email.from.name} <${email.from.address}>` : email.from.address) : _wtr('notifications_unknownSender')
     const toStr = Array.isArray(email.to) ? email.to.map((t: any) => t.address || t.name).join(', ') : ''
 
     const category = classifyEmailCategory({ from: email.from, subject: email.subject })
-    const wantsNotice = shouldNotifyForCategory(category, accountManager.getNotificationPrefs().primaryOnly)
+    const prefs = await accountManager.getNotificationPrefs()
+    const wantsNotice = shouldNotifyForCategory(category, prefs.primaryOnly)
 
     // 1. Emit general new_email event (always: drives list refresh and automations)
     safeSend({
@@ -233,8 +256,8 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
       const account = accountManager.getAccount(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail configurada.' }
       try {
-        const windowHours = accountManager.getNotificationPrefs().unreadWindowHours
-        const folders = await listMailboxes(account, windowHours)
+        const prefs = await accountManager.getNotificationPrefs()
+        const folders = await listMailboxes(account, prefs.unreadWindowHours)
         return { ok: true, folders }
       } catch (err: any) {
         return { ok: false, error: err?.message || String(err) }
@@ -584,11 +607,12 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'get_notification_prefs': {
-      return { ok: true, ...accountManager.getNotificationPrefs() }
+      const prefs = await accountManager.getNotificationPrefs()
+      return { ok: true, ...prefs }
     }
 
     case 'set_notification_prefs': {
-      const prefs = accountManager.setNotificationPrefs({
+      const prefs = await accountManager.setNotificationPrefs({
         primaryOnly: typeof args.primaryOnly === 'boolean' ? args.primaryOnly : undefined,
         unreadWindowHours: typeof args.unreadWindowHours === 'number' ? args.unreadWindowHours : undefined
       })
@@ -608,6 +632,12 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
 // Listen to messages from MomAI extension host
 process.on('message', async (msg: any) => {
   if (!msg || typeof msg !== 'object') return
+  if (msg.type === 'storage-response') {
+    try {
+      storageResponseListener?.(msg)
+    } catch {}
+    return
+  }
   if (msg.type === 'execute') {
     const { requestId, payload } = msg
     const { toolName, args } = payload || {}

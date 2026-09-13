@@ -1,7 +1,6 @@
 {
   "id": "momai-emails",
   "name": "MomAI E-mails",
-  "kind": "packaged",
   "is_official": true,
   "description": "Leia, envie e organize seus e-mails por voz ou texto, sem abrir o navegador.",
   "category": "communication",
@@ -154,8 +153,8 @@
   },
   "author": "WesleyQDev",
   "icon_bg": "#4f46e5",
-  "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\"><rect x=\"2\" y=\"4\" width=\"20\" height=\"16\" rx=\"3.5\" fill=\"#ffffff\" fill-opacity=\"0.18\" stroke=\"#ffffff\" stroke-width=\"1.8\"/><path d=\"M2 7.5L12 14.5L22 7.5\" stroke=\"#ffffff\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M2.5 19.5L9.5 13\" stroke=\"#ffffff\" stroke-width=\"1.4\" stroke-linecap=\"round\" stroke-opacity=\"0.5\"/><path d=\"M21.5 19.5L14.5 13\" stroke=\"#ffffff\" stroke-width=\"1.4\" stroke-linecap=\"round\" stroke-opacity=\"0.5\"/><circle cx=\"19\" cy=\"6.5\" r=\"2.5\" fill=\"#38BDF8\"/></svg>",
-  "sidebar_icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\"><rect x=\"2\" y=\"5\" width=\"20\" height=\"15\" rx=\"3.5\" fill=\"#1D4ED8\"/><rect x=\"4.5\" y=\"3\" width=\"15\" height=\"8.5\" rx=\"1.5\" fill=\"#FFFFFF\"/><rect x=\"7\" y=\"5.2\" width=\"10\" height=\"1.4\" rx=\"0.7\" fill=\"#3B82F6\"/><rect x=\"7\" y=\"7.8\" width=\"6\" height=\"1.4\" rx=\"0.7\" fill=\"#60A5FA\"/><path d=\"M2 10C2 8.34 3.34 7 5 7H19C20.66 7 22 8.34 22 10V16.5C22 18.43 20.43 20 18.5 20H5.5C3.57 20 2 18.43 2 16.5V10Z\" fill=\"#3B82F6\"/><path d=\"M2.5 8L12 14.5L21.5 8\" stroke=\"#FFFFFF\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
+  "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\"><rect x=\"2.5\" y=\"5.5\" width=\"19\" height=\"14.5\" rx=\"2.8\" fill=\"#ffffff\" fill-opacity=\"0.18\" stroke=\"#ffffff\" stroke-width=\"1.4\"/><path d=\"M2.8 6.8C2.8 5.9 3.5 5.2 4.4 5.2H19.6C20.5 5.2 21.2 5.9 21.2 6.8L12.7 13.8C12.3 14.1 11.7 14.1 11.3 13.8L2.8 6.8Z\" fill=\"#ffffff\" fill-opacity=\"0.25\"/><path d=\"M4.2 6L11.5 12.8C11.8 13 12.2 13 12.5 12.8L19.8 6\" stroke=\"#ffffff\" stroke-width=\"1.2\" stroke-linecap=\"round\"/><path d=\"M3 19.5L10 13.5\" stroke=\"#ffffff\" stroke-width=\"1\" stroke-linecap=\"round\" stroke-opacity=\"0.5\"/><path d=\"M21 19.5L14 13.5\" stroke=\"#ffffff\" stroke-width=\"1\" stroke-linecap=\"round\" stroke-opacity=\"0.5\"/><circle cx=\"12\" cy=\"14\" r=\"2.2\" fill=\"#38BDF8\"/><circle cx=\"12\" cy=\"14\" r=\"0.9\" fill=\"#ffffff\"/></svg>",
+  "sidebar_icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\"><defs><linearGradient id=\"emailBodyGrad\" x1=\"0%\" y1=\"0%\" x2=\"0%\" y2=\"100%\"><stop offset=\"0%\" stop-color=\"#3B82F6\"/><stop offset=\"100%\" stop-color=\"#1D4ED8\"/></linearGradient><linearGradient id=\"emailFlapGrad\" x1=\"0%\" y1=\"0%\" x2=\"0%\" y2=\"100%\"><stop offset=\"0%\" stop-color=\"#60A5FA\"/><stop offset=\"80%\" stop-color=\"#2563EB\"/><stop offset=\"100%\" stop-color=\"#1D4ED8\"/></linearGradient><linearGradient id=\"emailSealGrad\" x1=\"0%\" y1=\"0%\" x2=\"100%\" y2=\"100%\"><stop offset=\"0%\" stop-color=\"#38BDF8\"/><stop offset=\"100%\" stop-color=\"#6366F1\"/></linearGradient></defs><ellipse cx=\"12\" cy=\"21.5\" rx=\"8.5\" ry=\"1.5\" fill=\"#000000\" opacity=\"0.4\"/><rect x=\"2.5\" y=\"5.5\" width=\"19\" height=\"14.5\" rx=\"2.8\" fill=\"url(#emailBodyGrad)\" stroke=\"#1D4ED8\" stroke-width=\"0.6\"/><path d=\"M3 19.5L10 13.5\" stroke=\"#1E40AF\" stroke-width=\"0.9\" opacity=\"0.8\"/><path d=\"M21 19.5L14 13.5\" stroke=\"#1E40AF\" stroke-width=\"0.9\" opacity=\"0.8\"/><path d=\"M2.8 6.8C2.8 5.9 3.5 5.2 4.4 5.2H19.6C20.5 5.2 21.2 5.9 21.2 6.8L12.7 13.8C12.3 14.1 11.7 14.1 11.3 13.8L2.8 6.8Z\" fill=\"url(#emailFlapGrad)\"/><path d=\"M4.2 6L11.5 12.8C11.8 13 12.2 13 12.5 12.8L19.8 6\" stroke=\"#93C5FD\" stroke-width=\"0.6\" stroke-linecap=\"round\" opacity=\"0.85\"/><circle cx=\"12\" cy=\"14\" r=\"2.4\" fill=\"url(#emailSealGrad)\"/><circle cx=\"12\" cy=\"14\" r=\"1.1\" fill=\"#FFFFFF\"/></svg>",
   "readme": {
     "pt-BR": "README.md",
     "en-US": "README.en-US.md",
@@ -167,12 +166,7 @@
   "sidebar": true,
   "background": true,
   "backgroundScript": "runtime.ts",
-  "permissions": [
-    "network",
-    "network:persistent",
-    "storage",
-    "storage:persistent"
-  ],
+  "permissions": ["network"],
   "sdkVersion": 1,
   "momai_compat": ">=1.11.0",
   "version": "1.2.0",
@@ -785,8 +779,8 @@
     ]
   },
   "theme": {
-    "gradient": "from-indigo-500 to-purple-600",
-    "accent": "indigo"
+    "gradient": "from-blue-500 to-indigo-600",
+    "accent": "blue"
   },
   "toolPriority": {
     "label": "EMAILS",
