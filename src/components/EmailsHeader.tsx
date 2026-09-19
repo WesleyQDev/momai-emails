@@ -10,10 +10,18 @@ import {
   XMarkIcon,
   Cog6ToothIcon
 } from '@heroicons/react/24/outline'
-import { GmailIcon, OutlookIcon, YahooIcon, CustomMailIcon } from './ProviderIcons'
+import { GmailIcon, OutlookIcon, YahooIcon, YahooMailWordmark, CustomMailIcon } from './ProviderIcons'
 import { detectProviderFromEmail, PROVIDERS, ProviderId } from '../services/providers'
 import type { PublicEmailAccount } from '../services/types'
 import { useExtensionLocale } from '../services/i18n'
+import {
+  defaultAvatarStore,
+  downscaleImageFileToAvatar,
+  isSupportedAvatarDataUrl,
+  loadAvatar,
+  saveAvatar,
+} from '../services/avatar-storage'
+import { emailApi } from '../services/api'
 
 // Authentic Gmail Material color palette per letter
 const GMAIL_PALETTE: Record<string, string> = {
@@ -78,28 +86,49 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
 
   const providerConfig = PROVIDERS[providerId] || PROVIDERS.custom
 
-  // Avatars map: stores custom uploaded avatar per account id
+  // Avatars map: stores downscaled custom avatar per account id
   const [avatarMap, setAvatarMap] = useState<Record<string, string>>(() => {
     const map: Record<string, string> = {}
+    const store = defaultAvatarStore()
     for (const acc of accounts) {
-      try {
-        const saved = localStorage.getItem(`momai_emails_avatar_${acc.id}`)
-        if (saved) map[acc.id] = saved
-      } catch {}
+      const saved = loadAvatar(store, acc.id)
+      if (saved) map[acc.id] = saved
     }
     return map
   })
 
-  // Sync avatar map when accounts change
+  // Sync avatar map when accounts change.
+  // Local cache paints instantly; host storage is authoritative and survives restarts.
   useEffect(() => {
-    const map: Record<string, string> = {}
+    const store = defaultAvatarStore()
+    const cached: Record<string, string> = {}
     for (const acc of accounts) {
-      try {
-        const saved = localStorage.getItem(`momai_emails_avatar_${acc.id}`)
-        if (saved) map[acc.id] = saved
-      } catch {}
+      const saved = loadAvatar(store, acc.id)
+      if (saved) cached[acc.id] = saved
     }
-    setAvatarMap(map)
+    setAvatarMap(cached)
+    let cancelled = false
+    void (async () => {
+      const next: Record<string, string> = {}
+      for (const acc of accounts) {
+        try {
+          const res = await emailApi.getAvatar(acc.id)
+          const avatar = res?.avatar
+          if (cancelled) return
+          if (isSupportedAvatarDataUrl(avatar)) {
+            next[acc.id] = avatar
+            saveAvatar(store, acc.id, avatar)
+          } else if (cached[acc.id]) {
+            const pushed = await emailApi.setAvatar(acc.id, cached[acc.id])
+            if (pushed?.ok) next[acc.id] = cached[acc.id]
+          }
+        } catch {}
+      }
+      if (!cancelled) setAvatarMap(next)
+    })()
+    return () => {
+      cancelled = true
+    }
   }, [accounts.map((a) => a.id).join(',')])
 
   // Close dropdown on click outside
@@ -117,23 +146,24 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
     }
   }, [dropdownOpen])
 
-  // Handle local avatar upload for any account
+  // Handle avatar upload for any account: persist in host storage first,
+  // mirror to the local cache only after the worker confirms the save.
   const uploadTargetRef = useRef<string | null>(null)
-  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     const targetId = uploadTargetRef.current || activeAccount?.id
-    if (!file || !targetId) return
-    const reader = new FileReader()
-    reader.onload = () => {
-      const base64 = reader.result as string
-      setAvatarMap((prev) => ({ ...prev, [targetId]: base64 }))
-      try {
-        localStorage.setItem(`momai_emails_avatar_${targetId}`, base64)
-      } catch {}
-    }
-    reader.readAsDataURL(file)
     // Reset file input so same file can be re-selected
     e.target.value = ''
+    if (!file || !targetId) return
+    try {
+      const thumbnail = await downscaleImageFileToAvatar(file)
+      const res = await emailApi.setAvatar(targetId, thumbnail)
+      if (!res?.ok) return
+      saveAvatar(defaultAvatarStore(), targetId, thumbnail)
+      setAvatarMap((prev) => ({ ...prev, [targetId]: thumbnail }))
+    } catch {
+      // Keep the previous avatar when the upload cannot be persisted.
+    }
   }
 
   const renderProviderIcon = (sizeClass = 'w-6 h-6') => {
@@ -156,14 +186,20 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
 
   return (
     <header className="flex items-center justify-between gap-4 bg-sidebar/70 backdrop-blur-xs px-5 py-2.5 select-none relative z-30">
-      {/* 1. Left: Provider SVG & Provider Title */}
+      {/* 1. Left: Provider branding (Yahoo uses the official wordmark alone) */}
       <div className="flex items-center gap-2.5 shrink-0 min-w-[120px]">
-        <div className="flex items-center justify-center shrink-0 drop-shadow-xs">
-          {renderProviderIcon('w-6 h-6')}
-        </div>
-        <span className="text-sm font-bold text-text tracking-tight">
-          {providerConfig.name}
-        </span>
+        {providerId === 'yahoo' ? (
+          <YahooMailWordmark />
+        ) : (
+          <>
+            <div className="flex items-center justify-center shrink-0 drop-shadow-xs">
+              {renderProviderIcon('w-6 h-6')}
+            </div>
+            <span className="text-sm font-bold text-text tracking-tight">
+              {providerConfig.name}
+            </span>
+          </>
+        )}
       </div>
 
       {/* 2. Center: Search Bar (Gmail style) */}

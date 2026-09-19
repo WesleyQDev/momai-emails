@@ -1,9 +1,6 @@
-// src/services/unread-today.ts
-// Folder and category badges count only unread messages from the recent window.
-// Historic unread totals inflated the badges into the thousands, so the display
-// layer prefers the window count and falls back through cached shapes.
-
 import type { EmailFolder, EmailMessage } from './types'
+import { normalizeFolderPath, isInboxFolder } from './folders'
+import { classifyEmailCategory } from './email-categories'
 
 export const UNREAD_WINDOW_MS = 48 * 60 * 60 * 1000
 
@@ -41,21 +38,52 @@ export function getFolderDisplayUnread(folder: FolderCounts): number {
   return folder.unreadCount || 0
 }
 
+export function syncInboxPrimaryUnread(
+  folders: EmailFolder[],
+  inboxMessages: EmailMessage[],
+  useCategories: boolean,
+  unreadWindowMs: number = UNREAD_WINDOW_MS
+): EmailFolder[] {
+  if (!Array.isArray(folders) || !Array.isArray(inboxMessages)) return folders
+  const primaryUnread = countUnreadInWindow(
+    useCategories
+      ? inboxMessages.filter((m) => classifyEmailCategory(m) === 'primary')
+      : inboxMessages,
+    Date.now(),
+    unreadWindowMs
+  )
+  return folders.map((f) => {
+    if (!isInboxFolder(f.path, f.role)) return f
+    return {
+      ...f,
+      unreadCount: primaryUnread,
+      unreadWindow: primaryUnread,
+      unreadToday: primaryUnread
+    }
+  })
+}
+
 export function adjustFolderUnread(
   folders: EmailFolder[],
   folderPath: string,
   delta: number
 ): EmailFolder[] {
   if (!delta || !Array.isArray(folders)) return folders
-  const target = folderPath.toLowerCase()
+  const target = normalizeFolderPath(folderPath) || 'inbox'
   return folders.map((folder) => {
-    if (folder.path.toLowerCase() !== target) return folder
+    const norm = normalizeFolderPath(folder.path)
+    const isMatch =
+      norm === target ||
+      (norm === 'inbox' && (target === 'inbox' || target === '')) ||
+      (folder.role && target && folder.role.toLowerCase() === target)
+    if (!isMatch) return folder
     const next = Math.max(0, getFolderDisplayUnread(folder) + delta)
     return {
       ...folder,
       unreadCount: next,
-      ...(typeof folder.unreadWindow === 'number' ? { unreadWindow: next } : {}),
-      ...(typeof folder.unreadToday === 'number' ? { unreadToday: next } : {})
+      unreadWindow: next,
+      unreadToday: next,
+      totalUnread: Math.max(0, ((folder as any).totalUnread ?? folder.unreadCount ?? 0) + delta)
     }
   })
 }

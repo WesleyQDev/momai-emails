@@ -4,7 +4,8 @@ import {
   isWithinUnreadWindow,
   countUnreadInWindow,
   getFolderDisplayUnread,
-  adjustFolderUnread
+  adjustFolderUnread,
+  syncInboxPrimaryUnread
 } from '../src/services/unread-today'
 
 describe('unread window (badges show last 48h)', () => {
@@ -66,5 +67,57 @@ describe('unread window (badges show last 48h)', () => {
     const updated = adjustFolderUnread(folders as any, 'inbox', 1)
     expect(updated[0].unreadCount).toBe(3)
     expect(updated[0].unreadWindow).toBe(3)
+  })
+
+  it('resets folder badge from 1 to 0 when the single unread message is read', () => {
+    const folders = [
+      { path: 'INBOX', name: 'INBOX', unreadCount: 1, totalCount: 10, unreadWindow: 1, unreadToday: 1 }
+    ]
+    const updated = adjustFolderUnread(folders as any, 'INBOX', -1)
+    expect(getFolderDisplayUnread(updated[0] as any)).toBe(0)
+    expect(updated[0].unreadCount).toBe(0)
+    expect(updated[0].unreadWindow).toBe(0)
+    expect(updated[0].unreadToday).toBe(0)
+  })
+
+  it('matches Gmail prefixed folders and role-based paths during unread adjustment', () => {
+    const folders = [
+      { path: '[Gmail]/Spam', name: 'Spam', role: 'junk', unreadCount: 1, totalCount: 5, unreadWindow: 1 }
+    ]
+    const updated = adjustFolderUnread(folders as any, 'Spam', -1)
+    expect(getFolderDisplayUnread(updated[0] as any)).toBe(0)
+    expect(updated[0].unreadCount).toBe(0)
+  })
+
+  it('syncs inbox unread count strictly from primary emails when categories are active', () => {
+    const now = Date.now()
+    const folders = [
+      { path: 'INBOX', name: 'INBOX', role: 'inbox', unreadCount: 5, totalCount: 10, unreadWindow: 5 }
+    ]
+    const messages = [
+      { id: '1', read: false, timestamp: now, from: { address: 'friend@personal.com' }, subject: 'Hello' },
+      { id: '2', read: false, timestamp: now, from: { address: 'promo@store.com' }, subject: 'Super Desconto Cupom' },
+      { id: '3', read: false, timestamp: now, from: { address: 'marketing@deals.com' }, subject: 'Newsletter Oferta' },
+      { id: '4', read: true, timestamp: now, from: { address: 'other@site.com' }, subject: 'Read email' }
+    ]
+    // Only message #1 is unread + primary
+    const updated = syncInboxPrimaryUnread(folders as any, messages as any, true, UNREAD_WINDOW_MS)
+    expect(getFolderDisplayUnread(updated[0] as any)).toBe(1)
+    expect(updated[0].unreadCount).toBe(1)
+    expect(updated[0].unreadWindow).toBe(1)
+  })
+
+  it('counts 0 for inbox when all unread emails belong to promotions or social', () => {
+    const now = Date.now()
+    const folders = [
+      { path: 'INBOX', name: 'INBOX', role: 'inbox', unreadCount: 3, totalCount: 10, unreadWindow: 3 }
+    ]
+    const messages = [
+      { id: '1', read: true, timestamp: now, from: { address: 'user@work.com' }, subject: 'Job done' },
+      { id: '2', read: false, timestamp: now, from: { address: 'promo@store.com' }, subject: 'Cupom 50% off' },
+      { id: '3', read: false, timestamp: now, from: { address: 'newsletter@news.com' }, subject: 'Oferta do dia' }
+    ]
+    const updated = syncInboxPrimaryUnread(folders as any, messages as any, true, UNREAD_WINDOW_MS)
+    expect(getFolderDisplayUnread(updated[0] as any)).toBe(0)
   })
 })

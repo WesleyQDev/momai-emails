@@ -15,6 +15,7 @@ import {
 } from '@heroicons/react/24/outline'
 import type { EmailFolder } from '../services/types'
 import { formatFolderName, useExtensionLocale } from '../services/i18n'
+import { ensureStarredFolder } from '../services/folders'
 import { getFolderDisplayUnread } from '../services/unread-today'
 
 interface SidebarProps {
@@ -85,7 +86,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {folders.length === 0 ? (
             <div className="px-3 py-2 text-xs text-text-muted italic">{t('sidebar.loadingFolders')}</div>
           ) : (
-            folders
+            ensureStarredFolder(folders)
               .filter((f) => {
                 // Hide "All Mail" / "Todos os E-mails" folder
                 const lower = f.name.toLowerCase().replace(/^\[gmail\]\/?/i, '').trim()

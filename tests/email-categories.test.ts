@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { classifyEmailCategory, shouldNotifyForCategory } from '../src/services/email-categories'
+import { classifyEmailCategory, shouldNotifyForCategory, countByCategory } from '../src/services/email-categories'
 import { classifyEmailCategory as classifyWorker, shouldNotifyForCategory as shouldNotifyWorker } from '../email-categories'
 
 const CASES: Array<{ from: any; subject: string; expected: string }> = [
@@ -40,5 +40,16 @@ describe('email categories (Gmail-style)', () => {
     for (const category of ['primary', 'promotions', 'social', 'updates'] as const) {
       expect(shouldNotifyForCategory(category, false)).toBe(true)
     }
+  })
+
+  it('counts loaded messages per category', () => {
+    const messages = [
+      { from: 'ana@empresa.com', subject: 'Reunião amanhã' },
+      { from: 'news@loja.com', subject: 'Oferta exclusiva' },
+      { from: 'noreply@facebook.com', subject: 'Nova mensagem' },
+      { from: 'security@banco.com', subject: 'Seu código de acesso' }
+    ]
+    expect(countByCategory(messages)).toEqual({ primary: 1, promotions: 1, social: 1, updates: 1 })
+    expect(countByCategory([])).toEqual({ primary: 0, promotions: 0, social: 0, updates: 0 })
   })
 })

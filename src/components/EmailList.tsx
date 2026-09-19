@@ -6,7 +6,6 @@ import {
   StarIcon as StarSolid,
   ArrowPathIcon,
   TrashIcon,
-  MagnifyingGlassIcon,
   EnvelopeOpenIcon,
   EnvelopeIcon,
   InboxIcon,
@@ -16,16 +15,21 @@ import {
   CheckCircleIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
-  PaperClipIcon
+  PaperClipIcon,
+  ArrowUturnLeftIcon,
+  FolderIcon
 } from '@heroicons/react/24/outline'
 import { StarIcon as StarOutline } from '@heroicons/react/24/outline'
-import type { EmailMessage, EmailAttachment } from '../services/types'
+import type { EmailMessage, EmailAttachment, EmailFolder } from '../services/types'
 import { EmailAvatar } from './EmailAvatar'
 import { AttachmentBadge } from './AttachmentBadge'
 import ContextMenu from './ContextMenu'
-import { CATEGORY_TRANSLATIONS, useExtensionLocale, getCategoryInfo, formatListDate } from '../services/i18n'
+import { useExtensionLocale, getCategoryInfo, formatListDate, formatFolderName } from '../services/i18n'
 import { isWithinUnreadWindow, UNREAD_WINDOW_MS } from '../services/unread-today'
-import { classifyEmailCategory, type EmailCategory } from '../services/email-categories'
+import { classifyEmailCategory, countByCategory, type EmailCategory } from '../services/email-categories'
+import { EMAIL_PAGE_SIZE, getPageWindow } from '../services/paging'
+import { isSpamFolder, isStarredFolder, getMoveTargets } from '../services/folders'
+import { starredToneClass } from '../services/starred-tone'
 
 interface EmailListProps {
   messages: EmailMessage[]
@@ -44,12 +48,19 @@ interface EmailListProps {
   onBatchDelete: (ids: string[]) => void
   onBatchMarkRead: (ids: string[]) => void
   onOpenAttachment?: (msg: EmailMessage, attachment: EmailAttachment) => Promise<any> | void
+  folders?: EmailFolder[]
+  onReply?: (msg: EmailMessage) => void
+  onMove?: (id: string, toFolder: string) => void
+  onNotSpam?: (id: string) => void
   hasMore?: boolean
   loadingMore?: boolean
   onLoadMore?: () => void
   totalCount?: number
   showCategoryTabs?: boolean
   unreadWindowMs?: number
+  pageSize?: number
+  page?: number
+  onPageChange?: (page: number) => void
 }
 
 export const EmailList: React.FC<EmailListProps> = ({
@@ -69,48 +80,50 @@ export const EmailList: React.FC<EmailListProps> = ({
   onBatchDelete,
   onBatchMarkRead,
   onOpenAttachment,
+  folders = [],
+  onReply,
+  onMove,
+  onNotSpam,
   hasMore = false,
   loadingMore = false,
   onLoadMore,
   totalCount,
   showCategoryTabs = true,
-  unreadWindowMs = UNREAD_WINDOW_MS
+  unreadWindowMs = UNREAD_WINDOW_MS,
+  pageSize = EMAIL_PAGE_SIZE,
+  page = 0,
+  onPageChange
 }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [unreadOnly, setUnreadOnly] = useState(false)
   const [activeCategory, setActiveCategory] = useState<'primary' | 'promotions' | 'social' | 'updates'>('primary')
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; msg: EmailMessage } | null>(null)
+  const [moveMenu, setMoveMenu] = useState<{ x: number; y: number; msg: EmailMessage } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const sentinelRef = useRef<HTMLDivElement>(null)
   const { locale, t } = useExtensionLocale()
+  const activeFolderRole = folders.find(
+    (folder) => folder.path.toLowerCase() === activeFolder.toLowerCase()
+  )?.role
+  const showingSpam = isSpamFolder(activeFolder, activeFolderRole)
+  const showingStarred = isStarredFolder(activeFolder, activeFolderRole)
+  const moveTargets = getMoveTargets(folders, activeFolder)
 
-  // Reset category when folder changes
+  // Reset category and unread filter when folder changes
   useEffect(() => {
     setActiveCategory('primary')
+    setUnreadOnly(false)
   }, [activeFolder])
 
-  // Infinite scroll: IntersectionObserver on sentinel at bottom of list
-  useEffect(() => {
-    const sentinel = sentinelRef.current
-    if (!sentinel || !onLoadMore) return
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && hasMore && !loadingMore && !loading) {
-          onLoadMore()
-        }
-      },
-      { root: scrollRef.current, rootMargin: '200px', threshold: 0 }
-    )
-    observer.observe(sentinel)
-    return () => observer.disconnect()
-  }, [hasMore, loadingMore, loading, onLoadMore])
+  const goToPage = useCallback((next: number) => {
+    onPageChange?.(Math.max(0, next))
+    if (scrollRef.current) scrollRef.current.scrollTop = 0
+  }, [onPageChange])
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === messages.length) {
+    if (selectedIds.size === pageMessages.length) {
       setSelectedIds(new Set())
     } else {
-      setSelectedIds(new Set(messages.map((m) => m.id)))
+      setSelectedIds(new Set(pageMessages.map((m) => m.id)))
     }
   }
 
@@ -137,6 +150,47 @@ export const EmailList: React.FC<EmailListProps> = ({
     }
     return msgs
   }, [messages, unreadOnly, useCategories, activeCategory, classifyEmail])
+  const categoryTotals = React.useMemo(() => countByCategory(messages), [messages])
+  const pageWindow = getPageWindow(filteredMessages.length, page, pageSize)
+  const pageMessages = React.useMemo(
+    () => filteredMessages.slice(pageWindow.start, pageWindow.end),
+    [filteredMessages, pageWindow.start, pageWindow.end]
+  )
+  const canPrev = page > 0
+  const canNext =
+    filteredMessages.length > pageWindow.end || hasMore || loadingMore
+
+  // Fill short pages automatically and pre-fetch the next page in background,
+  // ensuring that clicking ">" advances in 0ms instantly without loading delay.
+  const autoFillCountRef = useRef(0)
+  useEffect(() => {
+    autoFillCountRef.current = 0
+  }, [activeFolder, activeCategory, unreadOnly, page])
+
+  useEffect(() => {
+    if (!onLoadMore || loadingMore || loading || !hasMore) return
+
+    const targetPrefetchCount = (page + 2) * pageSize
+    const needsCurrentPage = pageMessages.length < pageSize
+    const needsNextPagePrefetch = filteredMessages.length < targetPrefetchCount
+
+    if (needsCurrentPage) {
+      if (autoFillCountRef.current < 10) {
+        autoFillCountRef.current += 1
+        onLoadMore()
+      }
+    } else if (needsNextPagePrefetch) {
+      // Gentle background pre-fetch for next page
+      const timer = setTimeout(() => {
+        if (!loadingMore && !loading && hasMore) {
+          onLoadMore()
+        }
+      }, 400)
+      return () => clearTimeout(timer)
+    } else {
+      autoFillCountRef.current = 0
+    }
+  }, [onLoadMore, pageMessages.length, filteredMessages.length, page, pageSize, hasMore, loadingMore, loading])
 
   const formatDate = (dateStr: string, timestamp: number) => formatListDate(timestamp, locale)
 
@@ -148,7 +202,7 @@ export const EmailList: React.FC<EmailListProps> = ({
         <div className="flex items-center gap-2 shrink-0">
           <input
             type="checkbox"
-            checked={messages.length > 0 && selectedIds.size === messages.length}
+            checked={pageMessages.length > 0 && selectedIds.size === pageMessages.length}
             onChange={toggleSelectAll}
             className="rounded border-border cursor-pointer accent-accent"
             title={t('list.selectAll')}
@@ -157,11 +211,11 @@ export const EmailList: React.FC<EmailListProps> = ({
           <button
             type="button"
             onClick={onRefresh}
-            disabled={loading}
-            className="p-1.5 rounded-lg hover:bg-input text-text-muted hover:text-text transition-colors"
-                title={t('list.refresh')}
+            disabled={loading || loadingMore}
+            className="p-1.5 rounded-lg hover:bg-input text-text-muted hover:text-text active:scale-90 active:translate-y-0.5 active:bg-input/80 transition-all duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+            title={t('list.refresh')}
           >
-            <ArrowPathIcon className={`w-4 h-4 ${loading ? 'animate-spin text-accent' : ''}`} />
+            <ArrowPathIcon className={`w-4 h-4 ${(loading || loadingMore) ? 'animate-spin text-accent' : ''}`} />
           </button>
 
           {selectedIds.size > 0 ? (
@@ -194,7 +248,10 @@ export const EmailList: React.FC<EmailListProps> = ({
             <div className="flex items-center gap-2 text-xs">
               <button
                 type="button"
-                onClick={() => setUnreadOnly(!unreadOnly)}
+                onClick={() => {
+                  setUnreadOnly(!unreadOnly)
+                  goToPage(0)
+                }}
                 className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-colors ${
                   unreadOnly
                     ? 'bg-accent/10 border-accent text-accent font-semibold'
@@ -210,32 +267,33 @@ export const EmailList: React.FC<EmailListProps> = ({
         {/* Right: Gmail pagination counter */}
         <div className="flex items-center gap-1.5 text-xs text-text-muted select-none pl-1 shrink-0">
             <span className="font-mono text-[11px] whitespace-nowrap">
-              {messages.length === 0
+              {filteredMessages.length === 0
                 ? '0 de 0'
-                : `1–${messages.length} de ${(totalCount && totalCount > messages.length ? totalCount : messages.length).toLocaleString('pt-BR')}`}
+                : `${pageWindow.start + 1}–${pageWindow.start + pageMessages.length} de ${(totalCount && totalCount > filteredMessages.length ? totalCount : filteredMessages.length).toLocaleString('pt-BR')}`}
             </span>
             <div className="flex items-center">
               <button
                 type="button"
-                disabled={messages.length <= 50}
-                onClick={() => {
-                  if (scrollRef.current) scrollRef.current.scrollTop = 0
-                }}
+                disabled={!canPrev}
+                onClick={() => goToPage(page - 1)}
                 className="p-1 rounded hover:bg-input text-text-muted hover:text-text disabled:opacity-30 disabled:pointer-events-none transition-colors"
-                title={t('list.backToTop')}
+                title={t('list.prevPage')}
               >
                 <ChevronLeftIcon className="w-3.5 h-3.5" />
               </button>
               <button
                 type="button"
-                disabled={!hasMore || loadingMore}
+                disabled={!canNext}
                 onClick={() => {
-                  if (onLoadMore && hasMore && !loadingMore) onLoadMore()
+                  if (filteredMessages.length <= (page + 1) * pageSize && hasMore && onLoadMore) {
+                    onLoadMore()
+                  }
+                  goToPage(page + 1)
                 }}
                 className="p-1 rounded hover:bg-input text-text-muted hover:text-text disabled:opacity-30 disabled:pointer-events-none transition-colors"
                 title={t('list.loadMore')}
               >
-                <ChevronRightIcon className={`w-3.5 h-3.5 ${loadingMore ? 'animate-spin' : ''}`} />
+                <ChevronRightIcon className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
@@ -261,7 +319,10 @@ export const EmailList: React.FC<EmailListProps> = ({
               <button
                 key={id}
                 type="button"
-                onClick={() => setActiveCategory(id)}
+                onClick={() => {
+                  setActiveCategory(id)
+                  goToPage(0)
+                }}
                 title={info.description}
                 className={`flex-1 min-w-fit max-w-[240px] h-11 sm:h-12 flex items-center justify-center sm:justify-start gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 text-xs font-semibold cursor-pointer relative transition-colors whitespace-nowrap shrink-0 sm:shrink ${
                   isActive
@@ -271,6 +332,7 @@ export const EmailList: React.FC<EmailListProps> = ({
               >
                 <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-accent stroke-2' : 'text-text-muted'}`} />
                 <span className="truncate">{info.label}</span>
+                <span className="text-[10px] tabular-nums opacity-60 shrink-0">· {categoryTotals[id]}</span>
                 {unreadCount > 0 && (
                   <span
                     className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0 tabular-nums leading-none ${
@@ -309,11 +371,15 @@ export const EmailList: React.FC<EmailListProps> = ({
         ) : filteredMessages.length === 0 ? (
           <div className="p-12 flex flex-col items-center justify-center text-text-muted space-y-2">
             <CheckCircleIcon className="w-10 h-10 opacity-30 text-accent" />
-            <span className="text-sm font-medium text-text">{t('list.emptyTitle')}</span>
-            <span className="text-xs text-text-muted">{t('list.emptySubtitle')}</span>
+            <span className="text-sm font-medium text-text">
+              {showingStarred ? t('list.emptyStarredTitle') : t('list.emptyTitle')}
+            </span>
+            <span className="text-xs text-text-muted">
+              {showingStarred ? t('list.emptyStarredSubtitle') : t('list.emptySubtitle')}
+            </span>
           </div>
         ) : (
-          filteredMessages.map((msg) => {
+          pageMessages.map((msg) => {
             const isSelected = selectedEmailId === msg.id
             const isChecked = selectedIds.has(msg.id)
 
@@ -354,7 +420,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                     className="p-0.5 rounded hover:bg-input text-text-muted hover:text-accent transition-colors"
                   >
                     {msg.starred ? (
-                      <StarSolid className="w-4 h-4 text-accent" />
+                      <StarSolid className={`w-4 h-4 ${starredToneClass(msg.starred)}`} />
                     ) : (
                       <StarOutline className="w-4 h-4 opacity-40 hover:opacity-100" />
                     )}
@@ -415,6 +481,60 @@ export const EmailList: React.FC<EmailListProps> = ({
 
                   {/* Action buttons on hover */}
                   <div className="hidden group-hover:flex items-center gap-1">
+                    {onReply && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onReply(msg)
+                        }}
+                        className="p-1 rounded hover:bg-input text-text-muted hover:text-text"
+                        title={t('list.reply')}
+                      >
+                        <ArrowUturnLeftIcon className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onToggleStarred(msg.id, msg.starred)
+                      }}
+                      className="p-1 rounded hover:bg-input text-text-muted hover:text-accent"
+                      title={msg.starred ? t('list.unfavorite') : t('list.favorite')}
+                    >
+                      {msg.starred ? (
+                        <StarSolid className={`w-3.5 h-3.5 ${starredToneClass(msg.starred)}`} />
+                      ) : (
+                        <StarOutline className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                    {onMove && moveTargets.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setMoveMenu({ x: e.clientX, y: e.clientY, msg })
+                        }}
+                        className="p-1 rounded hover:bg-input text-text-muted hover:text-text"
+                        title={t('list.move')}
+                      >
+                        <FolderIcon className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    {showingSpam && onNotSpam && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onNotSpam(msg.id)
+                        }}
+                        className="p-1 rounded hover:bg-input text-text-muted hover:text-accent"
+                        title={t('list.notSpam')}
+                      >
+                        <CheckCircleIcon className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                     {msg.read ? (
                       <button
                         type="button"
@@ -463,25 +583,6 @@ export const EmailList: React.FC<EmailListProps> = ({
           })
         )}
 
-        {/* Infinite scroll sentinel + loading indicator */}
-        {hasMore && (
-          <div ref={sentinelRef} className="flex items-center justify-center py-4 text-xs text-text-muted">
-            {loadingMore ? (
-              <div className="flex items-center gap-2">
-                <ArrowPathIcon className="w-4 h-4 animate-spin text-accent" />
-                <span>{t('list.loadingMore')}</span>
-              </div>
-            ) : (
-              <span className="opacity-50">{t('list.scrollForMore')}</span>
-            )}
-          </div>
-        )}
-
-        {!hasMore && messages.length > 0 && !loading && (
-          <div className="flex items-center justify-center py-3 text-[11px] text-text-muted opacity-50">
-            {t('list.allLoaded')}
-          </div>
-        )}
       </div>
       </div>
 
@@ -496,11 +597,29 @@ export const EmailList: React.FC<EmailListProps> = ({
               label: t('list.open'),
               onClick: () => onSelectEmail(contextMenu.msg)
             },
+            ...(onReply
+              ? [
+                  {
+                    id: 'reply',
+                    label: t('list.reply'),
+                    onClick: () => onReply(contextMenu.msg)
+                  }
+                ]
+              : []),
             {
               id: 'star',
               label: contextMenu.msg.starred ? t('list.unfavorite') : t('list.favorite'),
               onClick: () => onToggleStarred(contextMenu.msg.id, contextMenu.msg.starred)
             },
+            ...(showingSpam && onNotSpam
+              ? [
+                  {
+                    id: 'not-spam',
+                    label: t('list.notSpam'),
+                    onClick: () => onNotSpam(contextMenu.msg.id)
+                  }
+                ]
+              : []),
             contextMenu.msg.read
               ? {
                   id: 'unread',
@@ -540,6 +659,19 @@ export const EmailList: React.FC<EmailListProps> = ({
               onClick: () => onDelete(contextMenu.msg.id)
             }
           ]}
+        />
+      )}
+
+      {moveMenu && onMove && (
+        <ContextMenu
+          x={moveMenu.x}
+          y={moveMenu.y}
+          onClose={() => setMoveMenu(null)}
+          items={moveTargets.map((folder) => ({
+            id: `move-${folder.path}`,
+            label: `${t('list.moveTitle')} ${formatFolderName(folder.name, folder.role, locale)}`,
+            onClick: () => onMove(moveMenu.msg.id, folder.path)
+          }))}
         />
       )}
     </div>

@@ -619,6 +619,21 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
       return { ok: true, ...prefs }
     }
 
+    case 'get_avatar': {
+      const avatar = await accountManager.getAvatar(args.accountId || args.id)
+      return { ok: true, avatar }
+    }
+
+    case 'set_avatar': {
+      const ok = await accountManager.setAvatar(args.accountId || args.id, args.avatar)
+      return { ok }
+    }
+
+    case 'remove_avatar': {
+      await accountManager.removeAvatar(args.accountId || args.id)
+      return { ok: true }
+    }
+
     case 'sync': {
       await accountManager.checkAllAccountsForNewEmails()
       return { ok: true }

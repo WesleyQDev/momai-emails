@@ -169,6 +169,64 @@ class AccountManager {
     return next
   }
 
+  private avatarStorageKey(accountId: string): string {
+    return `avatar_${accountId}`
+  }
+
+  private isSupportedAvatar(value: unknown): value is string {
+    if (typeof value !== 'string') return false
+    if (!/^data:image\/(png|jpeg|jpg|webp|gif);base64,/.test(value)) return false
+    // Keep thumbnails well under the 1 MB host storage limit per key.
+    if (value.length > 400_000) return false
+    return true
+  }
+
+  public async getAvatar(accountId: string): Promise<string | null> {
+    if (!accountId) return null
+    try {
+      if (this.useHostStorage()) {
+        const stored = await this.injectedStorage!.get!(this.avatarStorageKey(accountId))
+        return this.isSupportedAvatar(stored) ? (stored as string) : null
+      }
+      const legacyFile = path.join(this.storageDir, `avatar_${accountId}.txt`)
+      if (fs.existsSync(legacyFile)) {
+        const raw = fs.readFileSync(legacyFile, 'utf8')
+        return this.isSupportedAvatar(raw) ? raw : null
+      }
+    } catch {}
+    return null
+  }
+
+  public async setAvatar(accountId: string, dataUrl: string): Promise<boolean> {
+    if (!accountId || !this.isSupportedAvatar(dataUrl)) return false
+    try {
+      if (this.useHostStorage()) {
+        await this.injectedStorage!.set!(this.avatarStorageKey(accountId), dataUrl)
+        return true
+      }
+      fs.writeFileSync(path.join(this.storageDir, `avatar_${accountId}.txt`), dataUrl, 'utf8')
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  public async removeAvatar(accountId: string): Promise<void> {
+    if (!accountId) return
+    try {
+      if (this.useHostStorage()) {
+        if (typeof this.injectedStorage!.delete === 'function') {
+          await this.injectedStorage!.delete!(this.avatarStorageKey(accountId))
+        } else {
+          await this.injectedStorage!.set!(this.avatarStorageKey(accountId), null as any)
+        }
+        return
+      }
+      const legacyFile = path.join(this.storageDir, `avatar_${accountId}.txt`)
+      if (fs.existsSync(legacyFile)) fs.rmSync(legacyFile, { force: true })
+    } catch {}
+  }
+
   public async initialize(): Promise<void> {
     await this.loadAccounts()
     await this.primeInitialUids()
@@ -390,6 +448,7 @@ class AccountManager {
       const next = Array.from(this.accounts.keys())[0]
       this.activeAccountId = next || null
     }
+    await this.removeAvatar(id)
     await this.saveAccounts()
     return true
   }

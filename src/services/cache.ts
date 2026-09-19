@@ -2,6 +2,7 @@
 // Persistent storage cache for MomAI Emails using localStorage
 
 import type { EmailFolder, EmailMessage, PublicEmailAccount } from './types'
+import { EMAIL_PAGE_SIZE } from './paging'
 
 const PREFIX = 'momai_emails_v1_'
 
@@ -35,15 +36,18 @@ export const emailStorageCache = {
   getFolderEmails(accId: string, folder: string): EmailMessage[] | null {
     try {
       const data = localStorage.getItem(`${PREFIX}emails_${accId}_${folder}`)
-      return data ? JSON.parse(data) : null
+      if (!data) return null
+      const parsed = JSON.parse(data)
+      if (!Array.isArray(parsed)) return null
+      return parsed.filter((m: EmailMessage) => !m.accountId || m.accountId === accId)
     } catch {
       return null
     }
   },
   setFolderEmails(accId: string, folder: string, messages: EmailMessage[]) {
     try {
-      // Store up to 50 latest messages per folder to keep localStorage snappy
-      localStorage.setItem(`${PREFIX}emails_${accId}_${folder}`, JSON.stringify(messages.slice(0, 50)))
+      // Store up to 150 latest messages per folder to keep all category tabs instantly populated
+      localStorage.setItem(`${PREFIX}emails_${accId}_${folder}`, JSON.stringify(messages.slice(0, 150)))
     } catch {}
   },
   getEmailBody(accId: string, msgId: string): EmailMessage | null {

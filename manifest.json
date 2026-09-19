@@ -153,6 +153,7 @@
   },
   "author": "WesleyQDev",
   "icon_bg": "#4f46e5",
+  "app_icon": "app.png",
   "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\"><rect x=\"2.5\" y=\"5.5\" width=\"19\" height=\"14.5\" rx=\"2.8\" fill=\"#ffffff\" fill-opacity=\"0.18\" stroke=\"#ffffff\" stroke-width=\"1.4\"/><path d=\"M2.8 6.8C2.8 5.9 3.5 5.2 4.4 5.2H19.6C20.5 5.2 21.2 5.9 21.2 6.8L12.7 13.8C12.3 14.1 11.7 14.1 11.3 13.8L2.8 6.8Z\" fill=\"#ffffff\" fill-opacity=\"0.25\"/><path d=\"M4.2 6L11.5 12.8C11.8 13 12.2 13 12.5 12.8L19.8 6\" stroke=\"#ffffff\" stroke-width=\"1.2\" stroke-linecap=\"round\"/><path d=\"M3 19.5L10 13.5\" stroke=\"#ffffff\" stroke-width=\"1\" stroke-linecap=\"round\" stroke-opacity=\"0.5\"/><path d=\"M21 19.5L14 13.5\" stroke=\"#ffffff\" stroke-width=\"1\" stroke-linecap=\"round\" stroke-opacity=\"0.5\"/><circle cx=\"12\" cy=\"14\" r=\"2.2\" fill=\"#38BDF8\"/><circle cx=\"12\" cy=\"14\" r=\"0.9\" fill=\"#ffffff\"/></svg>",
   "sidebar_icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\"><defs><linearGradient id=\"emailBodyGrad\" x1=\"0%\" y1=\"0%\" x2=\"0%\" y2=\"100%\"><stop offset=\"0%\" stop-color=\"#3B82F6\"/><stop offset=\"100%\" stop-color=\"#1D4ED8\"/></linearGradient><linearGradient id=\"emailFlapGrad\" x1=\"0%\" y1=\"0%\" x2=\"0%\" y2=\"100%\"><stop offset=\"0%\" stop-color=\"#60A5FA\"/><stop offset=\"80%\" stop-color=\"#2563EB\"/><stop offset=\"100%\" stop-color=\"#1D4ED8\"/></linearGradient><linearGradient id=\"emailSealGrad\" x1=\"0%\" y1=\"0%\" x2=\"100%\" y2=\"100%\"><stop offset=\"0%\" stop-color=\"#38BDF8\"/><stop offset=\"100%\" stop-color=\"#6366F1\"/></linearGradient></defs><ellipse cx=\"12\" cy=\"21.5\" rx=\"8.5\" ry=\"1.5\" fill=\"#000000\" opacity=\"0.4\"/><rect x=\"2.5\" y=\"5.5\" width=\"19\" height=\"14.5\" rx=\"2.8\" fill=\"url(#emailBodyGrad)\" stroke=\"#1D4ED8\" stroke-width=\"0.6\"/><path d=\"M3 19.5L10 13.5\" stroke=\"#1E40AF\" stroke-width=\"0.9\" opacity=\"0.8\"/><path d=\"M21 19.5L14 13.5\" stroke=\"#1E40AF\" stroke-width=\"0.9\" opacity=\"0.8\"/><path d=\"M2.8 6.8C2.8 5.9 3.5 5.2 4.4 5.2H19.6C20.5 5.2 21.2 5.9 21.2 6.8L12.7 13.8C12.3 14.1 11.7 14.1 11.3 13.8L2.8 6.8Z\" fill=\"url(#emailFlapGrad)\"/><path d=\"M4.2 6L11.5 12.8C11.8 13 12.2 13 12.5 12.8L19.8 6\" stroke=\"#93C5FD\" stroke-width=\"0.6\" stroke-linecap=\"round\" opacity=\"0.85\"/><circle cx=\"12\" cy=\"14\" r=\"2.4\" fill=\"url(#emailSealGrad)\"/><circle cx=\"12\" cy=\"14\" r=\"1.1\" fill=\"#FFFFFF\"/></svg>",
   "readme": {
@@ -172,7 +173,30 @@
   "version": "1.2.1",
   "ui": {
     "page": "dist/page.js",
-    "pageType": "momai-emails-page"
+    "pageType": "momai-emails-page",
+    "widgets": [
+      {
+        "id": "unread",
+        "name": "E-mails — Não lidos",
+        "description": "Não lidos com remetente e assunto",
+        "entry": "dist/widget-unread.js",
+        "type": "momai-emails-unread-widget",
+        "defaultSize": "compact_2x1",
+        "supportsTransparency": true,
+        "setup": {
+          "mode": "single",
+          "title": "Escolha a conta",
+          "description": "Qual caixa de entrada o widget deve mostrar",
+          "searchPlaceholder": "Buscar contas...",
+          "optionsTool": "list_accounts",
+          "itemsPath": "accounts",
+          "valueField": "id",
+          "labelField": "email",
+          "configField": "accountId",
+          "defaults": { "folder": "INBOX", "limit": 5 }
+        }
+      }
+    ]
   },
   "eventTypes": {
     "new_email": {

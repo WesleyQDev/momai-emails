@@ -42,3 +42,11 @@ export function shouldNotifyForCategory(category: EmailCategory | string, primar
   if (!primaryOnly) return true
   return category === 'primary'
 }
+
+export function countByCategory(messages: CategoryInput[]): Record<EmailCategory, number> {
+  const counts: Record<EmailCategory, number> = { primary: 0, promotions: 0, social: 0, updates: 0 }
+  for (const message of messages) {
+    counts[classifyEmailCategory(message)] += 1
+  }
+  return counts
+}

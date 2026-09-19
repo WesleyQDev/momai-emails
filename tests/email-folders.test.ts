@@ -1,0 +1,134 @@
+import { describe, it, expect } from 'vitest'
+import {
+  dedupeFoldersByRole,
+  isSpamFolder,
+  isInboxFolder,
+  isStarredFolder,
+  isVirtualStarredFolder,
+  ensureStarredFolder,
+  getStarredMessages,
+  resolveInboxPath,
+  getMoveTargets
+} from '../src/services/folders'
+import type { EmailFolder, EmailMessage } from '../src/services/types'
+
+function makeFolder(path: string, role?: EmailFolder['role']): EmailFolder {
+  return { path, name: path, role, unreadCount: 0, totalCount: 0 }
+}
+
+function makeMessage(id: string, starred: boolean, timestamp: number, folder = 'INBOX'): EmailMessage {
+  return {
+    id,
+    uid: Number(id) || 1,
+    messageId: `msg-${id}`,
+    folder,
+    subject: `Subject ${id}`,
+    from: { name: '', address: 'sender@example.com' },
+    to: [],
+    date: new Date(timestamp).toISOString(),
+    timestamp,
+    read: true,
+    starred,
+    snippet: ''
+  }
+}
+
+describe('email folders (spam / inbox / move)', () => {
+  it('detects spam folders by path and role', () => {
+    expect(isSpamFolder('INBOXSpam', 'junk')).toBe(true)
+    expect(isSpamFolder('Spam')).toBe(true)
+    expect(isSpamFolder('[Gmail]/Spam')).toBe(true)
+    expect(isSpamFolder('Junk')).toBe(true)
+    expect(isSpamFolder('INBOX')).toBe(false)
+    expect(isSpamFolder('INBOX', 'inbox')).toBe(false)
+  })
+
+  it('detects the main inbox folder', () => {
+    expect(isInboxFolder('INBOX', 'inbox')).toBe(true)
+    expect(isInboxFolder('inbox')).toBe(true)
+    expect(isInboxFolder('INBOX')).toBe(true)
+    expect(isInboxFolder('Spam', 'junk')).toBe(false)
+    expect(isInboxFolder('Sent')).toBe(false)
+  })
+
+  it('resolves the inbox destination for not-spam moves', () => {
+    const folders = [
+      makeFolder('INBOX', 'inbox'),
+      makeFolder('Spam', 'junk'),
+      makeFolder('Sent', 'sent')
+    ]
+    expect(resolveInboxPath(folders)).toBe('INBOX')
+    expect(resolveInboxPath([])).toBe('INBOX')
+    expect(resolveInboxPath([], 'INBOX')).toBe('INBOX')
+  })
+
+  it('lists move targets excluding the current folder', () => {
+    const folders = [
+      makeFolder('INBOX', 'inbox'),
+      makeFolder('Spam', 'junk'),
+      makeFolder('Sent', 'sent')
+    ]
+    const targets = getMoveTargets(folders, 'INBOX')
+    expect(targets.map((f) => f.path)).toEqual(['Spam', 'Sent'])
+    expect(getMoveTargets(folders, 'Spam').map((f) => f.path)).toEqual(['INBOX', 'Sent'])
+  })
+
+  it('detects the favorites folder by path and role', () => {
+    expect(isStarredFolder('starred', 'starred')).toBe(true)
+    expect(isStarredFolder('starred')).toBe(true)
+    expect(isStarredFolder('[Gmail]/Starred')).toBe(true)
+    expect(isStarredFolder('INBOX', 'inbox')).toBe(false)
+    expect(isStarredFolder('INBOX')).toBe(false)
+    expect(isStarredFolder('Spam', 'junk')).toBe(false)
+  })
+
+  it('appends a virtual favorites folder only when the server has none', () => {
+    const withoutStarred = [makeFolder('INBOX', 'inbox'), makeFolder('Sent', 'sent')]
+    const ensured = ensureStarredFolder(withoutStarred)
+    expect(ensured.map((f) => f.path)).toEqual(['INBOX', 'Sent', 'starred'])
+    expect(ensured.find((f) => f.path === 'starred')?.role).toBe('starred')
+    expect(withoutStarred).toHaveLength(2)
+
+    const withStarred = [makeFolder('INBOX', 'inbox'), makeFolder('[Gmail]/Starred', 'starred')]
+    expect(ensureStarredFolder(withStarred)).toHaveLength(2)
+  })
+
+  it('aggregates only starred messages, newest first', () => {
+    const messages = [
+      makeMessage('1', false, 1000),
+      makeMessage('2', true, 3000, 'Sent'),
+      makeMessage('3', true, 2000)
+    ]
+    const starred = getStarredMessages(messages)
+    expect(starred.map((m) => m.id)).toEqual(['2', '3'])
+  })
+
+  it('treats the favorites view as virtual only without a server starred mailbox', () => {
+    const withoutStarred = [makeFolder('INBOX', 'inbox')]
+    expect(isVirtualStarredFolder('starred', withoutStarred)).toBe(true)
+    expect(isVirtualStarredFolder('INBOX', withoutStarred)).toBe(false)
+
+    const withStarred = [makeFolder('INBOX', 'inbox'), makeFolder('[Gmail]/Starred', 'starred')]
+    expect(isVirtualStarredFolder('[Gmail]/Starred', withStarred)).toBe(false)
+    expect(isVirtualStarredFolder('INBOX', withStarred)).toBe(false)
+  })
+
+  it('merges duplicated system folders into a single entry', () => {
+    const folders: EmailFolder[] = [
+      { ...makeFolder('[Gmail]/Drafts', 'drafts'), totalCount: 2 },
+      { ...makeFolder('Rascunhos', 'drafts'), totalCount: 9 },
+      makeFolder('INBOX', 'inbox'),
+      makeFolder('Projects', 'custom'),
+      makeFolder('Receipts', 'custom')
+    ]
+    const deduped = dedupeFoldersByRole(folders)
+    expect(deduped.map((f) => f.path)).toEqual(['Rascunhos', 'INBOX', 'Projects', 'Receipts'])
+    expect(deduped).toHaveLength(4)
+    expect(folders).toHaveLength(5)
+  })
+
+  it('keeps custom folders untouched', () => {
+    const folders = [makeFolder('Projects', 'custom'), makeFolder('Receipts', 'custom')]
+    expect(dedupeFoldersByRole(folders)).toHaveLength(2)
+  })
+})

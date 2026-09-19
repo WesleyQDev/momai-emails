@@ -56,4 +56,24 @@ describe('AccountManager host storage migration', () => {
     expect(prefs.primaryOnly).toBe(false)
     expect(storage.map.has('notify-prefs')).toBe(true)
   })
+
+  it('persists a custom avatar through host storage across restarts', async () => {
+    const storage = memoryStorage()
+    const manager = new AccountManager(tmpDir, { storage })
+    const avatar = `data:image/jpeg;base64,${'A'.repeat(20_000)}`
+    expect(await manager.setAvatar('acc_1', avatar)).toBe(true)
+    expect(await manager.getAvatar('acc_1')).toBe(avatar)
+    const fresh = new AccountManager(tmpDir, { storage })
+    expect(await fresh.getAvatar('acc_1')).toBe(avatar)
+    await fresh.removeAvatar('acc_1')
+    expect(await fresh.getAvatar('acc_1')).toBeNull()
+  })
+
+  it('rejects oversized or non-image avatars instead of storing them', async () => {
+    const storage = memoryStorage()
+    const manager = new AccountManager(tmpDir, { storage })
+    expect(await manager.setAvatar('acc_1', 'not-a-data-url')).toBe(false)
+    expect(await manager.setAvatar('acc_1', `data:image/jpeg;base64,${'A'.repeat(1_500_000)}`)).toBe(false)
+    expect(await manager.getAvatar('acc_1')).toBeNull()
+  })
 })

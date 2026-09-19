@@ -218,64 +218,95 @@ async function countUnreadTodayInFolder(client: any, folderPath: string): Promis
   return countUnreadInWindowInFolder(client, folderPath)
 }
 
+const inFlightMailboxes = new Map<string, Promise<any>>()
+const mailboxesCache = new Map<string, { folders: any[]; timestamp: number }>()
+const MAILBOXES_CACHE_TTL_MS = 8000
+
 /**
  * List folders/mailboxes for an account.
  * Badges show only unread messages inside the recent window (SINCE + UNSEEN).
  */
 async function listMailboxes(account: any, windowHours?: number) {
-  const client = await getConnectedImapClient(account)
-  const list = await client.list()
-  const validItems = list.filter((item: any) => !(item.flags && item.flags.has('\\Noselect')))
+  const accountKey = `${account.id || account.email}:${windowHours ?? 48}`
 
-  const folders = await Promise.all(
-    validItems.map(async (item: any) => {
-      let role = 'custom'
-      const special = item.specialUse || ''
-      const pathLower = item.path.toLowerCase()
-      if (special === '\\Inbox' || pathLower === 'inbox') role = 'inbox'
-      else if (special === '\\Important' || pathLower.includes('important') || pathLower.includes('importante')) role = 'important'
-      else if (special === '\\Flagged' || pathLower.includes('starred') || pathLower.includes('estrela') || pathLower.includes('favorit')) role = 'starred'
-      else if (special === '\\Sent' || pathLower.includes('sent') || pathLower.includes('enviad')) role = 'sent'
-      else if (special === '\\Drafts' || pathLower.includes('draft') || pathLower.includes('rascunh')) role = 'drafts'
-      else if (special === '\\Trash' || pathLower.includes('trash') || pathLower.includes('lixeir')) role = 'trash'
-      else if (special === '\\Junk' || pathLower.includes('junk') || pathLower.includes('spam')) role = 'junk'
-      else if (special === '\\Archive' || pathLower.includes('archiv') || pathLower.includes('arquivo')) role = 'archive'
-
-      let status = { unseen: 0, messages: 0 }
-      try {
-        status = await client.status(item.path, { unseen: true, messages: true })
-      } catch {}
-
-      return {
-        path: item.path,
-        name: item.name,
-        role,
-        unreadCount: status.unseen || 0,
-        totalCount: status.messages || 0
-      }
-    })
-  )
-
-  // Sequential window recount: IMAP selects one mailbox at a time,
-  // so parallel searches would conflict on the shared connection.
-  for (const folder of folders) {
-    try {
-      const windowCount = await countUnreadInWindowInFolder(client, folder.path, windowHours)
-      if (typeof windowCount === 'number') {
-        ;(folder as any).totalUnread = folder.unreadCount
-        ;(folder as any).unreadToday = windowCount
-        ;(folder as any).unreadWindow = windowCount
-        folder.unreadCount = windowCount
-      }
-    } catch {}
+  const cached = mailboxesCache.get(accountKey)
+  if (cached && Date.now() - cached.timestamp < MAILBOXES_CACHE_TTL_MS) {
+    return cached.folders
   }
 
-  folders.sort((a, b) => {
-    if (a.role === 'inbox') return -1
-    if (b.role === 'inbox') return 1
-    return a.name.localeCompare(b.name)
-  })
-  return folders
+  const inFlight = inFlightMailboxes.get(accountKey)
+  if (inFlight) {
+    return inFlight
+  }
+
+  const promise = (async () => {
+    try {
+      const client = await getConnectedImapClient(account)
+      const list = await client.list()
+      const validItems = list.filter((item: any) => !(item.flags && item.flags.has('\\Noselect')))
+
+      const folders: any[] = []
+      for (const item of validItems) {
+        let role = 'custom'
+        const special = item.specialUse || ''
+        const pathLower = item.path.toLowerCase()
+        if (special === '\\Inbox' || pathLower === 'inbox') role = 'inbox'
+        else if (special === '\\Important' || pathLower.includes('important') || pathLower.includes('importante')) role = 'important'
+        else if (special === '\\Flagged' || pathLower.includes('starred') || pathLower.includes('estrela') || pathLower.includes('favorit')) role = 'starred'
+        else if (special === '\\Sent' || pathLower.includes('sent') || pathLower.includes('enviad')) role = 'sent'
+        else if (special === '\\Drafts' || pathLower.includes('draft') || pathLower.includes('rascunh')) role = 'drafts'
+        else if (special === '\\Trash' || pathLower.includes('trash') || pathLower.includes('lixeir')) role = 'trash'
+        else if (special === '\\Junk' || pathLower.includes('junk') || pathLower.includes('spam')) role = 'junk'
+        else if (special === '\\Archive' || pathLower.includes('archiv') || pathLower.includes('arquivo')) role = 'archive'
+
+        let status = { unseen: 0, messages: 0 }
+        try {
+          status = await client.status(item.path, { unseen: true, messages: true })
+        } catch {}
+
+        folders.push({
+          path: item.path,
+          name: item.name,
+          role,
+          unreadCount: status.unseen || 0,
+          totalCount: status.messages || 0
+        })
+      }
+
+      // Sequential window recount: only for folders that actually have unread items
+      for (const folder of folders) {
+        if (!folder.unreadCount || folder.unreadCount <= 0) {
+          ;(folder as any).totalUnread = 0
+          ;(folder as any).unreadToday = 0
+          ;(folder as any).unreadWindow = 0
+          continue
+        }
+        try {
+          const windowCount = await countUnreadInWindowInFolder(client, folder.path, windowHours)
+          if (typeof windowCount === 'number') {
+            ;(folder as any).totalUnread = folder.unreadCount
+            ;(folder as any).unreadToday = windowCount
+            ;(folder as any).unreadWindow = windowCount
+            folder.unreadCount = windowCount
+          }
+        } catch {}
+      }
+
+      folders.sort((a, b) => {
+        if (a.role === 'inbox') return -1
+        if (b.role === 'inbox') return 1
+        return a.name.localeCompare(b.name)
+      })
+
+      mailboxesCache.set(accountKey, { folders, timestamp: Date.now() })
+      return folders
+    } finally {
+      inFlightMailboxes.delete(accountKey)
+    }
+  })()
+
+  inFlightMailboxes.set(accountKey, promise)
+  return promise
 }
 
 /**
@@ -378,6 +409,7 @@ async function fetchMessages(account: any, folder = 'INBOX', limit = 50, unreadO
           id: String(msg.uid || msg.seq),
           uid: msg.uid || msg.seq,
           messageId: env.messageId || String(msg.uid || msg.seq),
+          accountId: account.id || account.email,
           folder,
           subject: env.subject || '(Sem assunto)',
           from: { name: fromAddr.name || fromAddr.address, address: fromAddr.address },
@@ -413,6 +445,7 @@ async function fetchMessages(account: any, folder = 'INBOX', limit = 50, unreadO
           id: String(msg.uid || msg.seq),
           uid: msg.uid || msg.seq,
           messageId: env.messageId || String(msg.uid || msg.seq),
+          accountId: account.id || account.email,
           folder,
           subject: env.subject || '(Sem assunto)',
           from: { name: fromAddr.name || fromAddr.address, address: fromAddr.address },
@@ -655,6 +688,7 @@ async function fetchFullMessage(account: any, uidOrMessageId: string | number, f
       id: String(resolvedUid),
       uid: resolvedUid,
       messageId: parsed.messageId || String(resolvedUid),
+      accountId: account.id || account.email,
       folder,
       subject: parsed.subject || '(Sem assunto)',
       from: { name: fromAddr.name || fromAddr.address, address: fromAddr.address },
@@ -713,6 +747,7 @@ async function searchMessages(account: any, query: string, folder = 'INBOX', lim
         id: String(msg.uid),
         uid: msg.uid,
         messageId: env.messageId || String(msg.uid),
+        accountId: account.id || account.email,
         folder,
         subject: env.subject || '(Sem assunto)',
         from: { name: fromAddr.name || fromAddr.address, address: fromAddr.address },

@@ -9,16 +9,21 @@ import {
   ArrowUturnRightIcon,
   TrashIcon,
   EnvelopeIcon,
-  PaperClipIcon,
   CodeBracketIcon,
   DocumentTextIcon,
   PaperAirplaneIcon,
-  ShieldCheckIcon
+  ShieldCheckIcon,
+  FolderIcon,
+  CheckCircleIcon,
+  StarIcon as StarOutline
 } from '@heroicons/react/24/outline'
+import { StarIcon as StarSolid } from '@heroicons/react/24/solid'
 import { EmailAvatar } from './EmailAvatar'
 import { AttachmentBadge } from './AttachmentBadge'
-import { useExtensionLocale, formatFullDate } from '../services/i18n'
-import type { EmailMessage, EmailAttachment } from '../services/types'
+import { useExtensionLocale, formatFullDate, formatFolderName } from '../services/i18n'
+import { isSpamFolder, getMoveTargets } from '../services/folders'
+import { starredToneClass } from '../services/starred-tone'
+import type { EmailMessage, EmailAttachment, EmailFolder } from '../services/types'
 
 interface EmailReaderProps {
   email: EmailMessage | null
@@ -31,6 +36,11 @@ interface EmailReaderProps {
   onQuickSendReply: (body: string) => Promise<boolean>
   onOpenAttachment?: (email: EmailMessage, attachment: EmailAttachment) => Promise<any> | void
   onSaveAttachment?: (email: EmailMessage, attachment: EmailAttachment) => Promise<any> | void
+  activeFolder?: string
+  folders?: EmailFolder[]
+  onToggleStarred?: (id: string, currentStarred: boolean) => void
+  onMove?: (id: string, toFolder: string) => void
+  onNotSpam?: (id: string) => void
 }
 
 export const EmailReader: React.FC<EmailReaderProps> = ({
@@ -43,11 +53,18 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
   onMarkUnread,
   onQuickSendReply,
   onOpenAttachment,
-  onSaveAttachment
+  onSaveAttachment,
+  activeFolder,
+  folders,
+  onToggleStarred,
+  onMove,
+  onNotSpam
 }) => {
   const [viewHtml, setViewHtml] = useState(true)
   const [quickReplyText, setQuickReplyText] = useState('')
   const [sendingQuickReply, setSendingQuickReply] = useState(false)
+  const [showMoveMenu, setShowMoveMenu] = useState(false)
+  const [isMoving, setIsMoving] = useState(false)
   const { locale, t } = useExtensionLocale()
 
   if (loading) {
@@ -87,6 +104,28 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
     }
   }
 
+  const currentFolder = email.folder || activeFolder || 'INBOX'
+  const currentFolderRole = folders?.find(
+    (folder) => folder.path.toLowerCase() === currentFolder.toLowerCase()
+  )?.role
+  const showNotSpam = isSpamFolder(currentFolder, currentFolderRole) && Boolean(onNotSpam)
+  const moveTargets = folders ? getMoveTargets(folders, currentFolder) : []
+  const canMove = Boolean(onMove) && moveTargets.length > 0
+  const favoriteLabel = email.starred ? t('reader.unfavorite') : t('reader.favorite')
+
+  const handleNotSpam = () => {
+    if (!onNotSpam || isMoving) return
+    setIsMoving(true)
+    onNotSpam(email.id)
+  }
+
+  const handleMoveSelect = (toFolder: string) => {
+    if (!onMove || isMoving) return
+    setShowMoveMenu(false)
+    setIsMoving(true)
+    onMove(email.id, toFolder)
+  }
+
   const initial = (email.from.name || email.from.address || '?').charAt(0).toUpperCase()
 
   return (
@@ -122,6 +161,21 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
             <ArrowUturnRightIcon className="w-3.5 h-3.5" />
             <span>{t('reader.forward')}</span>
           </button>
+
+          {onToggleStarred && (
+            <button
+              type="button"
+              onClick={() => onToggleStarred(email.id, email.starred)}
+              className="p-1.5 rounded-lg hover:bg-input text-text-muted hover:text-text transition-colors"
+              title={favoriteLabel}
+            >
+              {email.starred ? (
+                <StarSolid className={`w-4 h-4 ${starredToneClass(email.starred)}`} />
+              ) : (
+                <StarOutline className="w-4 h-4" />
+              )}
+            </button>
+          )}
 
           <button
             type="button"
@@ -270,8 +324,8 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
           </div>
         )}
 
-        {/* Action Pills: Responder & Encaminhar (Gmail style) */}
-        <div className="flex items-center gap-2.5 pt-4">
+        {/* Action Pills: Responder, Favoritar, Mover e Não é spam */}
+        <div className="flex items-center gap-2.5 pt-4 flex-wrap">
           <button
             type="button"
             onClick={() => onReply(email, false)}
@@ -288,6 +342,64 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
             <ArrowUturnRightIcon className="w-3.5 h-3.5" />
             <span>{t('reader.forward')}</span>
           </button>
+          {onToggleStarred && (
+            <button
+              type="button"
+              onClick={() => onToggleStarred(email.id, email.starred)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-border/80 hover:border-accent/60 bg-input/40 hover:bg-input text-xs font-semibold text-text transition-all cursor-pointer shadow-xs"
+              title={favoriteLabel}
+            >
+              {email.starred ? (
+                <StarSolid className={`w-3.5 h-3.5 ${starredToneClass(email.starred)}`} />
+              ) : (
+                <StarOutline className="w-3.5 h-3.5" />
+              )}
+              <span>{favoriteLabel}</span>
+            </button>
+          )}
+          {canMove && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowMoveMenu((prev) => !prev)}
+                disabled={isMoving}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-border/80 hover:border-accent/60 bg-input/40 hover:bg-input text-xs font-semibold text-text transition-all cursor-pointer shadow-xs disabled:opacity-50"
+                title={t('reader.move')}
+              >
+                <FolderIcon className="w-3.5 h-3.5" />
+                <span>{isMoving ? t('reader.moving') : t('reader.move')}</span>
+              </button>
+              {showMoveMenu && (
+                <div className="absolute left-0 bottom-full mb-2 min-w-44 max-h-56 overflow-y-auto rounded-lg border border-border bg-card shadow-xl p-1 z-20">
+                  <div className="px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+                    {t('reader.moveTitle')}
+                  </div>
+                  {moveTargets.map((folder) => (
+                    <button
+                      key={folder.path}
+                      type="button"
+                      onClick={() => handleMoveSelect(folder.path)}
+                      className="w-full text-left px-2.5 py-1.5 rounded-md text-xs text-text hover:bg-input transition-colors"
+                    >
+                      {formatFolderName(folder.name, folder.role, locale)}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {showNotSpam && (
+            <button
+              type="button"
+              onClick={handleNotSpam}
+              disabled={isMoving}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-accent/50 bg-accent/10 hover:bg-accent/20 text-xs font-semibold text-accent transition-all cursor-pointer shadow-xs disabled:opacity-50"
+              title={t('reader.notSpam')}
+            >
+              <CheckCircleIcon className="w-3.5 h-3.5" />
+              <span>{isMoving ? t('reader.unspamming') : t('reader.notSpam')}</span>
+            </button>
+          )}
         </div>
 
         {/* Quick Reply Box */}

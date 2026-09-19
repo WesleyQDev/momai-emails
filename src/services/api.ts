@@ -2,6 +2,7 @@
 // Frontend API client to communicate with the momai-emails backend worker
 
 import sdk from 'momai:sdk'
+import { EMAIL_PAGE_SIZE } from './paging'
 
 export async function executeCommand<T = any>(toolName: string, args: Record<string, any> = {}, timeoutMs = 25000): Promise<T> {
   try {
@@ -29,7 +30,7 @@ export const emailApi = {
 
   // Folders & Messages
   listFolders: (accountId?: string) => executeCommand<{ ok: boolean; folders: any[] }>('list_folders', { accountId }),
-  listEmails: (folder = 'INBOX', accountId?: string, limit = 50, unreadOnly = false, offset = 0) =>
+  listEmails: (folder = 'INBOX', accountId?: string, limit = EMAIL_PAGE_SIZE, unreadOnly = false, offset = 0) =>
     executeCommand<{ ok: boolean; messages: any[]; folder: string; hasMore?: boolean; total?: number }>('list_emails', { folder, accountId, limit, unreadOnly, offset }),
   readEmail: (messageId: string, folder = 'INBOX', accountId?: string, markRead = true) =>
     executeCommand<{ ok: boolean; email: any }>('read_email', { messageId, folder, accountId, markRead }, 20000),
@@ -61,6 +62,14 @@ export const emailApi = {
   getNotificationPrefs: () => executeCommand<{ ok: boolean; primaryOnly?: boolean; unreadWindowHours?: number }>('get_notification_prefs'),
   setNotificationPrefs: (prefs: { primaryOnly?: boolean; unreadWindowHours?: number }) =>
     executeCommand<{ ok: boolean }>('set_notification_prefs', prefs),
+
+  // Custom profile photos (persisted in host storage so they survive restarts)
+  getAvatar: (accountId: string) =>
+    executeCommand<{ ok: boolean; avatar?: string | null }>('get_avatar', { accountId }),
+  setAvatar: (accountId: string, avatar: string) =>
+    executeCommand<{ ok: boolean }>('set_avatar', { accountId, avatar }),
+  removeAvatar: (accountId: string) =>
+    executeCommand<{ ok: boolean }>('remove_avatar', { accountId }),
 
   sync: () => executeCommand<{ ok: boolean }>('sync')
 }
