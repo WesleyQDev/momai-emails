@@ -10,7 +10,16 @@ import { loadEmailSettings, saveEmailSettings, unreadWindowMs, type EmailSetting
 import { adjustFolderUnread, getFolderDisplayUnread, syncInboxPrimaryUnread } from './services/unread-today'
 import { classifyEmailCategory, shouldNotifyForCategory } from './services/email-categories'
 import { EMAIL_PAGE_SIZE } from './services/paging'
-import { dedupeFoldersByRole, getStarredMessages, isVirtualStarredFolder, resolveInboxPath, isInboxFolder } from './services/folders'
+import {
+  dedupeFoldersByRole,
+  getStarredMessages,
+  isVirtualStarredFolder,
+  resolveInboxPath,
+  isInboxFolder,
+  mergeWithDefaultFolders,
+  getDefaultFolders,
+  DEFAULT_STATIC_FOLDERS
+} from './services/folders'
 import { FolderPrewarmer } from './services/prewarm'
 import type { PublicEmailAccount, EmailFolder, EmailMessage, EmailAttachment, SendEmailPayload } from './services/types'
 import { useExtensionLocale } from './services/i18n'
@@ -46,14 +55,15 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
   })
   const [isAddingAccount, setIsAddingAccount] = useState(false)
 
-  // Folders state (initialized immediately from persistent cache so they never disappear on reload)
+  // Folders state (initialized immediately from persistent cache or default folders so they never disappear on reload)
   const [folders, setFolders] = useState<EmailFolder[]>(() => {
     const cachedAccs = emailStorageCache.getAccounts() || []
     const active = cachedAccs.find((a) => a.active) || cachedAccs[0]
     if (active) {
-      return emailStorageCache.getFolders(active.id) || []
+      const cached = emailStorageCache.getFolders(active.id)
+      if (cached && cached.length > 0) return mergeWithDefaultFolders(cached)
     }
-    return []
+    return getDefaultFolders()
   })
   const [activeFolder, setActiveFolder] = useState('INBOX')
 
@@ -144,21 +154,21 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
     const cached = emailStorageCache.getFolders(accId)
     const windowMs = unreadWindowMs(settings.unreadWindowHours)
     if (cached && cached.length > 0) {
-      let deduped = dedupeFoldersByRole(cached)
+      let deduped = mergeWithDefaultFolders(cached)
       const inboxCached = emailStorageCache.getFolderEmails(accId, resolveInboxPath(deduped))
       if (inboxCached && inboxCached.length > 0) {
         deduped = syncInboxPrimaryUnread(deduped, inboxCached, settings.showCategoryTabs, windowMs)
       }
       setFolders(deduped)
     } else if (accId === activeAccountIdRef.current) {
-      setFolders([])
+      setFolders(getDefaultFolders())
     }
 
     try {
       const res = await emailApi.listFolders(accId)
       if (reqSeq !== currentFoldersSeqRef.current || accId !== activeAccountIdRef.current) return
       if (res && res.ok && Array.isArray(res.folders)) {
-        let folders = dedupeFoldersByRole(res.folders)
+        let folders = mergeWithDefaultFolders(res.folders)
         const inboxCached = emailStorageCache.getFolderEmails(accId, resolveInboxPath(folders))
         if (inboxCached && inboxCached.length > 0) {
           folders = syncInboxPrimaryUnread(folders, inboxCached, settings.showCategoryTabs, windowMs)
@@ -196,11 +206,16 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
         const current = activeFolderRef.current
         const stillListed = folders.some((f) => f.path.toLowerCase() === current.toLowerCase())
         if (!stillListed && !isVirtualStarredFolder(current, res.folders)) {
-          const rawRole = res.folders.find((f) => f.path.toLowerCase() === current.toLowerCase())?.role
+          const rawRole =
+            DEFAULT_STATIC_FOLDERS.find((f) => f.path.toLowerCase() === current.toLowerCase())?.role ||
+            res.folders.find((f) => f.path.toLowerCase() === current.toLowerCase())?.role
           const sameRole = rawRole ? folders.find((f) => f.role === rawRole) : undefined
           activeFolderRef.current = sameRole ? sameRole.path : 'INBOX'
           setActiveFolder(activeFolderRef.current)
           setSelectedEmail(null)
+          if (sameRole && sameRole.path.toLowerCase() !== current.toLowerCase()) {
+            loadEmails(sameRole.path, accId)
+          }
         }
       }
     } catch (err) {

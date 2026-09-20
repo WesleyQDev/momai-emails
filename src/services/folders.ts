@@ -60,6 +60,41 @@ export function isVirtualStarredFolder(folderPath: string, serverFolders: EmailF
   return !serverFolders.some((folder) => isStarredFolder(folder.path, folder.role))
 }
 
+export const DEFAULT_STATIC_FOLDERS: EmailFolder[] = [
+  { path: 'INBOX', name: 'INBOX', role: 'inbox', unreadCount: 0, totalCount: 0 },
+  { path: 'Archive', name: 'Archive', role: 'archive', unreadCount: 0, totalCount: 0 },
+  { path: 'Junk', name: 'Junk', role: 'junk', unreadCount: 0, totalCount: 0 },
+  { path: 'Drafts', name: 'Drafts', role: 'drafts', unreadCount: 0, totalCount: 0 },
+  { path: 'Sent', name: 'Sent', role: 'sent', unreadCount: 0, totalCount: 0 },
+  { path: 'Trash', name: 'Trash', role: 'trash', unreadCount: 0, totalCount: 0 },
+  { path: 'starred', name: 'starred', role: 'starred', unreadCount: 0, totalCount: 0 }
+]
+
+export function getDefaultFolders(): EmailFolder[] {
+  return DEFAULT_STATIC_FOLDERS.map((f) => ({ ...f }))
+}
+
+const ROLE_ORDER: Record<string, number> = {
+  inbox: 1,
+  archive: 2,
+  junk: 3,
+  drafts: 4,
+  sent: 5,
+  trash: 6,
+  starred: 7,
+  important: 8,
+  custom: 99
+}
+
+export function sortFoldersByStandardOrder(folders: EmailFolder[]): EmailFolder[] {
+  return [...folders].sort((a, b) => {
+    const orderA = ROLE_ORDER[a.role || 'custom'] ?? 50
+    const orderB = ROLE_ORDER[b.role || 'custom'] ?? 50
+    if (orderA !== orderB) return orderA - orderB
+    return a.name.localeCompare(b.name)
+  })
+}
+
 export function dedupeFoldersByRole(folders: EmailFolder[]): EmailFolder[] {
   const seenRoles = new Set<string>()
   const deduped: EmailFolder[] = []
@@ -85,3 +120,20 @@ export function dedupeFoldersByRole(folders: EmailFolder[]): EmailFolder[] {
   }
   return deduped.sort((a, b) => folders.indexOf(a) - folders.indexOf(b))
 }
+
+export function mergeWithDefaultFolders(serverFolders: EmailFolder[]): EmailFolder[] {
+  if (!serverFolders || serverFolders.length === 0) {
+    return getDefaultFolders()
+  }
+  const deduped = dedupeFoldersByRole(serverFolders)
+  const existingRoles = new Set(deduped.map((f) => f.role).filter(Boolean))
+  const merged = [...deduped]
+  for (const def of DEFAULT_STATIC_FOLDERS) {
+    if (def.role && !existingRoles.has(def.role)) {
+      merged.push({ ...def })
+      existingRoles.add(def.role)
+    }
+  }
+  return sortFoldersByStandardOrder(ensureStarredFolder(merged))
+}
+

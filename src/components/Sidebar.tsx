@@ -15,7 +15,7 @@ import {
 } from '@heroicons/react/24/outline'
 import type { EmailFolder } from '../services/types'
 import { formatFolderName, useExtensionLocale } from '../services/i18n'
-import { ensureStarredFolder } from '../services/folders'
+import { mergeWithDefaultFolders } from '../services/folders'
 import { getFolderDisplayUnread } from '../services/unread-today'
 
 interface SidebarProps {
@@ -32,6 +32,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenCompose
 }) => {
   const { locale, t } = useExtensionLocale()
+  const displayFolders = mergeWithDefaultFolders(folders)
   const getFolderIcon = (role?: string, name?: string) => {
     const clean = (name || '').toLowerCase()
     if (clean.includes('starred') || clean.includes('estrela') || role === 'starred') return StarIcon
@@ -83,29 +84,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {t('sidebar.folders')}
           </span>
 
-          {folders.length === 0 ? (
-            <div className="px-3 py-2 text-xs text-text-muted italic">{t('sidebar.loadingFolders')}</div>
-          ) : (
-            ensureStarredFolder(folders)
-              .filter((f) => {
-                // Hide "All Mail" / "Todos os E-mails" folder
-                const lower = f.name.toLowerCase().replace(/^\[gmail\]\/?/i, '').trim()
-                const pathLower = f.path.toLowerCase().replace(/^\[gmail\]\/?/i, '').trim()
-                if (
-                  f.role === 'all' ||
-                  lower === 'all mail' ||
-                  lower === 'todos os e-mails' ||
-                  lower === 'todos os emails' ||
-                  lower === 'all' ||
-                  pathLower.includes('all mail') ||
-                  pathLower.includes('todos os e-mails') ||
-                  pathLower.includes('todos os emails')
-                ) {
-                  return false
-                }
-                return true
-              })
-              .map((f) => {
+          {displayFolders
+            .filter((f) => {
+              // Hide "All Mail" / "Todos os E-mails" folder
+              const lower = f.name.toLowerCase().replace(/^\[gmail\]\/?/i, '').trim()
+              const pathLower = f.path.toLowerCase().replace(/^\[gmail\]\/?/i, '').trim()
+              if (
+                f.role === 'all' ||
+                lower === 'all mail' ||
+                lower === 'todos os e-mails' ||
+                lower === 'todos os emails' ||
+                lower === 'all' ||
+                pathLower.includes('all mail') ||
+                pathLower.includes('todos os e-mails') ||
+                pathLower.includes('todos os emails')
+              ) {
+                return false
+              }
+              return true
+            })
+            .map((f) => {
               const Icon = getFolderIcon(f.role, f.name)
               const displayName = formatFolderName(f.name, f.role, locale)
               const isActive = activeFolder.toLowerCase() === f.path.toLowerCase()
@@ -138,8 +136,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   )}
                 </button>
               )
-            })
-          )}
+            })}
         </div>
       </div>
 

@@ -8,7 +8,10 @@ import {
   ensureStarredFolder,
   getStarredMessages,
   resolveInboxPath,
-  getMoveTargets
+  getMoveTargets,
+  getDefaultFolders,
+  sortFoldersByStandardOrder,
+  mergeWithDefaultFolders
 } from '../src/services/folders'
 import type { EmailFolder, EmailMessage } from '../src/services/types'
 
@@ -130,5 +133,60 @@ describe('email folders (spam / inbox / move)', () => {
   it('keeps custom folders untouched', () => {
     const folders = [makeFolder('Projects', 'custom'), makeFolder('Receipts', 'custom')]
     expect(dedupeFoldersByRole(folders)).toHaveLength(2)
+  })
+
+  it('returns standard fixed default folders immediately', () => {
+    const defaults = getDefaultFolders()
+    expect(defaults.map((f) => f.role)).toEqual([
+      'inbox',
+      'archive',
+      'junk',
+      'drafts',
+      'sent',
+      'trash',
+      'starred'
+    ])
+    expect(defaults).toHaveLength(7)
+  })
+
+  it('sorts folders according to the standard order', () => {
+    const mixed: EmailFolder[] = [
+      makeFolder('Trash', 'trash'),
+      makeFolder('Sent', 'sent'),
+      makeFolder('INBOX', 'inbox'),
+      makeFolder('Archive', 'archive'),
+      makeFolder('Junk', 'junk'),
+      makeFolder('Drafts', 'drafts'),
+      makeFolder('starred', 'starred')
+    ]
+    const sorted = sortFoldersByStandardOrder(mixed)
+    expect(sorted.map((f) => f.role)).toEqual([
+      'inbox',
+      'archive',
+      'junk',
+      'drafts',
+      'sent',
+      'trash',
+      'starred'
+    ])
+  })
+
+  it('merges server folders while ensuring all standard folders exist and are ordered', () => {
+    const serverFolders = [
+      makeFolder('INBOX', 'inbox'),
+      makeFolder('Sent', 'sent'),
+      makeFolder('CustomFolder', 'custom')
+    ]
+    const merged = mergeWithDefaultFolders(serverFolders)
+    expect(merged.map((f) => f.role)).toEqual([
+      'inbox',
+      'archive',
+      'junk',
+      'drafts',
+      'sent',
+      'trash',
+      'starred',
+      'custom'
+    ])
   })
 })
