@@ -8,8 +8,6 @@ import React, { useState, useEffect, useRef } from 'react'
 import {
   XMarkIcon,
   MinusIcon,
-  ArrowsPointingOutIcon,
-  ArrowsPointingInIcon,
   PaperAirplaneIcon,
   PaperClipIcon,
   PhotoIcon,
@@ -22,6 +20,8 @@ import type { PublicEmailAccount, SendEmailPayload, OutgoingAttachment } from '.
 import sdk from 'momai:sdk'
 import ContextMenu from './ContextMenu'
 import { useExtensionLocale } from '../services/i18n'
+import { closeAndSaveDraftInBackground } from '../services/draft'
+import { closeAndSendInBackground } from '../services/send'
 import { OfficialFileIcon, formatFileSize, getAttachmentFileInfo } from './AttachmentBadge'
 
 interface EmailComposerProps {
@@ -31,6 +31,7 @@ interface EmailComposerProps {
   initialData?: Partial<SendEmailPayload>
   onClose: () => void
   onSend: (payload: SendEmailPayload) => Promise<{ ok: boolean; error?: string }>
+  onSaveDraft?: (payload: SendEmailPayload & { replaceUid?: number; replaceFolder?: string }) => Promise<{ ok: boolean; error?: string; draftsFolder?: string }>
 }
 
 interface RecipientItem {
@@ -147,7 +148,8 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
   activeAccountId,
   initialData,
   onClose,
-  onSend
+  onSend,
+  onSaveDraft
 }) => {
   const [selectedAccountId, setSelectedAccountId] = useState<string>('')
   const [to, setTo] = useState('')
@@ -161,9 +163,10 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
   const [attachments, setAttachments] = useState<OutgoingAttachment[]>([])
 
   const [isMinimized, setIsMinimized] = useState(false)
-  const [isMaximized, setIsMaximized] = useState(false)
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [draftId, setDraftId] = useState<string | undefined>(undefined)
+  const [draftFolder, setDraftFolder] = useState<string | undefined>(undefined)
+  const [draftUid, setDraftUid] = useState<number | undefined>(undefined)
 
   // Drag-and-drop & attachment state
   const [isDraggingOver, setIsDraggingOver] = useState(false)
@@ -207,8 +210,10 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
       setIsHtml(Boolean(initialData?.isHtml))
       setAttachments(initialData?.attachments || [])
       setError(null)
+      setDraftId(initialData?.draftId)
+      setDraftFolder(initialData?.draftFolder)
+      setDraftUid(initialData?.draftUid)
       setIsMinimized(false)
-      setIsMaximized(false)
       setIsDraggingOver(false)
       setSelectedInlineImg(null)
       setRecentRecipients(getRecentRecipients())
@@ -241,8 +246,6 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
     document.addEventListener('click', handleClickOutside)
     return () => document.removeEventListener('click', handleClickOutside)
   }, [])
-
-  if (!isOpen) return null
 
   // Selection helpers
   const saveSelection = () => {
@@ -641,47 +644,104 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
     })
   }
 
-  const handleSend = async (e: React.FormEvent) => {
+  const getCurrentBody = () => (editorRef.current ? editorRef.current.innerHTML : body)
+
+  const handleCloseSaveDraft = () => {
+    const currentContent = getCurrentBody()
+    const content = {
+      to,
+      cc,
+      bcc,
+      subject,
+      body: currentContent,
+      attachments
+    }
+    const payload = {
+      accountId: selectedAccountId,
+      to: to.trim(),
+      subject: subject.trim() || t('composer.defaultSubject'),
+      body: currentContent,
+      isHtml: isHtml || currentContent.includes('<img'),
+      cc: cc.trim() || undefined,
+      bcc: bcc.trim() || undefined,
+      inReplyTo: initialData?.inReplyTo,
+      references: initialData?.references,
+      attachments: attachments.length > 0 ? attachments : undefined,
+      draftId,
+      draftFolder,
+      draftUid,
+      replaceUid: draftUid,
+      replaceFolder: draftFolder
+    } as SendEmailPayload & { replaceUid?: number; replaceFolder?: string }
+    closeAndSaveDraftInBackground(
+      content,
+      onClose,
+      onSaveDraft ? () => onSaveDraft(payload) : undefined
+    )
+  }
+
+  const handleCloseSaveDraftRef = useRef(handleCloseSaveDraft)
+  handleCloseSaveDraftRef.current = handleCloseSaveDraft
+
+  useEffect(() => {
+    if (!isOpen) return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        if (previewImage) {
+          setPreviewImage(null)
+        } else if (showToAutofill) {
+          setShowToAutofill(false)
+        } else if (bodyContextMenu || recipientContextMenu) {
+          setBodyContextMenu(null)
+          setRecipientContextMenu(null)
+        } else {
+          handleCloseSaveDraftRef.current()
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
+  }, [isOpen, previewImage, showToAutofill, bodyContextMenu, recipientContextMenu])
+
+  const handleDiscard = () => {
+    onClose()
+  }
+
+  const handleSend = (e: React.FormEvent) => {
     e.preventDefault()
     if (!to.trim()) {
       setError(t('composer.errors.noRecipient'))
       return
     }
 
-    const currentContent = editorRef.current ? editorRef.current.innerHTML : body
+    const currentContent = getCurrentBody()
     if (!currentContent.trim() && attachments.length === 0) {
       setError(t('composer.errors.emptyBody'))
       return
     }
 
-    setLoading(true)
-    setError(null)
-
-    try {
-      const res = await onSend({
-        accountId: selectedAccountId,
-        to: to.trim(),
-        subject: subject.trim() || t('composer.defaultSubject'),
-        body: currentContent,
-        isHtml: isHtml || currentContent.includes('<img'),
-        cc: cc.trim() || undefined,
-        bcc: bcc.trim() || undefined,
-        inReplyTo: initialData?.inReplyTo,
-        references: initialData?.references,
-        attachments: attachments.length > 0 ? attachments : undefined
-      })
-
-      if (!res.ok) {
-        setError(res.error || t('composer.errors.sendFailed'))
-      } else {
-        saveRecipient(to.trim())
-        onClose()
-      }
-    } catch (err: any) {
-      setError(err?.message || t('composer.errors.unexpected'))
-    } finally {
-      setLoading(false)
+    const payload: SendEmailPayload = {
+      accountId: selectedAccountId,
+      to: to.trim(),
+      subject: subject.trim() || t('composer.defaultSubject'),
+      body: currentContent,
+      isHtml: isHtml || currentContent.includes('<img'),
+      cc: cc.trim() || undefined,
+      bcc: bcc.trim() || undefined,
+      inReplyTo: initialData?.inReplyTo,
+      references: initialData?.references,
+      attachments: attachments.length > 0 ? attachments : undefined,
+      draftId,
+      draftFolder,
+      draftUid
     }
+    saveRecipient(to.trim())
+    setError(null)
+    closeAndSendInBackground(onClose, () => onSend(payload))
   }
 
   const filteredRecipients = recentRecipients.filter((r) => {
@@ -692,29 +752,25 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
 
   const totalAttachmentsSize = attachments.reduce((sum, a) => sum + (a.size || 0), 0)
 
-  return (
-    <>
-      {/* Backdrop overlay when maximized */}
-      {isMaximized && (
-        <div
-          onClick={() => setIsMaximized(false)}
-          className="fixed inset-0 bg-bg/40 backdrop-blur-xs z-40 transition-opacity animate-fade-in"
-        />
-      )}
+  if (!isOpen) return null
 
-      <div
-        onDragEnter={handleDragEnter}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        className={`fixed z-50 bg-card border border-border shadow-glass-lg overflow-hidden flex flex-col transition-all duration-200 ${
-          isMinimized
-            ? 'top-auto left-auto translate-x-0 translate-y-0 bottom-0 right-2 w-64 h-11 rounded-t-xl'
-            : isMaximized
-              ? 'top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bottom-auto right-auto w-[1180px] max-w-[96vw] h-[880px] max-h-[95vh] rounded-2xl shadow-2xl animate-fade-in'
-              : 'top-auto left-auto translate-x-0 translate-y-0 bottom-0 right-2 w-[370px] h-[500px] rounded-t-xl animate-slide-up'
-        }`}
-      >
+  return (
+    <div
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      style={
+        isMinimized
+          ? { width: 'clamp(260px, 20vw, 320px)', height: 44 }
+          : { width: 'clamp(500px, 36vw, 620px)', maxWidth: 'calc(100vw - 24px)', height: 'clamp(395px, 56.5vh, 520px)', maxHeight: 'calc(100vh - 32px)' }
+      }
+      className={`fixed z-50 bg-card border border-border shadow-glass-lg overflow-hidden flex flex-col transition-all duration-200 ${
+        isMinimized
+          ? 'top-auto left-auto translate-x-0 translate-y-0 bottom-0 right-2 rounded-t-xl'
+          : 'top-auto left-auto translate-x-0 translate-y-0 bottom-0 right-2 rounded-t-xl animate-slide-up'
+      }`}
+    >
       {/* Hidden File Inputs */}
       <input
         ref={fileInputRef}
@@ -783,10 +839,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
         <div className="flex items-center gap-1">
           <button
             type="button"
-            onClick={() => {
-              if (isMaximized) setIsMaximized(false)
-              setIsMinimized(!isMinimized)
-            }}
+            onClick={() => setIsMinimized(!isMinimized)}
             className="p-1 rounded hover:bg-input text-text-muted hover:text-text transition-colors"
             title={isMinimized ? t('composer.restore') : t('composer.minimize')}
           >
@@ -795,23 +848,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
 
           <button
             type="button"
-            onClick={() => {
-              if (isMinimized) setIsMinimized(false)
-              setIsMaximized(!isMaximized)
-            }}
-            className="p-1 rounded hover:bg-input text-text-muted hover:text-text transition-colors"
-            title={isMaximized ? t('composer.restore') : t('composer.maximize')}
-          >
-            {isMaximized ? (
-              <ArrowsPointingInIcon className="w-3.5 h-3.5" />
-            ) : (
-              <ArrowsPointingOutIcon className="w-3.5 h-3.5" />
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={onClose}
+            onClick={handleCloseSaveDraft}
             className="p-1 rounded hover:bg-input text-text-muted hover:text-text transition-colors"
             title={t('composer.close')}
           >
@@ -822,14 +859,18 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
 
       {/* Body (hidden when minimized) */}
       {!isMinimized && (
-        <form onSubmit={handleSend} className="flex-1 flex flex-col overflow-hidden text-xs">
+        <form
+          onSubmit={handleSend}
+          style={{ width: '100%', maxWidth: '100%', minWidth: 0, height: '100%', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+          className="flex-1 flex flex-col overflow-hidden text-xs min-w-0 max-w-full"
+        >
           {/* Account Selector (From) */}
           <div className="flex items-center px-4 py-2 border-b border-border/40 gap-2 bg-input/10">
             <span className="text-text-muted font-medium w-12 shrink-0">{t('composer.from')}</span>
             <select
               value={selectedAccountId}
               onChange={(e) => setSelectedAccountId(e.target.value)}
-              className="flex-1 bg-transparent border-none text-text text-xs focus:outline-hidden cursor-pointer"
+              className="flex-1 bg-transparent border-none text-text text-xs outline-none focus:outline-none cursor-pointer"
             >
               {accounts.map((acc) => (
                 <option key={acc.id} value={acc.id} className="bg-card text-text">
@@ -854,7 +895,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
                 setShowToAutofill(true)
               }}
               placeholder={t('composer.toPlaceholder')}
-              className="flex-1 bg-transparent border-none text-text placeholder:text-text-muted focus:outline-hidden text-xs"
+              className="flex-1 bg-transparent border-none text-text placeholder:text-text-muted outline-none focus:outline-none text-xs"
             />
             <div className="flex items-center gap-1 text-[11px] text-text-muted">
               {!showCc && (
@@ -935,7 +976,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
                 value={cc}
                 onChange={(e) => setCc(e.target.value)}
                 placeholder={t('composer.ccPlaceholder')}
-                className="flex-1 bg-transparent border-none text-text placeholder:text-text-muted focus:outline-hidden text-xs"
+                className="flex-1 bg-transparent border-none text-text placeholder:text-text-muted outline-none focus:outline-none text-xs"
               />
             </div>
           )}
@@ -949,7 +990,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
                 value={bcc}
                 onChange={(e) => setBcc(e.target.value)}
                 placeholder={t('composer.bccPlaceholder')}
-                className="flex-1 bg-transparent border-none text-text placeholder:text-text-muted focus:outline-hidden text-xs"
+                className="flex-1 bg-transparent border-none text-text placeholder:text-text-muted outline-none focus:outline-none text-xs"
               />
             </div>
           )}
@@ -962,7 +1003,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
               placeholder={t('composer.subjectPlaceholder')}
-              className="flex-1 bg-transparent border-none text-text placeholder:text-text-muted focus:outline-hidden text-xs font-medium"
+              className="flex-1 bg-transparent border-none text-text placeholder:text-text-muted outline-none focus:outline-none text-xs font-medium"
             />
           </div>
 
@@ -974,7 +1015,10 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
           )}
 
           {/* Gmail-Style Rich ContentEditable Editor */}
-          <div className="flex-1 p-4 overflow-y-auto relative flex flex-col">
+          <div
+            style={{ width: '100%', maxWidth: '100%', minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', overflowY: 'auto', overflowX: 'hidden' }}
+            className="flex-1 p-4 overflow-y-auto overflow-x-hidden relative flex flex-col min-w-0 max-w-full"
+          >
             <div
               ref={editorRef}
               contentEditable
@@ -994,7 +1038,22 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
                 saveSelection()
                 setBodyContextMenu({ visible: true, x: e.clientX, y: e.clientY })
               }}
-              className="w-full h-full min-h-[160px] bg-transparent text-text focus:outline-hidden text-xs leading-relaxed font-sans cursor-text [&:empty]:before:content-[attr(data-placeholder)] [&:empty]:before:text-text-muted [&:empty]:before:pointer-events-none"
+              style={{
+                outline: 'none',
+                border: 'none',
+                boxShadow: 'none',
+                wordBreak: 'break-all',
+                overflowWrap: 'anywhere',
+                whiteSpace: 'pre-wrap',
+                width: '100%',
+                maxWidth: '100%',
+                minWidth: 0,
+                flex: 1,
+                minHeight: 100,
+                boxSizing: 'border-box',
+                overflowX: 'hidden'
+              }}
+              className="w-full flex-1 bg-transparent text-text outline-none focus:outline-none ring-0 focus:ring-0 border-none text-xs leading-relaxed font-sans cursor-text [&:empty]:before:content-[attr(data-placeholder)] [&:empty]:before:text-text-muted [&:empty]:before:pointer-events-none"
               data-placeholder={t('composer.bodyPlaceholder')}
             />
           </div>
@@ -1081,20 +1140,11 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
             <div className="flex items-center gap-1.5">
               <button
                 type="submit"
-                disabled={loading || !to.trim()}
+                disabled={!to.trim()}
                 className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-semibold text-xs bg-accent text-bg shadow-glass-sm hover:opacity-90 active:scale-95 disabled:opacity-50 disabled:pointer-events-none transition-all"
               >
-                {loading ? (
-                  <>
-                    <div className="w-3.5 h-3.5 border-2 border-bg border-t-transparent rounded-full animate-spin" />
-                    <span>{t('composer.sending')}</span>
-                  </>
-                ) : (
-                  <>
-                    <PaperAirplaneIcon className="w-3.5 h-3.5 stroke-2" />
-                    <span>{t('composer.send')}</span>
-                  </>
-                )}
+                <PaperAirplaneIcon className="w-3.5 h-3.5 stroke-2" />
+                <span>{t('composer.send')}</span>
               </button>
 
               <div className="h-4 w-px bg-border/60 mx-0.5" />
@@ -1142,7 +1192,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
 
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleDiscard}
               className="p-1.5 rounded-lg hover:bg-input text-text-muted hover:text-text transition-colors"
               title={t('composer.discard')}
             >
@@ -1278,7 +1328,6 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
         />
       )}
     </div>
-    </>
   )
 }
 

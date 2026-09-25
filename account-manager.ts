@@ -8,7 +8,8 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { encryptForStorage, decryptFromStorage } = require('./secure-storage-bridge.ts')
 const { PROVIDERS, detectProviderFromEmail } = require('./providers-data.ts')
-const { testAccountConnection, fetchMessages, fetchFullMessage, getMailboxStatus, releaseImapClient } = require('./email-client.ts')
+const emailClient = require('./email-client.ts')
+const connectionPolicy = require('./imap-connection-policy.ts')
 
 class AccountManager {
   private storageDir: string
@@ -26,6 +27,12 @@ class AccountManager {
   private seenUids: Map<string, Set<number>> = new Map()
   private unreadCounts: Map<string, number> = new Map()
   private isChecking = false
+  private quotaCooldownUntil: Map<string, number> = new Map()
+  private quotaFailures: Map<string, number> = new Map()
+  private lastQuotaLogAt: Map<string, number> = new Map()
+  private suppressedQuotaWarnings: Map<string, number> = new Map()
+  private lastNetworkLogAt: Map<string, number> = new Map()
+  private suppressedNetworkWarnings: Map<string, number> = new Map()
   private onNewEmailCallback?: (event: { accountId: string; email: any; totalUnread: number }) => void
 
   constructor(storageDir?: string, deps?: {
@@ -233,6 +240,60 @@ class AccountManager {
     this.startBackgroundPoller()
   }
 
+  private isQuotaCoolingDown(accountId: string, now: number = Date.now()): boolean {
+    const until = this.quotaCooldownUntil.get(accountId)
+    if (!until) return false
+    if (now >= until) {
+      this.quotaCooldownUntil.delete(accountId)
+      return false
+    }
+    return true
+  }
+
+  private noteQuotaSuccess(accountId: string): void {
+    this.quotaFailures.delete(accountId)
+    this.quotaCooldownUntil.delete(accountId)
+    this.suppressedQuotaWarnings.delete(accountId)
+  }
+
+  private noteQuotaHit(accountId: string, email: string, now: number = Date.now()): void {
+    const failures = (this.quotaFailures.get(accountId) || 0) + 1
+    this.quotaFailures.set(accountId, failures)
+    this.quotaCooldownUntil.set(accountId, now + connectionPolicy.computeQuotaCooldownMs(failures))
+    const lastLogged = this.lastQuotaLogAt.get(accountId)
+    if (connectionPolicy.shouldEmitLog(lastLogged, now, connectionPolicy.QUOTA_LOG_COOLDOWN_MS)) {
+      const suppressed = this.suppressedQuotaWarnings.get(accountId) || 0
+      const suffix = suppressed > 0 ? ` (${suppressed} similar warnings suppressed)` : ''
+      console.log(`[AccountManager] IMAP connection limit reached for ${email}, backing off${suffix}`)
+      this.lastQuotaLogAt.set(accountId, now)
+      this.suppressedQuotaWarnings.delete(accountId)
+    } else {
+      this.suppressedQuotaWarnings.set(accountId, (this.suppressedQuotaWarnings.get(accountId) || 0) + 1)
+    }
+  }
+
+  private noteNetworkBlip(accountId: string, email: string, detail: string, now: number = Date.now()): void {
+    const lastLogged = this.lastNetworkLogAt.get(accountId)
+    if (connectionPolicy.shouldEmitLog(lastLogged, now, connectionPolicy.NETWORK_LOG_COOLDOWN_MS)) {
+      const suppressed = this.suppressedNetworkWarnings.get(accountId) || 0
+      const suffix = suppressed > 0 ? ` (${suppressed} similar warnings suppressed)` : ''
+      console.log(`[AccountManager] Network unreachable while checking ${email}: ${detail}${suffix}`)
+      this.lastNetworkLogAt.set(accountId, now)
+      this.suppressedNetworkWarnings.delete(accountId)
+    } else {
+      this.suppressedNetworkWarnings.set(accountId, (this.suppressedNetworkWarnings.get(accountId) || 0) + 1)
+    }
+  }
+
+  private clearConnectionState(accountId: string): void {
+    this.quotaCooldownUntil.delete(accountId)
+    this.quotaFailures.delete(accountId)
+    this.lastQuotaLogAt.delete(accountId)
+    this.suppressedQuotaWarnings.delete(accountId)
+    this.lastNetworkLogAt.delete(accountId)
+    this.suppressedNetworkWarnings.delete(accountId)
+  }
+
   public async primeAccount(accId: string, acc: any): Promise<void> {
     try {
       if (!this.seenUids.has(accId)) {
@@ -240,22 +301,39 @@ class AccountManager {
       }
       const accountSeen = this.seenUids.get(accId)!
 
-      // 1. Obtém status da caixa INBOX (unseen, total de mensagens e uidNext)
-      const status = await getMailboxStatus(acc, 'INBOX')
+      // 1. Read INBOX status (unseen count, total messages, uidNext).
+      const status = await emailClient.getMailboxStatus(acc, 'INBOX')
       if (status.ok) {
         this.unreadCounts.set(accId, status.unseen || 0)
+      } else if (connectionPolicy.classifyImapError(status.error || '') === 'quota') {
+        this.noteQuotaHit(accId, acc.email)
       }
 
-      // 2. Busca as mensagens mais recentes (até 50) para registrar como já vistas
-      const res = await fetchMessages(acc, 'INBOX', 50, false)
-      const messages = Array.isArray(res) ? res : (res?.messages || [])
-      const validUids = messages.map((m: any) => m.uid || 0).filter((u: number) => u > 0)
-      for (const u of validUids) {
-        accountSeen.add(u)
+      let validUids: number[] = []
+      let hadConnectivityIssue = !status.ok
+      try {
+        // 2. Fetch recent messages (up to 50) to seed the already-seen set.
+        const res = await emailClient.fetchMessages(acc, 'INBOX', 50, false)
+        const messages = Array.isArray(res) ? res : (res?.messages || [])
+        validUids = messages.map((m: any) => m.uid || 0).filter((u: number) => u > 0)
+        for (const u of validUids) {
+          accountSeen.add(u)
+        }
+      } catch (fetchErr: any) {
+        hadConnectivityIssue = true
+        const kind = connectionPolicy.classifyImapError(fetchErr)
+        const detail = fetchErr?.message || String(fetchErr)
+        if (kind === 'quota') {
+          this.noteQuotaHit(accId, acc.email)
+        } else if (kind === 'network') {
+          this.noteNetworkBlip(accId, acc.email, detail)
+        } else {
+          console.warn(`[AccountManager] Prime fetch warning for ${acc.email}:`, detail)
+        }
       }
 
-      // 3. Determina o baseline do UID:
-      // Pelo RFC 3501, uidNext é estritamente maior que qualquer UID já existente na caixa.
+      // 3. Resolve the UID baseline:
+      // Per RFC 3501, uidNext is strictly greater than any existing UID.
       let latestUid = 0
       if (status.ok && typeof status.uidNext === 'number' && status.uidNext > 1) {
         latestUid = status.uidNext - 1
@@ -263,10 +341,21 @@ class AccountManager {
         latestUid = Math.max(...validUids)
       }
 
+      if (!hadConnectivityIssue) this.noteQuotaSuccess(accId)
+
       this.lastSeenUids.set(accId, latestUid)
-      console.log(`[AccountManager] Conta ${acc.email} inicializada (primed). lastSeenUid: ${latestUid}, unseen: ${status.unseen || 0}`)
+      console.log(`[AccountManager] Primed account ${acc.email}. lastSeenUid: ${latestUid}, unseen: ${status.unseen || 0}`)
     } catch (err: any) {
-      console.warn(`[AccountManager] Falha ao inicializar UID para ${acc.email}:`, err?.message || err)
+      this.lastSeenUids.set(accId, 0)
+      const kind = connectionPolicy.classifyImapError(err)
+      const detail = err?.message || String(err)
+      if (kind === 'quota') {
+        this.noteQuotaHit(accId, acc.email)
+      } else if (kind === 'network') {
+        this.noteNetworkBlip(accId, acc.email, detail)
+      } else {
+        console.warn(`[AccountManager] Prime failed for ${acc.email}:`, detail)
+      }
     }
   }
 
@@ -414,7 +503,7 @@ class AccountManager {
     }
 
     // Test connection
-    const test = await testAccountConnection(accountConfig)
+    const test = await emailClient.testAccountConnection(accountConfig)
     if (!test.ok) {
       return { ok: false, error: test.error || 'Falha ao autenticar no servidor de e-mail.' }
     }
@@ -425,7 +514,7 @@ class AccountManager {
       this.activeAccountId = id
     }
 
-    // Inicializa imediatamente o baseline de UIDs para que e-mails anteriores não disparem notificações
+    // Seed the UID baseline immediately so older messages never trigger notifications.
     await this.primeAccount(id, accountConfig)
 
     await this.saveAccounts()
@@ -439,9 +528,10 @@ class AccountManager {
     this.lastSeenUids.delete(id)
     this.seenUids.delete(id)
     this.unreadCounts.delete(id)
+    this.clearConnectionState(id)
     try {
-      if (typeof releaseImapClient === 'function') {
-        releaseImapClient(id)
+      if (typeof emailClient.releaseImapClient === 'function') {
+        emailClient.releaseImapClient(id)
       }
     } catch {}
     if (this.activeAccountId === id) {
@@ -469,31 +559,43 @@ class AccountManager {
     try {
       for (const [accId, acc] of this.accounts.entries()) {
         try {
+          // Skip background retries while the server limit is cooling down.
+          // Foreground user actions still try on demand; only the poller waits.
+          if (this.isQuotaCoolingDown(accId)) continue
           if (!this.seenUids.has(accId)) this.seenUids.set(accId, new Set())
           const accountSeen = this.seenUids.get(accId)!
 
-          // Se a conta ainda não possui baseline de UIDs registrado, inicializa agora e pula o ciclo.
-          // NUNCA disparar notificações na primeira checagem de uma conta!
+          // Accounts without a UID baseline prime now and skip the cycle.
+          // Never emit notifications on the first check of an account.
           if (!this.lastSeenUids.has(accId)) {
             await this.primeAccount(accId, acc)
             continue
           }
 
-          // Status check: rápido, obtém contagem de não lidos atualizada sem bloquear a caixa
-          const status = await getMailboxStatus(acc, 'INBOX')
+          // Fast status check: refreshes the unread count without locking the mailbox.
+          const status = await emailClient.getMailboxStatus(acc, 'INBOX')
           if (status.ok) {
             this.unreadCounts.set(accId, status.unseen || 0)
+          } else if (connectionPolicy.classifyImapError(status.error || '') === 'quota') {
+            this.noteQuotaHit(accId, acc.email)
+            continue
           }
 
           const prevSeen = this.lastSeenUids.get(accId)!
 
-          // Busca as mensagens mais recentes (o fetchMessages agora força client.noop() internamente)
-          const res = await fetchMessages(acc, 'INBOX', 10, false)
+          // Fetch recent messages (fetchMessages forces client.noop() internally).
+          const res = await emailClient.fetchMessages(acc, 'INBOX', 10, false)
           const messages = Array.isArray(res) ? res : (res?.messages || [])
-          if (!messages || messages.length === 0) continue
+          if (!messages || messages.length === 0) {
+            this.noteQuotaSuccess(accId)
+            continue
+          }
 
           const validUids = messages.map((m: any) => m.uid || 0).filter((u: number) => u > 0)
-          if (validUids.length === 0) continue
+          if (validUids.length === 0) {
+            this.noteQuotaSuccess(accId)
+            continue
+          }
 
           const latestUid = Math.max(...validUids)
 
@@ -515,7 +617,7 @@ class AccountManager {
                 if (first !== undefined) accountSeen.delete(first)
               }
 
-              console.log(`[AccountManager] Novo e-mail detectado: ${msg.subject} (UID: ${uid})`)
+              console.log(`[AccountManager] New email detected: ${msg.subject} (UID: ${uid})`)
               if (this.onNewEmailCallback) {
                 this.onNewEmailCallback({
                   accountId: accId,
@@ -527,8 +629,17 @@ class AccountManager {
           } else {
             for (const u of validUids) accountSeen.add(u)
           }
+          this.noteQuotaSuccess(accId)
         } catch (err: any) {
-          console.warn(`[AccountManager] Background check error for ${acc.email}:`, err?.message || err)
+          const kind = connectionPolicy.classifyImapError(err)
+          const detail = err?.message || String(err)
+          if (kind === 'quota') {
+            this.noteQuotaHit(accId, acc.email)
+          } else if (kind === 'network') {
+            this.noteNetworkBlip(accId, acc.email, detail)
+          } else {
+            console.warn(`[AccountManager] Background check error for ${acc.email}:`, detail)
+          }
         }
       }
     } finally {

@@ -1,12 +1,16 @@
 import { describe, it, expect } from 'vitest'
 import {
   dedupeFoldersByRole,
+  isArchiveFolder,
+  isDraftMessage,
   isSpamFolder,
+  isTrashFolder,
   isInboxFolder,
   isStarredFolder,
   isVirtualStarredFolder,
   ensureStarredFolder,
   getStarredMessages,
+  resolveArchivePath,
   resolveInboxPath,
   getMoveTargets,
   getDefaultFolders,
@@ -188,5 +192,73 @@ describe('email folders (spam / inbox / move)', () => {
       'starred',
       'custom'
     ])
+  })
+
+  it('detects the archive folder by path and role only', () => {
+    expect(isArchiveFolder('Archive', 'archive')).toBe(true)
+    expect(isArchiveFolder('Arquivo', 'custom')).toBe(true)
+    expect(isArchiveFolder('[Gmail]/All Mail', 'custom')).toBe(false)
+    expect(isArchiveFolder('Todos os E-mails', 'custom')).toBe(false)
+    expect(isArchiveFolder('INBOX', 'inbox')).toBe(false)
+    expect(isArchiveFolder('Sent', 'sent')).toBe(false)
+  })
+
+  it('resolves the real archive path instead of a missing static fallback', () => {
+    const folders = [
+      makeFolder('INBOX', 'inbox'),
+      makeFolder('Arquivo', 'archive'),
+      makeFolder('Sent', 'sent')
+    ]
+    expect(resolveArchivePath(folders)).toBe('Arquivo')
+
+    const withoutArchive = [makeFolder('INBOX', 'inbox'), makeFolder('Sent', 'sent')]
+    expect(resolveArchivePath(withoutArchive)).toBe('Archive')
+  })
+
+  it('reuses the server archive folder instead of injecting a duplicate', () => {
+    const serverFolders = [
+      makeFolder('INBOX', 'inbox'),
+      makeFolder('Arquivo', 'archive'),
+      makeFolder('Sent', 'sent')
+    ]
+    const merged = mergeWithDefaultFolders(serverFolders)
+    const archives = merged.filter((f) => f.role === 'archive')
+    expect(archives).toHaveLength(1)
+    expect(archives[0].path).toBe('Arquivo')
+  })
+})
+
+describe('draft message badge (drafts folder or trash)', () => {
+  const folders = [makeFolder('INBOX', 'inbox'), makeFolder('[Gmail]/Rascunhos', 'drafts'), makeFolder('Trash', 'trash')]
+
+  function makeDraftMsg(overrides: Partial<EmailMessage> = {}): EmailMessage {
+    return { ...makeMessage('1', true, Date.now(), 'Drafts'), ...overrides }
+  }
+
+  it('marks messages inside the drafts folder', () => {
+    expect(isDraftMessage(makeDraftMsg({ folder: '[Gmail]/Rascunhos' }), folders)).toBe(true)
+  })
+
+  it('marks drafts by name even without a folder list', () => {
+    expect(isDraftMessage(makeDraftMsg({ folder: 'Rascunhos' }), [])).toBe(true)
+    expect(isDraftMessage(makeDraftMsg({ folder: 'Drafts' }))).toBe(true)
+  })
+
+  it('marks drafts carrying the server draft flag (e.g. inside trash)', () => {
+    expect(isDraftMessage(makeDraftMsg({ folder: 'Trash', draft: true }), folders)).toBe(true)
+  })
+
+  it('does not mark regular inbox or trash messages', () => {
+    expect(isDraftMessage(makeMessage('2', true, Date.now(), 'INBOX'), folders)).toBe(false)
+    expect(isDraftMessage(makeMessage('3', true, Date.now(), 'Trash'), folders)).toBe(false)
+    expect(isDraftMessage(null, folders)).toBe(false)
+  })
+
+  it('detects trash folders by path and role', () => {
+    expect(isTrashFolder('Trash', 'trash')).toBe(true)
+    expect(isTrashFolder('[Gmail]/Lixeira')).toBe(true)
+    expect(isTrashFolder('Lixeira')).toBe(true)
+    expect(isTrashFolder('INBOX', 'inbox')).toBe(false)
+    expect(isTrashFolder('Drafts', 'drafts')).toBe(false)
   })
 })

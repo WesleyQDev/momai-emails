@@ -7,9 +7,14 @@ const CASES: Array<{ from: any; subject: string; expected: string }> = [
   { from: { address: 'news@loja.com', name: '' }, subject: 'Oferta exclusiva', expected: 'promotions' },
   { from: { address: 'newsletter@site.com', name: '' }, subject: 'Novidades da semana', expected: 'promotions' },
   { from: { address: 'noreply@facebook.com', name: '' }, subject: 'Nova mensagem', expected: 'social' },
-  { from: { address: 'alerts@github.com', name: '' }, subject: 'PR merged', expected: 'social' },
+  { from: { address: 'inmail-hit-reply@linkedin.com', name: '' }, subject: 'Nova mensagem de recrutador', expected: 'social' },
+  { from: { address: 'alerts@github.com', name: '' }, subject: 'PR merged', expected: 'updates' },
+  { from: { address: 'noreply@github.com', name: '' }, subject: 'Your Copilot report is ready', expected: 'updates' },
+  { from: { address: 'copilot@github.com', name: '' }, subject: 'Copilot usage summary', expected: 'updates' },
   { from: { address: 'security@banco.com', name: '' }, subject: 'Seu código de acesso', expected: 'updates' },
   { from: { address: 'contato@noreply-shop.com', name: '' }, subject: 'Cupom de desconto', expected: 'promotions' },
+  { from: { address: 'calendar-notification@google.com', name: '' }, subject: 'Convite: Reunião de equipe', expected: 'primary' },
+  { from: { address: 'events-noreply@google.com', name: '' }, subject: 'Detalhes do seu evento', expected: 'primary' },
   { from: 'joao@email.com', subject: 'Oi', expected: 'primary' }
 ]
 

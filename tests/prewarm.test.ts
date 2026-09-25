@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import {
   getFolderPriorityWeight,
   sortFoldersForPrewarm,
+  mergeFolderMessages,
   FolderPrewarmer
 } from '../src/services/prewarm'
 import type { EmailFolder, EmailMessage } from '../src/services/types'
@@ -93,5 +94,18 @@ describe('Folder pre-warming service', () => {
     await new Promise((r) => setTimeout(r, 80))
 
     expect(prewarmer.isActive()).toBe(false)
+  })
+
+  it('adds a moved message to the destination cache instantly without duplicates', () => {
+    const existing = [
+      { id: '1', folder: 'Archive', subject: 'First' },
+      { id: '2', folder: 'Archive', subject: 'Second' }
+    ] as any
+    const moved = { id: '3', folder: 'Archive', subject: 'Moved' } as any
+    const merged = mergeFolderMessages(existing, [moved])
+    expect(merged.map((m: any) => m.id)).toEqual(['3', '1', '2'])
+
+    const duplicate = mergeFolderMessages(merged, [moved])
+    expect(duplicate.map((m: any) => m.id)).toEqual(['3', '1', '2'])
   })
 })

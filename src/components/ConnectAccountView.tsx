@@ -460,7 +460,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
               value={email}
               onFocus={() => setShowAutofill(true)}
               onChange={(e) => handleEmailChange(e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-hidden focus:border-accent"
+              className="w-full px-4 py-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted outline-none focus:outline-none focus:border-accent"
             />
 
             {/* Autocomplete Dropdown */}
@@ -539,7 +539,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
                 }
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-4 pr-11 py-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-hidden focus:border-accent font-mono"
+                className="w-full pl-4 pr-11 py-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted outline-none focus:outline-none focus:border-accent font-mono"
               />
               <button
                 type="button"
@@ -561,7 +561,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
               placeholder="Ex: Trabalho, Pessoal"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-hidden focus:border-accent"
+              className="w-full px-4 py-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted outline-none focus:outline-none focus:border-accent"
             />
           </div>
 

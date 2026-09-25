@@ -28,7 +28,9 @@ import { useExtensionLocale, getCategoryInfo, formatListDate, formatFolderName }
 import { isWithinUnreadWindow, UNREAD_WINDOW_MS } from '../services/unread-today'
 import { classifyEmailCategory, countByCategory, type EmailCategory } from '../services/email-categories'
 import { EMAIL_PAGE_SIZE, getPageWindow } from '../services/paging'
-import { isSpamFolder, isStarredFolder, getMoveTargets } from '../services/folders'
+import { isArchiveFolder, isDraftMessage, isSpamFolder, isStarredFolder, getMoveTargets } from '../services/folders'
+import { formatSentRecipients, shouldShowRecipients } from '../services/recipients'
+import { isKnownDraftMessage } from '../services/draft'
 import { starredToneClass } from '../services/starred-tone'
 
 interface EmailListProps {
@@ -41,12 +43,15 @@ interface EmailListProps {
   onSearchChange: (q: string) => void
   onRefresh: () => void
   onSelectEmail: (msg: EmailMessage) => void
+  onPrefetchEmail?: (msg: EmailMessage) => void
   onToggleStarred: (id: string, currentStarred: boolean) => void
   onMarkRead: (id: string) => void
   onMarkUnread: (id: string) => void
   onDelete: (id: string) => void
   onBatchDelete: (ids: string[]) => void
   onBatchMarkRead: (ids: string[]) => void
+  onRestore?: (id: string) => void
+  onBatchRestore?: (ids: string[]) => void
   onOpenAttachment?: (msg: EmailMessage, attachment: EmailAttachment) => Promise<any> | void
   folders?: EmailFolder[]
   onReply?: (msg: EmailMessage) => void
@@ -73,12 +78,15 @@ export const EmailList: React.FC<EmailListProps> = ({
   onSearchChange,
   onRefresh,
   onSelectEmail,
+  onPrefetchEmail,
   onToggleStarred,
   onMarkRead,
   onMarkUnread,
   onDelete,
   onBatchDelete,
   onBatchMarkRead,
+  onRestore,
+  onBatchRestore,
   onOpenAttachment,
   folders = [],
   onReply,
@@ -99,6 +107,7 @@ export const EmailList: React.FC<EmailListProps> = ({
   const [activeCategory, setActiveCategory] = useState<'primary' | 'promotions' | 'social' | 'updates'>('primary')
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; msg: EmailMessage } | null>(null)
   const [moveMenu, setMoveMenu] = useState<{ x: number; y: number; msg: EmailMessage } | null>(null)
+  const [manualRefresh, setManualRefresh] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const { locale, t } = useExtensionLocale()
   const activeFolderRole = folders.find(
@@ -106,6 +115,7 @@ export const EmailList: React.FC<EmailListProps> = ({
   )?.role
   const showingSpam = isSpamFolder(activeFolder, activeFolderRole)
   const showingStarred = isStarredFolder(activeFolder, activeFolderRole)
+  const showingArchive = isArchiveFolder(activeFolder, activeFolderRole)
   const moveTargets = getMoveTargets(folders, activeFolder)
 
   // Reset category and unread filter when folder changes
@@ -113,6 +123,11 @@ export const EmailList: React.FC<EmailListProps> = ({
     setActiveCategory('primary')
     setUnreadOnly(false)
   }, [activeFolder])
+
+  // The refresh icon spins only for a manual click; background loads stay static.
+  useEffect(() => {
+    if (!loading && !loadingMore) setManualRefresh(false)
+  }, [loading, loadingMore, manualRefresh])
 
   const goToPage = useCallback((next: number) => {
     onPageChange?.(Math.max(0, next))
@@ -210,12 +225,15 @@ export const EmailList: React.FC<EmailListProps> = ({
 
           <button
             type="button"
-            onClick={onRefresh}
+            onClick={() => {
+              setManualRefresh(true)
+              onRefresh()
+            }}
             disabled={loading || loadingMore}
             className="p-1.5 rounded-lg hover:bg-input text-text-muted hover:text-text active:scale-90 active:translate-y-0.5 active:bg-input/80 transition-all duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
             title={t('list.refresh')}
           >
-            <ArrowPathIcon className={`w-4 h-4 ${(loading || loadingMore) ? 'animate-spin text-accent' : ''}`} />
+            <ArrowPathIcon className={`w-4 h-4 ${manualRefresh ? 'animate-spin text-accent' : ''}`} />
           </button>
 
           {selectedIds.size > 0 ? (
@@ -243,6 +261,19 @@ export const EmailList: React.FC<EmailListProps> = ({
               >
                 <TrashIcon className="w-4 h-4" />
               </button>
+              {showingArchive && onBatchRestore && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onBatchRestore(Array.from(selectedIds))
+                    setSelectedIds(new Set())
+                  }}
+                  className="p-1.5 rounded-lg hover:bg-input text-text-muted hover:text-text"
+                  title={t('list.restore')}
+                >
+                  <ArrowUturnLeftIcon className="w-4 h-4" />
+                </button>
+              )}
             </div>
           ) : (
             <div className="flex items-center gap-2 text-xs">
@@ -382,11 +413,13 @@ export const EmailList: React.FC<EmailListProps> = ({
           pageMessages.map((msg) => {
             const isSelected = selectedEmailId === msg.id
             const isChecked = selectedIds.has(msg.id)
+            const showRecipients = shouldShowRecipients(activeFolder, activeFolderRole, msg, folders)
 
             return (
               <div
                 key={msg.id}
                 onClick={() => onSelectEmail(msg)}
+                onMouseEnter={() => onPrefetchEmail?.(msg)}
                 onContextMenu={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
@@ -427,13 +460,29 @@ export const EmailList: React.FC<EmailListProps> = ({
                   </button>
                 </div>
 
-                {/* Sender (responsive width for windowed mode) */}
+                {/* Sender or recipients (Gmail outgoing views show Para: without avatar) */}
+                {showRecipients ? (
+                  <div
+                    className="w-28 sm:w-40 md:w-48 shrink-0 truncate"
+                    title={(msg.to || []).map((r) => (r.name ? `${r.name} <${r.address}>` : r.address)).join(', ')}
+                  >
+                    <span className="truncate text-text-muted font-normal">
+                      {t('list.sentTo')} {formatSentRecipients(msg.to) || msg.from.name || msg.from.address}
+                    </span>
+                  </div>
+                ) : (
                 <div className="w-28 sm:w-40 md:w-48 shrink-0 flex items-center gap-2 truncate">
                   <EmailAvatar name={msg.from.name} address={msg.from.address} size="sm" />
+                  {(isDraftMessage(msg, folders) || isKnownDraftMessage(msg.accountId || '', msg.messageId)) && (
+                    <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-error">
+                      {t('list.draftBadge')}
+                    </span>
+                  )}
                   <span className={`truncate ${msg.read ? 'text-text-muted font-normal' : 'text-text font-bold'}`}>
                     {msg.from.name || msg.from.address}
                   </span>
                 </div>
+                )}
 
                 {/* Subject, snippet & Attachment Chips — RIGOROSAMENTE NA MESMA LINHA */}
                 <div className="flex-1 min-w-0 flex items-center gap-2 overflow-hidden whitespace-nowrap">
@@ -669,7 +718,7 @@ export const EmailList: React.FC<EmailListProps> = ({
           onClose={() => setMoveMenu(null)}
           items={moveTargets.map((folder) => ({
             id: `move-${folder.path}`,
-            label: `${t('list.moveTitle')} ${formatFolderName(folder.name, folder.role, locale)}`,
+            label: formatFolderName(folder.name, folder.role, locale),
             onClick: () => onMove(moveMenu.msg.id, folder.path)
           }))}
         />

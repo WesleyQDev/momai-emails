@@ -156,6 +156,7 @@
   "app_icon": "app.png",
   "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\"><rect x=\"2.5\" y=\"5.5\" width=\"19\" height=\"14.5\" rx=\"2.8\" fill=\"#ffffff\" fill-opacity=\"0.18\" stroke=\"#ffffff\" stroke-width=\"1.4\"/><path d=\"M2.8 6.8C2.8 5.9 3.5 5.2 4.4 5.2H19.6C20.5 5.2 21.2 5.9 21.2 6.8L12.7 13.8C12.3 14.1 11.7 14.1 11.3 13.8L2.8 6.8Z\" fill=\"#ffffff\" fill-opacity=\"0.25\"/><path d=\"M4.2 6L11.5 12.8C11.8 13 12.2 13 12.5 12.8L19.8 6\" stroke=\"#ffffff\" stroke-width=\"1.2\" stroke-linecap=\"round\"/><path d=\"M3 19.5L10 13.5\" stroke=\"#ffffff\" stroke-width=\"1\" stroke-linecap=\"round\" stroke-opacity=\"0.5\"/><path d=\"M21 19.5L14 13.5\" stroke=\"#ffffff\" stroke-width=\"1\" stroke-linecap=\"round\" stroke-opacity=\"0.5\"/><circle cx=\"12\" cy=\"14\" r=\"2.2\" fill=\"#38BDF8\"/><circle cx=\"12\" cy=\"14\" r=\"0.9\" fill=\"#ffffff\"/></svg>",
   "sidebar_icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\"><defs><linearGradient id=\"emailBodyGrad\" x1=\"0%\" y1=\"0%\" x2=\"0%\" y2=\"100%\"><stop offset=\"0%\" stop-color=\"#3B82F6\"/><stop offset=\"100%\" stop-color=\"#1D4ED8\"/></linearGradient><linearGradient id=\"emailFlapGrad\" x1=\"0%\" y1=\"0%\" x2=\"0%\" y2=\"100%\"><stop offset=\"0%\" stop-color=\"#60A5FA\"/><stop offset=\"80%\" stop-color=\"#2563EB\"/><stop offset=\"100%\" stop-color=\"#1D4ED8\"/></linearGradient><linearGradient id=\"emailSealGrad\" x1=\"0%\" y1=\"0%\" x2=\"100%\" y2=\"100%\"><stop offset=\"0%\" stop-color=\"#38BDF8\"/><stop offset=\"100%\" stop-color=\"#6366F1\"/></linearGradient></defs><ellipse cx=\"12\" cy=\"21.5\" rx=\"8.5\" ry=\"1.5\" fill=\"#000000\" opacity=\"0.4\"/><rect x=\"2.5\" y=\"5.5\" width=\"19\" height=\"14.5\" rx=\"2.8\" fill=\"url(#emailBodyGrad)\" stroke=\"#1D4ED8\" stroke-width=\"0.6\"/><path d=\"M3 19.5L10 13.5\" stroke=\"#1E40AF\" stroke-width=\"0.9\" opacity=\"0.8\"/><path d=\"M21 19.5L14 13.5\" stroke=\"#1E40AF\" stroke-width=\"0.9\" opacity=\"0.8\"/><path d=\"M2.8 6.8C2.8 5.9 3.5 5.2 4.4 5.2H19.6C20.5 5.2 21.2 5.9 21.2 6.8L12.7 13.8C12.3 14.1 11.7 14.1 11.3 13.8L2.8 6.8Z\" fill=\"url(#emailFlapGrad)\"/><path d=\"M4.2 6L11.5 12.8C11.8 13 12.2 13 12.5 12.8L19.8 6\" stroke=\"#93C5FD\" stroke-width=\"0.6\" stroke-linecap=\"round\" opacity=\"0.85\"/><circle cx=\"12\" cy=\"14\" r=\"2.4\" fill=\"url(#emailSealGrad)\"/><circle cx=\"12\" cy=\"14\" r=\"1.1\" fill=\"#FFFFFF\"/></svg>",
+  "sidebar_icon_essential": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"2.5\" y=\"5\" width=\"19\" height=\"14\" rx=\"2.5\"/><path d=\"M2.8 6.5L12 13.5L21.2 6.5\"/><path d=\"M3 18.5L9.5 13M21 18.5L14.5 13\"/><circle cx=\"12\" cy=\"13.5\" r=\"1\" fill=\"currentColor\"/></svg>",
   "readme": {
     "pt-BR": "README.md",
     "en-US": "README.en-US.md",
@@ -170,7 +171,7 @@
   "permissions": ["network"],
   "sdkVersion": 1,
   "momai_compat": ">=1.13.0",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "ui": {
     "page": "dist/page.js",
     "pageType": "momai-emails-page",
@@ -274,151 +275,191 @@
       }
     },
     {
-      "name": "list_emails",
-      "label": "Listar E-mails",
-      "description": "Lista as mensagens mais recentes da caixa de entrada ou de outra pasta IMAP informada.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "accountId": {
-            "type": "string",
-            "description": "ID ou e-mail da conta (opcional, usa a conta ativa se omitido)"
-          },
-          "folder": {
-            "type": "string",
-            "description": "Nome da pasta IMAP (padrão: INBOX)"
-          },
-          "limit": {
-            "type": "number",
-            "description": "Quantidade máxima de mensagens a retornar (padrão: 20)"
-          },
-          "unreadOnly": {
-            "type": "boolean",
-            "description": "Se verdadeiro, retorna somente mensagens não lidas"
-          }
+    "name": "list_emails",
+    "label": "Listar E-mails",
+    "description": "Lista as mensagens mais recentes da caixa de entrada ou de outra pasta IMAP informada.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "accountId": {
+          "type": "string",
+          "description": "ID ou e-mail da conta (opcional, usa a conta ativa se omitido)"
+        },
+        "folder": {
+          "type": "string",
+          "description": "Nome da pasta IMAP (padrão: INBOX)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Quantidade máxima de mensagens a retornar (padrão: 20)"
+        },
+        "unreadOnly": {
+          "type": "boolean",
+          "description": "Se verdadeiro, retorna somente mensagens não lidas"
+        },
+        "offset": {
+          "type": "number",
+          "description": "Deslocamento da pagina (opcional)"
         }
       }
-    },
+    }
+  },
     {
-      "name": "read_email",
-      "label": "Ler E-mail",
-      "description": "Obtém os detalhes e conteúdo de texto/HTML completo de um e-mail pelo seu UID/ID de mensagem.",
-      "parameters": {
-        "type": "object",
-        "required": [
-          "messageId"
-        ],
-        "properties": {
-          "messageId": {
-            "type": "string",
-            "description": "ID ou UID da mensagem"
-          },
-          "accountId": {
-            "type": "string",
-            "description": "ID ou e-mail da conta (opcional)"
-          },
-          "folder": {
-            "type": "string",
-            "description": "Pasta da mensagem (padrão: INBOX)"
-          }
+    "name": "read_email",
+    "label": "Ler E-mail",
+    "description": "Obtém os detalhes e conteúdo de texto/HTML completo de um e-mail pelo seu UID/ID de mensagem.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "messageId"
+      ],
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "ID ou UID da mensagem"
+        },
+        "accountId": {
+          "type": "string",
+          "description": "ID ou e-mail da conta (opcional)"
+        },
+        "folder": {
+          "type": "string",
+          "description": "Pasta da mensagem (padrão: INBOX)"
+        },
+        "id": {
+          "type": "string",
+          "description": "Alias de messageId (id da mensagem)"
+        },
+        "uid": {
+          "type": "number",
+          "description": "Alias de messageId (UID IMAP da mensagem)"
+        },
+        "markRead": {
+          "type": "boolean",
+          "description": "Se false, abre sem marcar como lida"
         }
       }
-    },
+    }
+  },
     {
-      "name": "open_attachment",
-      "label": "Abrir Anexo",
-      "description": "Baixa e abre um documento anexado ao e-mail (PDF, Word, Excel, etc.) utilizando a ferramenta/aplicativo padrão do computador.",
-      "parameters": {
-        "type": "object",
-        "required": [
-          "messageId"
-        ],
-        "properties": {
-          "messageId": {
-            "type": "string",
-            "description": "ID ou UID da mensagem"
-          },
-          "filename": {
-            "type": "string",
-            "description": "Nome do arquivo anexo a abrir"
-          },
-          "part": {
-            "type": "string",
-            "description": "Número da parte MIME do anexo (opcional)"
-          },
-          "accountId": {
-            "type": "string",
-            "description": "ID ou e-mail da conta (opcional)"
-          },
-          "folder": {
-            "type": "string",
-            "description": "Pasta da mensagem (padrão: INBOX)"
-          }
+    "name": "open_attachment",
+    "label": "Abrir Anexo",
+    "description": "Baixa e abre um documento anexado ao e-mail (PDF, Word, Excel, etc.) utilizando a ferramenta/aplicativo padrão do computador.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "messageId"
+      ],
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "ID ou UID da mensagem"
+        },
+        "filename": {
+          "type": "string",
+          "description": "Nome do arquivo anexo a abrir"
+        },
+        "part": {
+          "type": "string",
+          "description": "Número da parte MIME do anexo (opcional)"
+        },
+        "accountId": {
+          "type": "string",
+          "description": "ID ou e-mail da conta (opcional)"
+        },
+        "folder": {
+          "type": "string",
+          "description": "Pasta da mensagem (padrão: INBOX)"
+        },
+        "id": {
+          "type": "string",
+          "description": "Alias de messageId (id da mensagem)"
+        },
+        "uid": {
+          "type": "number",
+          "description": "Alias de messageId (UID IMAP)"
         }
       }
-    },
+    }
+  },
     {
-      "name": "save_attachment",
-      "label": "Salvar Anexo Como...",
-      "description": "Exibe o diálogo nativo para o usuário escolher a pasta e salvar o anexo do e-mail no computador.",
-      "parameters": {
-        "type": "object",
-        "required": [
-          "messageId"
-        ],
-        "properties": {
-          "messageId": {
-            "type": "string",
-            "description": "ID ou UID da mensagem"
-          },
-          "filename": {
-            "type": "string",
-            "description": "Nome do arquivo anexo a salvar"
-          },
-          "part": {
-            "type": "string",
-            "description": "Número da parte MIME do anexo (opcional)"
-          },
-          "accountId": {
-            "type": "string",
-            "description": "ID ou e-mail da conta (opcional)"
-          },
-          "folder": {
-            "type": "string",
-            "description": "Pasta da mensagem (padrão: INBOX)"
-          }
+    "name": "save_attachment",
+    "label": "Salvar Anexo Como...",
+    "description": "Exibe o diálogo nativo para o usuário escolher a pasta e salvar o anexo do e-mail no computador.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "messageId"
+      ],
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "ID ou UID da mensagem"
+        },
+        "filename": {
+          "type": "string",
+          "description": "Nome do arquivo anexo a salvar"
+        },
+        "part": {
+          "type": "string",
+          "description": "Número da parte MIME do anexo (opcional)"
+        },
+        "accountId": {
+          "type": "string",
+          "description": "ID ou e-mail da conta (opcional)"
+        },
+        "folder": {
+          "type": "string",
+          "description": "Pasta da mensagem (padrão: INBOX)"
+        },
+        "id": {
+          "type": "string",
+          "description": "Alias de messageId (id da mensagem)"
+        },
+        "uid": {
+          "type": "number",
+          "description": "Alias de messageId (UID IMAP)"
         }
       }
-    },
+    }
+  },
     {
-      "name": "get_attachment_preview",
-      "label": "Obter Prévia de Anexo",
-      "description": "Gera ou obtém a miniatura/prévia em imagem de um documento anexo (ex: primeira página de PDF).",
-      "parameters": {
-        "type": "object",
-        "required": [
-          "messageId"
-        ],
-        "properties": {
-          "messageId": {
-            "type": "string",
-            "description": "ID ou UID da mensagem"
-          },
-          "filename": {
-            "type": "string",
-            "description": "Nome do arquivo anexo"
-          },
-          "accountId": {
-            "type": "string",
-            "description": "ID ou e-mail da conta (opcional)"
-          },
-          "folder": {
-            "type": "string",
-            "description": "Pasta da mensagem (padrão: INBOX)"
-          }
+    "name": "get_attachment_preview",
+    "label": "Obter Prévia de Anexo",
+    "description": "Gera ou obtém a miniatura/prévia em imagem de um documento anexo (ex: primeira página de PDF).",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "messageId"
+      ],
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "ID ou UID da mensagem"
+        },
+        "filename": {
+          "type": "string",
+          "description": "Nome do arquivo anexo"
+        },
+        "accountId": {
+          "type": "string",
+          "description": "ID ou e-mail da conta (opcional)"
+        },
+        "folder": {
+          "type": "string",
+          "description": "Pasta da mensagem (padrão: INBOX)"
+        },
+        "id": {
+          "type": "string",
+          "description": "Alias de messageId (id da mensagem)"
+        },
+        "uid": {
+          "type": "number",
+          "description": "Alias de messageId (UID IMAP)"
         }
       }
-    },
+    }
+  },
     {
       "name": "search_emails",
       "label": "Pesquisar E-mails",
@@ -449,295 +490,430 @@
       }
     },
     {
-      "name": "send_email",
-      "label": "Enviar E-mail",
-      "description": "Envia um novo e-mail através do servidor SMTP configurado.",
-      "parameters": {
-        "type": "object",
-        "required": [
-          "to",
-          "subject",
-          "body"
-        ],
-        "properties": {
-          "to": {
-            "type": "string",
-            "description": "Endereço de e-mail do destinatário principal"
-          },
-          "subject": {
-            "type": "string",
-            "description": "Assunto da mensagem"
-          },
-          "body": {
-            "type": "string",
-            "description": "Conteúdo da mensagem em texto ou HTML"
-          },
-          "isHtml": {
-            "type": "boolean",
-            "description": "Se o corpo está formatado em HTML (padrão: false)"
-          },
-          "accountId": {
-            "type": "string",
-            "description": "ID da conta remetente (opcional, usa a ativa)"
-          },
-          "cc": {
-            "type": "string",
-            "description": "Destinatários em cópia (opcional)"
-          },
-          "bcc": {
-            "type": "string",
-            "description": "Destinatários em cópia oculta (opcional)"
-          }
+    "name": "send_email",
+    "label": "Enviar E-mail",
+    "description": "Envia um novo e-mail através do servidor SMTP configurado.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "to",
+        "subject",
+        "body"
+      ],
+      "properties": {
+        "to": {
+          "type": "string",
+          "description": "Endereço de e-mail do destinatário principal"
+        },
+        "subject": {
+          "type": "string",
+          "description": "Assunto da mensagem"
+        },
+        "body": {
+          "type": "string",
+          "description": "Conteúdo da mensagem em texto ou HTML"
+        },
+        "isHtml": {
+          "type": "boolean",
+          "description": "Se o corpo está formatado em HTML (padrão: false)"
+        },
+        "accountId": {
+          "type": "string",
+          "description": "ID da conta remetente (opcional, usa a ativa)"
+        },
+        "cc": {
+          "type": "string",
+          "description": "Destinatários em cópia (opcional)"
+        },
+        "bcc": {
+          "type": "string",
+          "description": "Destinatários em cópia oculta (opcional)"
+        },
+        "inReplyTo": {
+          "type": "string",
+          "description": "Message-ID da mensagem respondida (encadeamento)"
+        },
+        "references": {
+          "type": "string",
+          "description": "Cadeia de referencias da conversa"
+        },
+        "attachments": {
+          "type": "array",
+          "description": "Anexos: cada item e um objeto { filename, contentType, content | base64Data | path | cid }"
         }
       }
-    },
+    }
+  },
     {
-      "name": "reply_email",
-      "label": "Responder E-mail",
-      "description": "Envia uma resposta a um e-mail existente, preservando as referências e histórico de conversa.",
-      "parameters": {
-        "type": "object",
-        "required": [
-          "messageId",
-          "body"
-        ],
-        "properties": {
-          "messageId": {
-            "type": "string",
-            "description": "ID da mensagem que está sendo respondida"
-          },
-          "body": {
-            "type": "string",
-            "description": "Texto ou HTML da resposta"
-          },
-          "isHtml": {
-            "type": "boolean",
-            "description": "Se a resposta é HTML (padrão: false)"
-          },
-          "replyAll": {
-            "type": "boolean",
-            "description": "Se verdadeiro, responde para todos (Cc incluído)"
-          },
-          "accountId": {
-            "type": "string",
-            "description": "ID da conta (opcional)"
-          }
+    "name": "save_draft",
+    "label": "Salvar Rascunho",
+    "description": "Salva o conteúdo atual do composer na pasta Rascunhos via IMAP APPEND.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "to": {
+          "type": "string",
+          "description": "Destinatário principal (opcional para rascunho)"
+        },
+        "subject": {
+          "type": "string",
+          "description": "Assunto da mensagem"
+        },
+        "body": {
+          "type": "string",
+          "description": "Conteúdo da mensagem em texto ou HTML"
+        },
+        "isHtml": {
+          "type": "boolean",
+          "description": "Se o corpo está formatado em HTML (padrão: false)"
+        },
+        "accountId": {
+          "type": "string",
+          "description": "ID da conta remetente (opcional, usa a ativa)"
+        },
+        "cc": {
+          "type": "string",
+          "description": "Destinatários em cópia (opcional)"
+        },
+        "bcc": {
+          "type": "string",
+          "description": "Destinatários em cópia oculta (opcional)"
+        },
+        "inReplyTo": {
+          "type": "string",
+          "description": "Message-ID da mensagem respondida (encadeamento)"
+        },
+        "references": {
+          "type": "string",
+          "description": "Cadeia de referencias da conversa"
+        },
+        "attachments": {
+          "type": "array",
+          "description": "Anexos: cada item e um objeto { filename, contentType, content | base64Data | path | cid }"
+        },
+        "draftFolder": {
+          "type": "string",
+          "description": "Pasta de rascunhos de destino (opcional, resolve automaticamente)"
+        },
+        "replaceUid": {
+          "type": "number",
+          "description": "UID do rascunho anterior a remover após salvar (evita duplicar ao reabrir)"
+        },
+        "replaceFolder": {
+          "type": "string",
+          "description": "Pasta do rascunho anterior a remover"
         }
       }
-    },
+    }
+  },
     {
-      "name": "forward_email",
-      "label": "Encaminhar E-mail",
-      "description": "Encaminha uma mensagem existente para um novo destinatário.",
-      "parameters": {
-        "type": "object",
-        "required": [
-          "messageId",
-          "to"
-        ],
-        "properties": {
-          "messageId": {
-            "type": "string",
-            "description": "ID da mensagem original"
-          },
-          "to": {
-            "type": "string",
-            "description": "E-mail de destino do encaminhamento"
-          },
-          "comment": {
-            "type": "string",
-            "description": "Comentário ou anotação adicional no início da mensagem"
-          },
-          "accountId": {
-            "type": "string",
-            "description": "ID da conta (opcional)"
-          }
+    "name": "reply_email",
+    "label": "Responder E-mail",
+    "description": "Envia uma resposta a um e-mail existente, preservando as referências e histórico de conversa.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "messageId",
+        "body"
+      ],
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "ID da mensagem que está sendo respondida"
+        },
+        "body": {
+          "type": "string",
+          "description": "Texto ou HTML da resposta"
+        },
+        "isHtml": {
+          "type": "boolean",
+          "description": "Se a resposta é HTML (padrão: false)"
+        },
+        "replyAll": {
+          "type": "boolean",
+          "description": "Se verdadeiro, responde para todos (Cc incluído)"
+        },
+        "accountId": {
+          "type": "string",
+          "description": "ID da conta (opcional)"
+        },
+        "folder": {
+          "type": "string",
+          "description": "Pasta da mensagem original (padrao INBOX)"
         }
       }
-    },
+    }
+  },
     {
-      "name": "mark_as_read",
-      "label": "Marcar como Lido",
-      "description": "Define a flag de lido (\\Seen) em um e-mail no servidor IMAP.",
-      "parameters": {
-        "type": "object",
-        "required": [
-          "messageId"
-        ],
-        "properties": {
-          "messageId": {
-            "type": "string",
-            "description": "ID ou UID da mensagem"
-          },
-          "folder": {
-            "type": "string",
-            "description": "Pasta da mensagem (padrão: INBOX)"
-          },
-          "accountId": {
-            "type": "string",
-            "description": "ID da conta (opcional)"
-          }
+    "name": "forward_email",
+    "label": "Encaminhar E-mail",
+    "description": "Encaminha uma mensagem existente para um novo destinatário.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "messageId",
+        "to"
+      ],
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "ID da mensagem original"
+        },
+        "to": {
+          "type": "string",
+          "description": "E-mail de destino do encaminhamento"
+        },
+        "comment": {
+          "type": "string",
+          "description": "Comentário ou anotação adicional no início da mensagem"
+        },
+        "accountId": {
+          "type": "string",
+          "description": "ID da conta (opcional)"
+        },
+        "folder": {
+          "type": "string",
+          "description": "Pasta da mensagem original (padrao INBOX)"
         }
       }
-    },
+    }
+  },
     {
-      "name": "mark_as_unread",
-      "label": "Marcar como Não Lido",
-      "description": "Remove a flag de lido de um e-mail no servidor IMAP.",
-      "parameters": {
-        "type": "object",
-        "required": [
-          "messageId"
-        ],
-        "properties": {
-          "messageId": {
-            "type": "string",
-            "description": "ID ou UID da mensagem"
-          },
-          "folder": {
-            "type": "string",
-            "description": "Pasta da mensagem (padrão: INBOX)"
-          },
-          "accountId": {
-            "type": "string",
-            "description": "ID da conta (opcional)"
-          }
+    "name": "mark_as_read",
+    "label": "Marcar como Lido",
+    "description": "Define a flag de lido (\\Seen) em um e-mail no servidor IMAP.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "messageId"
+      ],
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "ID ou UID da mensagem"
+        },
+        "folder": {
+          "type": "string",
+          "description": "Pasta da mensagem (padrão: INBOX)"
+        },
+        "accountId": {
+          "type": "string",
+          "description": "ID da conta (opcional)"
+        },
+        "uid": {
+          "type": "number",
+          "description": "Alias de messageId (UID IMAP)"
         }
       }
-    },
+    }
+  },
     {
-      "name": "delete_email",
-      "label": "Excluir E-mail",
-      "description": "Move o e-mail para a lixeira ou aplica flag de exclusão no servidor IMAP.",
-      "parameters": {
-        "type": "object",
-        "required": [
-          "messageId"
-        ],
-        "properties": {
-          "messageId": {
-            "type": "string",
-            "description": "ID ou UID da mensagem"
-          },
-          "folder": {
-            "type": "string",
-            "description": "Pasta de origem (padrão: INBOX)"
-          },
-          "accountId": {
-            "type": "string",
-            "description": "ID da conta (opcional)"
-          }
+    "name": "mark_as_unread",
+    "label": "Marcar como Não Lido",
+    "description": "Remove a flag de lido de um e-mail no servidor IMAP.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "messageId"
+      ],
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "ID ou UID da mensagem"
+        },
+        "folder": {
+          "type": "string",
+          "description": "Pasta da mensagem (padrão: INBOX)"
+        },
+        "accountId": {
+          "type": "string",
+          "description": "ID da conta (opcional)"
+        },
+        "uid": {
+          "type": "number",
+          "description": "Alias de messageId (UID IMAP)"
         }
       }
-    },
+    }
+  },
     {
-      "name": "move_email",
-      "label": "Mover E-mail",
-      "description": "Move uma mensagem entre pastas no servidor IMAP.",
-      "parameters": {
-        "type": "object",
-        "required": [
-          "messageId",
-          "toFolder"
-        ],
-        "properties": {
-          "messageId": {
-            "type": "string",
-            "description": "ID ou UID da mensagem"
-          },
-          "fromFolder": {
-            "type": "string",
-            "description": "Pasta de origem (padrão: INBOX)"
-          },
-          "toFolder": {
-            "type": "string",
-            "description": "Pasta de destino"
-          },
-          "accountId": {
-            "type": "string",
-            "description": "ID da conta (opcional)"
-          }
+    "name": "delete_email",
+    "label": "Excluir E-mail",
+    "description": "Move o e-mail para a lixeira ou aplica flag de exclusão no servidor IMAP.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "messageId"
+      ],
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "ID ou UID da mensagem"
+        },
+        "folder": {
+          "type": "string",
+          "description": "Pasta de origem (padrão: INBOX)"
+        },
+        "accountId": {
+          "type": "string",
+          "description": "ID da conta (opcional)"
+        },
+        "uid": {
+          "type": "number",
+          "description": "Alias de messageId (UID IMAP)"
         }
       }
-    },
+    }
+  },
     {
-      "name": "add_account",
-      "label": "Adicionar conta",
-      "description": "Cadastra uma nova conta SMTP/IMAP.",
-      "parameters": {
-        "type": "object",
-        "required": [
-          "provider",
-          "email",
-          "password"
-        ],
-        "properties": {
-          "provider": {
-            "type": "string",
-            "description": "Provedor (ex: gmail, outlook, custom)"
-          },
-          "email": {
-            "type": "string",
-            "description": "Endereço de e-mail"
-          },
-          "password": {
-            "type": "string",
-            "description": "Senha ou app password"
-          }
+    "name": "move_email",
+    "label": "Mover E-mail",
+    "description": "Move uma mensagem entre pastas no servidor IMAP.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "messageId",
+        "toFolder"
+      ],
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "ID ou UID da mensagem"
+        },
+        "fromFolder": {
+          "type": "string",
+          "description": "Pasta de origem (padrão: INBOX)"
+        },
+        "toFolder": {
+          "type": "string",
+          "description": "Pasta de destino"
+        },
+        "accountId": {
+          "type": "string",
+          "description": "ID da conta (opcional)"
+        },
+        "uid": {
+          "type": "number",
+          "description": "Alias de messageId (UID IMAP)"
         }
       }
-    },
+    }
+  },
     {
-      "name": "remove_account",
-      "label": "Remover conta",
-      "description": "Remove uma conta de e-mail cadastrada.",
-      "parameters": {
-        "type": "object",
-        "required": [
-          "accountId"
-        ],
-        "properties": {
-          "accountId": {
-            "type": "string",
-            "description": "ID ou e-mail da conta"
-          }
+    "name": "add_account",
+    "label": "Adicionar conta",
+    "description": "Cadastra uma nova conta SMTP/IMAP.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "provider",
+        "email",
+        "password"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "description": "Provedor (ex: gmail, outlook, custom)"
+        },
+        "email": {
+          "type": "string",
+          "description": "Endereço de e-mail"
+        },
+        "password": {
+          "type": "string",
+          "description": "Senha ou app password"
+        },
+        "id": {
+          "type": "string",
+          "description": "Id de uma conta existente (atualiza em vez de criar)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Nome de exibicao da conta"
+        },
+        "imap": {
+          "type": "object",
+          "description": "Configuracao IMAP customizada { host, port, secure, user }"
+        },
+        "smtp": {
+          "type": "object",
+          "description": "Configuracao SMTP customizada { host, port, secure, requireTLS, user }"
         }
       }
-    },
+    }
+  },
     {
-      "name": "set_active_account",
-      "label": "Definir conta ativa",
-      "description": "Define qual conta é usada por padrão nas operações.",
-      "parameters": {
-        "type": "object",
-        "required": [
-          "accountId"
-        ],
-        "properties": {
-          "accountId": {
-            "type": "string",
-            "description": "ID ou e-mail da conta"
-          }
+    "name": "remove_account",
+    "label": "Remover conta",
+    "description": "Remove uma conta de e-mail cadastrada.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "accountId"
+      ],
+      "properties": {
+        "accountId": {
+          "type": "string",
+          "description": "ID ou e-mail da conta"
+        },
+        "id": {
+          "type": "string",
+          "description": "Alias de accountId"
         }
       }
-    },
+    }
+  },
     {
-      "name": "test_account",
-      "label": "Testar conta",
-      "description": "Testa a conexão SMTP/IMAP de uma conta.",
-      "parameters": {
-        "type": "object",
-        "required": [
-          "accountId"
-        ],
-        "properties": {
-          "accountId": {
-            "type": "string",
-            "description": "ID ou e-mail da conta"
-          }
+    "name": "set_active_account",
+    "label": "Definir conta ativa",
+    "description": "Define qual conta é usada por padrão nas operações.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "accountId"
+      ],
+      "properties": {
+        "accountId": {
+          "type": "string",
+          "description": "ID ou e-mail da conta"
+        },
+        "id": {
+          "type": "string",
+          "description": "Alias de accountId"
         }
       }
-    },
+    }
+  },
+    {
+    "name": "test_account",
+    "label": "Testar conta",
+    "description": "Testa a conexão SMTP/IMAP de uma conta.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "email",
+        "password"
+      ],
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "E-mail a testar"
+        },
+        "password": {
+          "type": "string",
+          "description": "Senha ou app-password do e-mail"
+        },
+        "imap": {
+          "type": "object",
+          "description": "Configuracao IMAP a testar { host, port, secure, user }"
+        },
+        "smtp": {
+          "type": "object",
+          "description": "Configuracao SMTP a testar { host, port, secure, requireTLS, user }"
+        }
+      }
+    }
+  },
     {
       "name": "list_folders",
       "label": "Listar pastas",
@@ -753,26 +929,39 @@
       }
     },
     {
-      "name": "toggle_starred",
-      "label": "Favoritar e-mail",
-      "description": "Marca ou desmarca um e-mail como favorito.",
-      "parameters": {
-        "type": "object",
-        "required": [
-          "messageId"
-        ],
-        "properties": {
-          "messageId": {
-            "type": "string",
-            "description": "ID ou UID da mensagem"
-          },
-          "accountId": {
-            "type": "string",
-            "description": "ID da conta (opcional)"
-          }
+    "name": "toggle_starred",
+    "label": "Favoritar e-mail",
+    "description": "Marca ou desmarca um e-mail como favorito.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "messageId",
+        "starred"
+      ],
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "ID ou UID da mensagem"
+        },
+        "accountId": {
+          "type": "string",
+          "description": "ID da conta (opcional)"
+        },
+        "uid": {
+          "type": "number",
+          "description": "Alias de messageId (UID IMAP)"
+        },
+        "starred": {
+          "type": "boolean",
+          "description": "true favorita a mensagem, false desfavorita"
+        },
+        "folder": {
+          "type": "string",
+          "description": "Pasta da mensagem"
         }
       }
     }
+  }
   ],
   "routes": [
     {

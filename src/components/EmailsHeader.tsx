@@ -212,7 +212,7 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
               placeholder={t('header.search.placeholder')}
               value={searchQuery}
               onChange={(e) => onSearchChange(e.target.value)}
-              className="w-full bg-transparent border-0 p-0 text-xs text-text placeholder:text-text-muted focus:outline-hidden"
+              className="w-full bg-transparent border-0 p-0 text-xs text-text placeholder:text-text-muted outline-none focus:outline-none"
             />
             {searchQuery && (
               <button
@@ -243,7 +243,7 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
         <button
           type="button"
           onClick={() => setDropdownOpen((prev) => !prev)}
-          className="relative rounded-full focus:outline-hidden group cursor-pointer transition-transform active:scale-95 block"
+          className="relative rounded-full outline-none focus:outline-none group cursor-pointer transition-transform active:scale-95 block"
           title={`${activeAccount?.name || activeAccount?.email || t('header.profile.alt')} (${t('header.profile.switch')})`}
         >
           {activeAvatar ? (

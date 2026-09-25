@@ -36,6 +36,7 @@ export interface EmailMessage {
   timestamp: number
   read: boolean
   starred: boolean
+  draft?: boolean
   snippet: string
   text?: string
   html?: string
@@ -103,4 +104,14 @@ export interface SendEmailPayload {
   inReplyTo?: string
   references?: string
   attachments?: OutgoingAttachment[]
+  draftId?: string
+  draftFolder?: string
+  draftUid?: number
+}
+
+export interface SaveDraftPayload extends Partial<SendEmailPayload> {
+  accountId?: string
+  body: string
+  replaceUid?: number
+  replaceFolder?: string
 }

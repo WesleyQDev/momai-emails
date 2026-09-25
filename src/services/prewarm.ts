@@ -52,6 +52,27 @@ export function sortFoldersForPrewarm(folders: EmailFolder[]): EmailFolder[] {
     .sort((a, b) => getFolderPriorityWeight(a) - getFolderPriorityWeight(b))
 }
 
+/**
+ * Merges a freshly fetched folder head with the messages already cached,
+ * newest first. Background fetches return short heads that overlap the cache,
+ * so replacing would shrink the instant list shown on the next open.
+ */
+export function mergeFolderMessages(
+  existing: EmailMessage[],
+  incoming: EmailMessage[],
+  limit = 150
+): EmailMessage[] {
+  const seen = new Set<string>()
+  const merged: EmailMessage[] = []
+  for (const msg of [...incoming, ...existing]) {
+    if (seen.has(msg.id)) continue
+    seen.add(msg.id)
+    merged.push(msg)
+    if (merged.length >= limit) break
+  }
+  return merged
+}
+
 export interface PrewarmTaskOptions {
   accountId: string
   folders: EmailFolder[]

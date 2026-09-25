@@ -68,6 +68,17 @@ export const EmailSettings: React.FC<EmailSettingsProps> = ({
 }) => {
   const { t } = useExtensionLocale()
 
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onBack()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onBack])
+
   return (
     <div className="flex-1 min-h-0 flex flex-col border-l border-border overflow-hidden">
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border shrink-0">

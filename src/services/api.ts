@@ -45,6 +45,7 @@ export const emailApi = {
 
   // Actions
   sendEmail: (payload: any) => executeCommand<{ ok: boolean; messageId?: string; error?: string }>('send_email', payload, 30000),
+  saveDraft: (payload: any) => executeCommand<{ ok: boolean; draftsFolder?: string; error?: string }>('save_draft', payload, 30000),
   replyEmail: (payload: any) => executeCommand<{ ok: boolean; messageId?: string; error?: string }>('reply_email', payload, 30000),
   forwardEmail: (payload: any) => executeCommand<{ ok: boolean; messageId?: string; error?: string }>('forward_email', payload, 30000),
   markAsRead: (messageId: string, folder = 'INBOX', accountId?: string) =>

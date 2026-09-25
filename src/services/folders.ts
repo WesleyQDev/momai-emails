@@ -20,9 +20,63 @@ export function isInboxFolder(folderPath?: string | null, role?: string | null):
   return normalizeFolderPath(folderPath) === 'inbox'
 }
 
+export function isTrashFolder(folderPath?: string | null, role?: string | null): boolean {
+  if ((role || '').toLowerCase() === 'trash') return true
+  const normalized = normalizeFolderPath(folderPath)
+  if (!normalized) return false
+  return normalized.includes('trash') || normalized.includes('lixeir') || normalized.includes('deleted')
+}
+
+export function isArchiveFolder(folderPath?: string | null, role?: string | null): boolean {
+  const cleanRole = (role || '').toLowerCase()
+  if (cleanRole === 'archive') return true
+  const normalized = normalizeFolderPath(folderPath)
+  if (!normalized) return false
+  return normalized.includes('archiv') || normalized.includes('arquivo')
+}
+
+export function isDraftsFolder(folderPath?: string | null, role?: string | null): boolean {
+  if ((role || '').toLowerCase() === 'drafts') return true
+  const normalized = normalizeFolderPath(folderPath)
+  if (!normalized) return false
+  return normalized.includes('draft') || normalized.includes('rascunh')
+}
+
+export function isSentFolder(folderPath?: string | null, role?: string | null): boolean {
+  if ((role || '').toLowerCase() === 'sent') return true
+  const normalized = normalizeFolderPath(folderPath)
+  if (!normalized) return false
+  return normalized.includes('sent') || normalized.includes('enviad')
+}
+
 export function resolveInboxPath(folders: EmailFolder[], fallback = 'INBOX'): string {
   const inbox = folders.find((folder) => isInboxFolder(folder.path, folder.role))
   return inbox ? inbox.path : fallback
+}
+
+export function resolveDraftsPath(folders: EmailFolder[], fallback = 'Drafts'): string {
+  const drafts = folders.find((folder) => isDraftsFolder(folder.path, folder.role))
+  return drafts ? drafts.path : fallback
+}
+
+/**
+ * Whether a message is a draft: either it carries the server \Draft flag
+ * (drafts keep it even after moving to trash) or it sits in a drafts folder.
+ */
+export function isDraftMessage(
+  msg: { folder?: string | null; draft?: boolean | null } | null | undefined,
+  folders: EmailFolder[] = []
+): boolean {
+  if (!msg) return false
+  if (msg.draft === true) return true
+  const folderPath = msg.folder || ''
+  const match = folders.find((f) => f.path.toLowerCase() === folderPath.toLowerCase())
+  return isDraftsFolder(folderPath, match?.role)
+}
+
+export function resolveArchivePath(folders: EmailFolder[], fallback = 'Archive'): string {
+  const archive = folders.find((folder) => isArchiveFolder(folder.path, folder.role))
+  return archive ? archive.path : fallback
 }
 
 export function getMoveTargets(folders: EmailFolder[], currentPath: string): EmailFolder[] {
@@ -127,8 +181,10 @@ export function mergeWithDefaultFolders(serverFolders: EmailFolder[]): EmailFold
   }
   const deduped = dedupeFoldersByRole(serverFolders)
   const existingRoles = new Set(deduped.map((f) => f.role).filter(Boolean))
+  const hasRealArchive = deduped.some((f) => isArchiveFolder(f.path, f.role))
   const merged = [...deduped]
   for (const def of DEFAULT_STATIC_FOLDERS) {
+    if (def.role === 'archive' && hasRealArchive) continue
     if (def.role && !existingRoles.has(def.role)) {
       merged.push({ ...def })
       existingRoles.add(def.role)

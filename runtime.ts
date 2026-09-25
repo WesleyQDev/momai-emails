@@ -69,6 +69,7 @@ const {
   fetchFullMessage,
   searchMessages,
   sendEmail,
+  saveDraft,
   setMessageReadStatus,
   setMessageStarredStatus,
   deleteMessage,
@@ -204,7 +205,13 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
 
     // ── Account Management ──
     case 'list_accounts': {
-      const accounts = accountManager.getPublicAccounts()
+      let accounts = accountManager.getPublicAccounts()
+      if (accounts.length === 0) {
+        try {
+          await accountManager.loadAccounts()
+        } catch {}
+        accounts = accountManager.getPublicAccounts()
+      }
       return {
         ok: true,
         accounts,
@@ -464,6 +471,38 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
             messageId: result.messageId,
             instruction: `E-mail enviado com sucesso para ${args.to}.`,
             directResponse: `E-mail enviado com sucesso para ${args.to} com o assunto "${args.subject}".`
+          }
+        }
+        return { ok: false, error: result.error }
+      } catch (err: any) {
+        return { ok: false, error: err?.message || String(err) }
+      }
+    }
+
+    case 'save_draft': {
+      const account = accountManager.getAccount(args.accountId)
+      if (!account) return { ok: false, error: 'Nenhuma conta de e-mail configurada para rascunho.' }
+      try {
+        const result = await saveDraft(account, {
+          to: args.to,
+          subject: args.subject,
+          body: args.body,
+          isHtml: Boolean(args.isHtml),
+          cc: args.cc,
+          bcc: args.bcc,
+          inReplyTo: args.inReplyTo,
+          references: args.references,
+          attachments: args.attachments,
+          draftFolder: args.draftFolder,
+          replaceUid: args.replaceUid,
+          replaceFolder: args.replaceFolder
+        })
+        if (result.ok) {
+          return {
+            ok: true,
+            draftsFolder: result.draftsFolder,
+            instruction: `Rascunho salvo na pasta ${result.draftsFolder}.`,
+            directResponse: `Rascunho salvo em ${result.draftsFolder}.`
           }
         }
         return { ok: false, error: result.error }

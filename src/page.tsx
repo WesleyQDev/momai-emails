@@ -13,14 +13,25 @@ import { EMAIL_PAGE_SIZE } from './services/paging'
 import {
   dedupeFoldersByRole,
   getStarredMessages,
+  isArchiveFolder,
+  isDraftsFolder,
+  isTrashFolder,
   isVirtualStarredFolder,
+  resolveDraftsPath,
   resolveInboxPath,
   isInboxFolder,
   mergeWithDefaultFolders,
   getDefaultFolders,
   DEFAULT_STATIC_FOLDERS
 } from './services/folders'
-import { FolderPrewarmer } from './services/prewarm'
+import { buildPendingDraft, removePendingDrafts, rememberDraftMessage, forgetDraftMessage } from './services/draft'
+import {
+  archiveMessageKey,
+  setArchiveOrigin,
+  getArchiveOrigin,
+  clearArchiveOrigin
+} from './services/archive-origins'
+import { FolderPrewarmer, mergeFolderMessages } from './services/prewarm'
 import type { PublicEmailAccount, EmailFolder, EmailMessage, EmailAttachment, SendEmailPayload } from './services/types'
 import { useExtensionLocale } from './services/i18n'
 import { EmailsHeader } from './components/EmailsHeader'
@@ -31,6 +42,7 @@ import { EmailReader } from './components/EmailReader'
 import { EmailComposer } from './components/EmailComposer'
 import { EmailSettings } from './components/EmailSettings'
 import { PROVIDERS, detectProviderFromEmail } from './services/providers'
+import { shouldAcceptAccountsResponse } from './services/accounts-sync'
 
 export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => {
   const [, startTransition] = useTransition()
@@ -39,6 +51,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
   // In-memory SWR caches & request tracking
   const folderCacheRef = useRef<Map<string, EmailMessage[]>>(new Map())
   const emailBodyCacheRef = useRef<Map<string, EmailMessage>>(new Map())
+  const prefetchInflightRef = useRef<Set<string>>(new Set())
   const notifiedEmailsRef = useRef<Set<string>>(new Set())
   const burstReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const currentReqSeqRef = useRef(0)
@@ -54,6 +67,13 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
     return active ? active.id : null
   })
   const [isAddingAccount, setIsAddingAccount] = useState(false)
+  const [accountsLoading, setAccountsLoading] = useState(() => {
+    return (emailStorageCache.getAccounts() || []).length === 0
+  })
+  const accountsRef = useRef<PublicEmailAccount[]>([])
+  accountsRef.current = accounts
+  const emptyRetryRef = useRef(0)
+  const loadAccountsRef = useRef<(opts?: { allowEmpty?: boolean }) => Promise<void>>(async () => {})
 
   // Folders state (initialized immediately from persistent cache or default folders so they never disappear on reload)
   const [folders, setFolders] = useState<EmailFolder[]>(() => {
@@ -87,6 +107,8 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
   // Composer state
   const [isComposeOpen, setIsComposeOpen] = useState(false)
   const [composeInitialData, setComposeInitialData] = useState<Partial<SendEmailPayload> | undefined>(undefined)
+  const [draftNotice, setDraftNotice] = useState<'saving' | 'saved' | 'failed' | null>(null)
+  const [sendNotice, setSendNotice] = useState<'sending' | 'sent' | 'failed' | null>(null)
 
   // Gear-menu preferences (Primary-only alerts + Gmail category tabs)
   const [settings, setSettings] = useState<EmailSettingsState>(() => loadEmailSettings())
@@ -117,11 +139,28 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
     }
   }, [])
 
-  // 1. Load accounts on startup (and keep persistent cache up to date)
-  const loadAccounts = useCallback(async () => {
+  // 1. Load accounts on startup (and keep persistent cache up to date).
+  // An empty worker reply while accounts are known means the worker has not
+  // finished loading yet, so it is ignored (with a short retry) instead of
+  // flashing the provider onboarding view.
+  const loadAccounts = useCallback(async (opts?: { allowEmpty?: boolean }) => {
+    let settled = false
     try {
       const res = await emailApi.listAccounts()
       if (res && Array.isArray(res.accounts)) {
+        const cached = emailStorageCache.getAccounts()
+        const known = cached && cached.length > 0 ? cached : accountsRef.current
+        if (!shouldAcceptAccountsResponse(res.accounts, known, opts?.allowEmpty)) {
+          if (emptyRetryRef.current < 4) {
+            emptyRetryRef.current += 1
+            setTimeout(() => {
+              loadAccountsRef.current?.()
+            }, 2500)
+          }
+          return
+        }
+        emptyRetryRef.current = 0
+        settled = true
         emailStorageCache.setAccounts(res.accounts)
         startTransition(() => {
           setAccounts(res.accounts)
@@ -134,8 +173,12 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
       }
     } catch (err) {
       console.error('[momai-emails] Error loading accounts:', err)
+      settled = true
+    } finally {
+      if (settled) setAccountsLoading(false)
     }
   }, [])
+  loadAccountsRef.current = loadAccounts
 
   useEffect(() => {
     loadAccounts()
@@ -189,11 +232,16 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
           },
           onFolderLoaded: (folderPath, aId, msgs) => {
             const key = `${aId}:${folderPath}`
-            folderCacheRef.current.set(key, msgs)
-            emailStorageCache.setFolderEmails(aId, folderPath, msgs)
+            const existing =
+              folderCacheRef.current.get(key) ||
+              emailStorageCache.getFolderEmails(aId, folderPath) ||
+              []
+            const merged = mergeFolderMessages(existing, msgs)
+            folderCacheRef.current.set(key, merged)
+            emailStorageCache.setFolderEmails(aId, folderPath, merged)
             if (isInboxFolder(folderPath)) {
               setFolders((prevFolders) => {
-                const updated = syncInboxPrimaryUnread(prevFolders, msgs, settings.showCategoryTabs, windowMs)
+                const updated = syncInboxPrimaryUnread(prevFolders, merged, settings.showCategoryTabs, windowMs)
                 emailStorageCache.setFolders(aId, updated)
                 return updated
               })
@@ -298,6 +346,75 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
     emailStorageCache.setFolderEmails(activeAccountId, originFolder, synced)
   }
 
+  const isDraftsFolderPath = (folderPath: string, folderList: EmailFolder[] = folders): boolean => {
+    const match = folderList.find((f) => f.path.toLowerCase() === folderPath.toLowerCase())
+    return isDraftsFolder(folderPath, match?.role)
+  }
+
+  const handleOpenDraft = async (msg: EmailMessage) => {
+    const accId = activeAccountId || undefined
+    const originFolder = msg.folder || activeFolder
+    try {
+      const res = await emailApi.readEmail(msg.id, originFolder, accId, false)
+      const full = res?.ok && res.email ? res.email : msg
+      const toAddrs = Array.isArray(full.to) ? full.to.map((a: any) => a.address || a).join(', ') : String((msg as any).to || '')
+      setComposeInitialData({
+        accountId: activeAccountId || undefined,
+        to: typeof toAddrs === 'string' && toAddrs ? toAddrs : '',
+        cc: Array.isArray(full.cc) ? full.cc.map((a: any) => a.address || a).join(', ') : undefined,
+        bcc: Array.isArray(full.bcc) ? full.bcc.map((a: any) => a.address || a).join(', ') : undefined,
+        subject: full.subject || msg.subject || '',
+        body: full.html || full.text || msg.snippet || '',
+        isHtml: Boolean(full.html),
+        draftId: String(msg.id),
+        draftFolder: originFolder,
+        draftUid: typeof msg.uid === 'number' ? msg.uid : undefined
+      })
+    } catch {
+      setComposeInitialData({
+        accountId: activeAccountId || undefined,
+        to: '',
+        subject: msg.subject || '',
+        body: (msg as any).text || msg.snippet || '',
+        draftId: String(msg.id),
+        draftFolder: originFolder,
+        draftUid: typeof msg.uid === 'number' ? msg.uid : undefined
+      })
+    }
+    setSelectedEmail(null)
+    setIsComposeOpen(true)
+  }
+
+  // Warms the full body of a message in the background so opening it later
+  // is instant. Never marks the message as read; opening still does that.
+  const prefetchEmailBody = useCallback((msg: EmailMessage) => {
+    const accId = activeAccountIdRef.current
+    if (!accId || !msg?.id) return
+    const originFolder = msg.folder || activeFolderRef.current
+    const bodyKey = `${accId}:${msg.id}`
+    if (emailBodyCacheRef.current.has(bodyKey)) return
+    if (prefetchInflightRef.current.has(bodyKey)) return
+    let cached = false
+    try {
+      cached = Boolean(emailStorageCache.getEmailBody(accId, msg.id))
+    } catch {
+      cached = false
+    }
+    if (cached) return
+    prefetchInflightRef.current.add(bodyKey)
+    emailApi.readEmail(msg.id, originFolder, accId, false).then((r) => {
+      if (r?.ok && r.email) {
+        const enriched = { ...r.email, accountId: r.email.accountId || accId }
+        emailBodyCacheRef.current.set(bodyKey, enriched)
+        try {
+          emailStorageCache.setEmailBody(accId, msg.id, enriched)
+        } catch {}
+      }
+    }).catch(() => {}).finally(() => {
+      prefetchInflightRef.current.delete(bodyKey)
+    })
+  }, [])
+
   const loadEmails = useCallback(async (folder = 'INBOX', accId = activeAccountIdRef.current, silent = false, forceRefresh = false) => {
     if (!accId) return
     const reqSeq = ++currentReqSeqRef.current
@@ -351,32 +468,31 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
 
       if (res && res.ok && Array.isArray(res.messages)) {
         const stampedMessages = res.messages.map((m: EmailMessage) => ({ ...m, accountId: m.accountId || accId }))
-        folderCacheRef.current.set(cacheKey, stampedMessages)
-        emailStorageCache.setFolderEmails(accId, folder, stampedMessages)
-        setMessages(stampedMessages)
+        // Merge over the same-folder list instead of replacing: a refresh only
+        // brings the newest window, so replacing would erase already loaded
+        // messages and visibly shrink the Principal tab.
+        const prevList = cached ?? []
+        const mergedMessages =
+          stampedMessages.length > 0
+            ? mergeFolderMessages(prevList, stampedMessages, 500)
+            : []
+        folderCacheRef.current.set(cacheKey, mergedMessages)
+        emailStorageCache.setFolderEmails(accId, folder, mergedMessages)
+        setMessages(mergedMessages)
         setHasMoreMessages(Boolean(res.hasMore))
 
         if (isInboxFolder(folder)) {
           setFolders((prevFolders) => {
-            const updated = syncInboxPrimaryUnread(prevFolders, stampedMessages, settings.showCategoryTabs, unreadWindowMs(settings.unreadWindowHours))
+            const updated = syncInboxPrimaryUnread(prevFolders, mergedMessages, settings.showCategoryTabs, unreadWindowMs(settings.unreadWindowHours))
             if (accId) emailStorageCache.setFolders(accId, updated)
             return updated
           })
         }
 
         // Background pre-fetch top email body so opening is instantaneous
-        const topMsg = stampedMessages[0]
+        const topMsg = mergedMessages[0]
         if (topMsg) {
-          const bodyKey = `${accId}:${topMsg.id}`
-          if (!emailBodyCacheRef.current.has(bodyKey) && !emailStorageCache.getEmailBody(accId, topMsg.id)) {
-            emailApi.readEmail(topMsg.id, folder, accId).then((r) => {
-              if (r?.ok && r.email) {
-                const enriched = { ...r.email, accountId: r.email.accountId || accId }
-                emailBodyCacheRef.current.set(bodyKey, enriched)
-                emailStorageCache.setEmailBody(accId, topMsg.id, enriched)
-              }
-            }).catch(() => {})
-          }
+          prefetchEmailBody(topMsg)
         }
       } else if (!cached) {
         setMessagesError(t('page.errors.loadMessages'))
@@ -391,7 +507,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
         setLoadingMessages(false)
       }
     }
-  }, [readCachedStarred])
+  }, [readCachedStarred, prefetchEmailBody])
 
   // Load more messages (next page) — appends to current list
   const loadMoreEmails = useCallback(async () => {
@@ -637,12 +753,17 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
         const { defaultAvatarStore, removeAvatar } = await import('./services/avatar-storage')
         removeAvatar(defaultAvatarStore(), id)
       } catch {}
-      await loadAccounts()
+      await loadAccounts({ allowEmpty: true })
     }
   }
 
   // 6. Message actions (Instant 0ms opening via body cache + optimistic UI updates)
   const handleSelectEmail = async (msg: EmailMessage) => {
+    const origin = msg.folder || activeFolder
+    if (isDraftsFolderPath(origin)) {
+      await handleOpenDraft(msg)
+      return
+    }
     const accId = activeAccountId || undefined
     const cacheKey = `${accId}:${msg.id}`
     const cached = emailBodyCacheRef.current.get(cacheKey) || (accId ? emailStorageCache.getEmailBody(accId, msg.id) : null)
@@ -844,6 +965,14 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
       folderCacheRef.current.set(cacheKey, cached.filter((m) => m.id !== id))
     }
     syncOriginCache(originFolder, id, null)
+    if (activeAccountId && target?.messageId) {
+      const originRole = folders.find((f) => f.path.toLowerCase() === originFolder.toLowerCase())?.role
+      if (isDraftsFolder(originFolder, originRole)) {
+        rememberDraftMessage(activeAccountId, target.messageId)
+      } else if (isTrashFolder(originFolder, originRole)) {
+        forgetDraftMessage(activeAccountId, target.messageId)
+      }
+    }
     emailApi.deleteEmail(id, originFolder, activeAccountId || undefined).catch(() => {})
   }
 
@@ -879,6 +1008,17 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
     for (const id of ids) {
       const originFolder = sourceFolderOf(id)
       syncOriginCache(originFolder, id, null)
+      if (activeAccountId) {
+        const originRole = folders.find((f) => f.path.toLowerCase() === originFolder.toLowerCase())?.role
+        const targetMessageId = messages.find((m) => m.id === id)?.messageId
+        if (targetMessageId) {
+          if (isDraftsFolder(originFolder, originRole)) {
+            rememberDraftMessage(activeAccountId, targetMessageId)
+          } else if (isTrashFolder(originFolder, originRole)) {
+            forgetDraftMessage(activeAccountId, targetMessageId)
+          }
+        }
+      }
       await emailApi.deleteEmail(id, originFolder, activeAccountId || undefined)
     }
   }
@@ -920,6 +1060,8 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
     const fromFolder = sourceFolderOf(id)
     if (!toFolder || toFolder.toLowerCase() === fromFolder.toLowerCase()) return
     const target = messages.find((m) => m.id === id) || (selectedEmail?.id === id ? selectedEmail : null)
+    const movingToArchive = isArchiveFolder(toFolder)
+    const originKey = target ? archiveMessageKey(target.messageId, target.id) : archiveMessageKey(null, id)
     const delta = target && !target.read ? -1 : 0
     setMessages((prev) => {
       const updated = prev.filter((m) => m.id !== id)
@@ -951,7 +1093,37 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
       syncOriginCache(fromFolder, id, null)
     }
     try {
-      await emailApi.moveEmail(id, toFolder, fromFolder, activeAccountId || undefined)
+      const res = await emailApi.moveEmail(id, toFolder, fromFolder, activeAccountId || undefined)
+      if (!res?.ok) {
+        loadEmails(activeFolder, activeAccountId || undefined, true)
+        return
+      }
+      if (activeAccountId) {
+        const accId = activeAccountId
+        if (movingToArchive && originKey) {
+          setArchiveOrigin(accId, originKey, fromFolder)
+        }
+        const destKey = `${accId}:${toFolder}`
+        folderCacheRef.current.delete(destKey)
+        void emailApi
+          .listEmails(toFolder, accId, 50, false, 0)
+          .then((r) => {
+            if (r?.ok && Array.isArray(r.messages)) {
+              const stamped = r.messages.map((m: EmailMessage) => ({
+                ...m,
+                accountId: m.accountId || accId
+              }))
+              folderCacheRef.current.set(destKey, stamped)
+              try {
+                emailStorageCache.setFolderEmails(accId, toFolder, stamped)
+              } catch {}
+              if (!viewingFavorites && activeFolderRef.current?.toLowerCase() === toFolder.toLowerCase()) {
+                setMessages(stamped)
+              }
+            }
+          })
+          .catch(() => {})
+      }
     } catch {
       loadEmails(activeFolder, activeAccountId || undefined, true)
     }
@@ -960,6 +1132,21 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
   const handleNotSpam = async (id: string) => {
     const inboxPath = resolveInboxPath(folders, 'INBOX')
     await handleMoveEmail(id, inboxPath)
+  }
+
+  const handleRestore = async (id: string) => {
+    const target = messages.find((m) => m.id === id) || (selectedEmail?.id === id ? selectedEmail : null)
+    const key = target ? archiveMessageKey(target.messageId, target.id) : archiveMessageKey(null, id)
+    const saved = activeAccountId && key ? getArchiveOrigin(activeAccountId, key) : null
+    const destination = saved || resolveInboxPath(folders, 'INBOX')
+    if (activeAccountId && key) clearArchiveOrigin(activeAccountId, key)
+    await handleMoveEmail(id, destination)
+  }
+
+  const handleBatchRestore = async (ids: string[]) => {
+    for (const id of ids) {
+      await handleRestore(id)
+    }
   }
 
   const handleSyncNow = useCallback(async () => {
@@ -1054,13 +1241,100 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
     setIsComposeOpen(true)
   }
 
-  const handleSendEmail = async (payload: SendEmailPayload) => {
-    const res = await emailApi.sendEmail(payload)
+  // Background draft notice hides itself a few seconds after each update.
+  useEffect(() => {
+    if (!draftNotice) return
+    const timer = setTimeout(() => setDraftNotice(null), 4000)
+    return () => clearTimeout(timer)
+  }, [draftNotice])
+
+  // Background send notice stays visible while sending and hides after sent/failed.
+  useEffect(() => {
+    if (!sendNotice || sendNotice === 'sending') return
+    const timer = setTimeout(() => setSendNotice(null), 4000)
+    return () => clearTimeout(timer)
+  }, [sendNotice])
+
+  const handleSaveDraft = async (payload: SendEmailPayload & { replaceUid?: number; replaceFolder?: string }) => {
+    const viewingDrafts = isDraftsFolderPath(activeFolderRef.current, foldersRef.current)
+    const saveAccountId = payload.accountId || activeAccountId || undefined
+    const accountEmail = accounts.find((a) => a.id === saveAccountId)?.email || ''
+    const pending = viewingDrafts
+      ? buildPendingDraft({
+        to: payload.to,
+        subject: payload.subject,
+        body: payload.body,
+        accountEmail,
+        draftsFolder: payload.replaceFolder ?? payload.draftFolder ?? resolveDraftsPath(foldersRef.current)
+      })
+      : null
+    if (pending) {
+      setMessages((prev) => [pending, ...prev.filter((m) => m.id !== pending.id)])
+    }
+    setDraftNotice('saving')
+    let res: { ok: boolean; draftsFolder?: string; error?: string }
+    try {
+      res = await emailApi.saveDraft({
+        accountId: saveAccountId,
+        to: payload.to,
+        subject: payload.subject,
+        body: payload.body,
+        isHtml: payload.isHtml,
+        cc: payload.cc,
+        bcc: payload.bcc,
+        inReplyTo: payload.inReplyTo,
+        references: payload.references,
+        attachments: payload.attachments,
+        replaceUid: payload.replaceUid ?? payload.draftUid,
+        replaceFolder: payload.replaceFolder ?? payload.draftFolder
+      })
+    } catch {
+      res = { ok: false }
+    }
     if (res.ok) {
+      setDraftNotice('saved')
+      if (viewingDrafts) {
+        await loadEmails(activeFolderRef.current, activeAccountIdRef.current || undefined, true)
+        if (pending) {
+          setMessages((prev) => removePendingDrafts(prev, [pending.id]))
+        }
+      }
+      loadFolders(activeAccountIdRef.current || undefined)
+    } else {
+      if (pending) {
+        setMessages((prev) => removePendingDrafts(prev, [pending.id]))
+      }
+      setDraftNotice('failed')
+    }
+    return res
+  }
+
+  const handleSendEmail = async (payload: SendEmailPayload) => {
+    setSendNotice('sending')
+    let res: { ok: boolean; messageId?: string; error?: string }
+    try {
+      res = await emailApi.sendEmail(payload)
+    } catch (err: any) {
+      res = { ok: false, error: err?.message || 'send failed' }
+    }
+    if (res.ok) {
+      setSendNotice('sent')
+      const sentDraftId = (payload as SendEmailPayload).draftId
+      const sentDraftFolder = (payload as SendEmailPayload).draftFolder
+      if (sentDraftId && sentDraftFolder) {
+        emailApi.deleteEmail(String(sentDraftId), sentDraftFolder, activeAccountId || undefined).catch(() => {})
+        if (isDraftsFolderPath(sentDraftFolder)) {
+          loadEmails(activeFolder, activeAccountId || undefined, true)
+        }
+      }
       // Refresh current folder if in sent folder
       if (activeFolder.toLowerCase().includes('sent') || activeFolder.toLowerCase().includes('enviad')) {
         loadEmails(activeFolder, activeAccountId || undefined)
       }
+    } else {
+      setSendNotice('failed')
+      setComposeInitialData({ ...payload })
+      setIsComposeOpen(true)
     }
     return res
   }
@@ -1071,15 +1345,55 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
       ? selectedEmail.subject
       : `Re: ${selectedEmail.subject}`
 
-    const res = await emailApi.sendEmail({
-      accountId: activeAccountId || undefined,
-      to: selectedEmail.replyTo?.[0]?.address || selectedEmail.from.address,
-      subject: replySubject,
-      body,
-      inReplyTo: selectedEmail.messageId,
-      references: selectedEmail.messageId
-    })
-    return Boolean(res.ok)
+    setSendNotice('sending')
+    let res: { ok: boolean; error?: string }
+    try {
+      res = await emailApi.sendEmail({
+        accountId: activeAccountId || undefined,
+        to: selectedEmail.replyTo?.[0]?.address || selectedEmail.from.address,
+        subject: replySubject,
+        body,
+        inReplyTo: selectedEmail.messageId,
+        references: selectedEmail.messageId
+      })
+    } catch {
+      res = { ok: false }
+    }
+    if (res.ok) {
+      setSendNotice('sent')
+      return true
+    }
+    setSendNotice('failed')
+    return false
+  }
+
+  // Handle Escape key globally in page for reader back, settings close, or cancel add-account
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (isComposeOpen) return
+        if (isAddingAccount && accounts.length > 0) {
+          setIsAddingAccount(false)
+        } else if (showSettings) {
+          setShowSettings(false)
+        } else if (selectedEmail) {
+          setSelectedEmail(null)
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isComposeOpen, isAddingAccount, accounts.length, showSettings, selectedEmail])
+
+  // While the first account load is pending, hold a loading view so a slow
+  // worker never flashes the provider onboarding view over a real inbox.
+  if (accountsLoading && accounts.length === 0 && !isAddingAccount) {
+    return (
+      <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-bg text-text select-none">
+        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        <p className="mt-4 text-xs text-text-muted">{t('page.loadingAccounts')}</p>
+      </div>
+    )
   }
 
   // If user has no accounts, or clicked "+ Adicionar Conta", show full-screen onboarding view
@@ -1186,6 +1500,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
             onToggleStarred={handleToggleStarred}
             onMove={handleMoveEmail}
             onNotSpam={handleNotSpam}
+            onRestore={handleRestore}
           />
         ) : (
           <EmailList
@@ -1203,12 +1518,15 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
               loadFolders(activeAccountId || undefined)
             }}
             onSelectEmail={handleSelectEmail}
+            onPrefetchEmail={prefetchEmailBody}
             onToggleStarred={handleToggleStarred}
             onMarkRead={handleMarkRead}
             onMarkUnread={handleMarkUnread}
             onDelete={handleDelete}
             onBatchDelete={handleBatchDelete}
             onBatchMarkRead={handleBatchMarkRead}
+            onRestore={handleRestore}
+            onBatchRestore={handleBatchRestore}
             onOpenAttachment={handleOpenAttachment}
             folders={folders}
             onReply={(msg) => handleReply(msg, false)}
@@ -1235,7 +1553,40 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
         initialData={composeInitialData}
         onClose={() => setIsComposeOpen(false)}
         onSend={handleSendEmail}
+        onSaveDraft={handleSaveDraft}
       />
+
+      {/* Background draft-save notice (the composer already closed) */}
+      {draftNotice && (
+        <div className="fixed bottom-4 left-4 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-card border border-border shadow-glass-lg text-xs text-text animate-fade-in">
+          {draftNotice === 'saving' && (
+            <div className="w-3.5 h-3.5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+          )}
+          <span>
+            {draftNotice === 'saving'
+              ? t('composer.savingDraft')
+              : draftNotice === 'saved'
+                ? t('composer.draftSaved')
+                : t('composer.draftSaveFailed')}
+          </span>
+        </div>
+      )}
+
+      {/* Background send notice (the composer already closed) */}
+      {sendNotice && (
+        <div className="fixed bottom-16 left-4 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-card border border-border shadow-glass-lg text-xs text-text animate-fade-in">
+          {sendNotice === 'sending' && (
+            <div className="w-3.5 h-3.5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+          )}
+          <span>
+            {sendNotice === 'sending'
+              ? t('composer.sending')
+              : sendNotice === 'sent'
+                ? t('composer.sent')
+                : t('composer.errors.sendFailed')}
+          </span>
+        </div>
+      )}
     </div>
   )
 }

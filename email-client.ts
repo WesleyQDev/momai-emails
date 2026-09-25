@@ -45,12 +45,34 @@ interface ConnectionTestResult {
 }
 
 /**
+ * Formats IMAP error details into a descriptive message.
+ */
+function formatImapError(err: any): string {
+  if (!err) return 'Unknown error'
+  if (typeof err === 'string') return err
+  const parts: string[] = []
+  if (err.responseText) {
+    parts.push(err.responseText)
+  }
+  if (err.message && (!err.responseText || !err.responseText.includes(err.message))) {
+    parts.push(err.message)
+  }
+  if (err.command) {
+    parts.push(`(command: ${err.command})`)
+  }
+  if (parts.length > 0) {
+    return parts.join(' - ')
+  }
+  return String(err)
+}
+
+/**
  * Creates an ImapFlow client instance for the specified account.
  */
 function createImapClient(account: any, logger = false) {
   const username = account.imap?.user || account.email
   const password = account.password || ''
-  return new ImapFlow({
+  const client = new ImapFlow({
     host: account.imap.host,
     port: account.imap.port,
     secure: account.imap.secure,
@@ -64,6 +86,8 @@ function createImapClient(account: any, logger = false) {
       rejectUnauthorized: false
     }
   })
+  client.on('error', () => {})
+  return client
 }
 
 /**
@@ -110,7 +134,7 @@ async function getConnectedImapClient(account: any) {
   const connectTask = (async () => {
     try {
       if (client) {
-        client.logout().catch(() => {})
+        try { client.logout().catch(() => {}) } catch {}
         imapPool.delete(key)
       }
 
@@ -125,6 +149,9 @@ async function getConnectedImapClient(account: any) {
       await client.connect()
       imapPool.set(key, client)
       return client
+    } catch (err) {
+      imapPool.delete(key)
+      throw err
     } finally {
       connectionPromises.delete(key)
     }
@@ -135,14 +162,33 @@ async function getConnectedImapClient(account: any) {
 }
 
 /**
- * Release a client from the pool (e.g. when account is removed)
+ * Release a client from the pool (e.g. when account is removed or on connection failure)
  */
 function releaseImapClient(accountId: string) {
   const client = imapPool.get(accountId)
   if (client) {
-    client.logout().catch(() => {})
+    try { client.logout().catch(() => {}) } catch {}
     imapPool.delete(accountId)
   }
+}
+
+/**
+ * Release all active IMAP clients from the pool (e.g. on worker shutdown)
+ */
+function releaseAllImapClients() {
+  for (const client of imapPool.values()) {
+    try { client.logout().catch(() => {}) } catch {}
+  }
+  imapPool.clear()
+}
+
+if (typeof process !== 'undefined' && typeof process.on === 'function') {
+  const shutdownCleanup = () => {
+    try { releaseAllImapClients() } catch {}
+  }
+  process.once('exit', shutdownCleanup)
+  process.once('SIGINT', shutdownCleanup)
+  process.once('SIGTERM', shutdownCleanup)
 }
 
 /**
@@ -160,7 +206,8 @@ async function testAccountConnection(account: any): Promise<ConnectionTestResult
     imapOk = true
     await client.logout().catch(() => {})
   } catch (err: any) {
-    errorMsg = `Falha IMAP (${account.imap?.host}:${account.imap?.port}): ${err?.message || err}`
+    const detail = formatImapError(err)
+    errorMsg = `Falha IMAP (${account.imap?.host}:${account.imap?.port}): ${detail}`
     return { ok: false, imapOk: false, smtpOk: false, error: errorMsg }
   }
 
@@ -201,13 +248,16 @@ function getStartOfToday(): Date {
  * Returns null when the search fails so callers can fall back to STATUS.
  */
 async function countUnreadInWindowInFolder(client: any, folderPath: string, windowHours?: number): Promise<number | null> {
+  let lock: any = null
   try {
-    const lock = await client.getMailboxLock(folderPath)
+    lock = await client.getMailboxLock(folderPath)
     try {
       const uids = await client.search({ seen: false, since: getUnreadWindowStart(windowHours) }, { uid: true })
       return Array.isArray(uids) ? uids.length : 0
     } finally {
-      lock.release()
+      if (lock && typeof lock.release === 'function') {
+        try { lock.release() } catch {}
+      }
     }
   } catch {
     return null
@@ -300,6 +350,9 @@ async function listMailboxes(account: any, windowHours?: number) {
 
       mailboxesCache.set(accountKey, { folders, timestamp: Date.now() })
       return folders
+    } catch (err: any) {
+      releaseImapClient(account.id || account.email)
+      throw new Error(formatImapError(err))
     } finally {
       inFlightMailboxes.delete(accountKey)
     }
@@ -313,7 +366,13 @@ async function listMailboxes(account: any, windowHours?: number) {
  * Get mailbox status (message counts and uidNext) without mailbox lock.
  */
 async function getMailboxStatus(account: any, folder = 'INBOX') {
-  const client = await getConnectedImapClient(account)
+  let client: any
+  try {
+    client = await getConnectedImapClient(account)
+  } catch (err: any) {
+    releaseImapClient(account.id || account.email)
+    return { ok: false, error: formatImapError(err), messages: 0, unseen: 0, uidNext: 0 }
+  }
   try {
     const status = await client.status(folder, { messages: true, unseen: true, uidNext: true })
     return {
@@ -323,7 +382,8 @@ async function getMailboxStatus(account: any, folder = 'INBOX') {
       uidNext: status.uidNext || 0
     }
   } catch (err: any) {
-    return { ok: false, error: err?.message || String(err), messages: 0, unseen: 0, uidNext: 0 }
+    releaseImapClient(account.id || account.email)
+    return { ok: false, error: formatImapError(err), messages: 0, unseen: 0, uidNext: 0 }
   }
 }
 
@@ -380,14 +440,30 @@ function extractAttachmentsFromBodyStructure(structure: any): any[] {
  * Supports offset-based pagination for infinite scroll.
  */
 async function fetchMessages(account: any, folder = 'INBOX', limit = 50, unreadOnly = false, offset = 0) {
-  const client = await getConnectedImapClient(account)
+  let client: any
+  try {
+    client = await getConnectedImapClient(account)
+  } catch (err: any) {
+    releaseImapClient(account.id || account.email)
+    throw new Error(formatImapError(err))
+  }
   const messages: any[] = []
-  const lock = await client.getMailboxLock(folder)
+  let lock: any = null
+  try {
+    lock = await client.getMailboxLock(folder)
+  } catch {
+    await ensureMailboxExists(account, folder)
+    try {
+      lock = await client.getMailboxLock(folder)
+    } catch {
+      return { messages: [], hasMore: false, total: 0 }
+    }
+  }
   try {
     // Sincroniza com o servidor IMAP para garantir que client.mailbox.exists reflita mensagens recém-chegadas
     await client.noop().catch(() => {})
     const mailbox = client.mailbox
-    const count = mailbox.exists || 0
+    const count = mailbox?.exists || 0
     if (count === 0) return { messages: [], hasMore: false, total: 0 }
 
     if (unreadOnly) {
@@ -418,6 +494,7 @@ async function fetchMessages(account: any, folder = 'INBOX', limit = 50, unreadO
           timestamp: env.date ? new Date(env.date).getTime() : Date.now(),
           read: msg.flags ? msg.flags.has('\\Seen') : false,
           starred: msg.flags ? msg.flags.has('\\Flagged') : false,
+          draft: msg.flags ? msg.flags.has('\\Draft') : false,
           snippet: '',
           hasAttachments: atts.length > 0,
           attachments: atts
@@ -454,6 +531,7 @@ async function fetchMessages(account: any, folder = 'INBOX', limit = 50, unreadO
           timestamp: env.date ? new Date(env.date).getTime() : Date.now(),
           read: msg.flags ? msg.flags.has('\\Seen') : false,
           starred: msg.flags ? msg.flags.has('\\Flagged') : false,
+          draft: msg.flags ? msg.flags.has('\\Draft') : false,
           snippet: '',
           hasAttachments: atts.length > 0,
           attachments: atts
@@ -463,8 +541,15 @@ async function fetchMessages(account: any, folder = 'INBOX', limit = 50, unreadO
       messages.sort((a, b) => b.timestamp - a.timestamp)
       return { messages, hasMore, total: count }
     }
+  } catch (err: any) {
+    releaseImapClient(account.id || account.email)
+    throw new Error(formatImapError(err))
   } finally {
-    lock.release()
+    if (lock && typeof lock.release === 'function') {
+      try {
+        lock.release()
+      } catch {}
+    }
   }
 }
 
@@ -573,8 +658,19 @@ async function fetchFullMessage(account: any, uidOrMessageId: string | number, f
     }
   }
 
-  const client = await getConnectedImapClient(account)
-  const lock = await client.getMailboxLock(folder)
+  let client: any
+  try {
+    client = await getConnectedImapClient(account)
+  } catch (err: any) {
+    releaseImapClient(account.id || account.email)
+    throw new Error(formatImapError(err))
+  }
+  let lock: any = null
+  try {
+    lock = await client.getMailboxLock(folder)
+  } catch {
+    return null
+  }
   try {
     const targetUid = typeof uidOrMessageId === 'number' ? uidOrMessageId : parseInt(uidOrMessageId, 10)
     let resolvedUid = targetUid
@@ -711,8 +807,13 @@ async function fetchFullMessage(account: any, uidOrMessageId: string | number, f
     } catch {}
 
     return resultEmail
+  } catch (err: any) {
+    releaseImapClient(account.id || account.email)
+    throw new Error(formatImapError(err))
   } finally {
-    lock.release()
+    if (lock && typeof lock.release === 'function') {
+      try { lock.release() } catch {}
+    }
   }
 }
 
@@ -720,9 +821,20 @@ async function fetchFullMessage(account: any, uidOrMessageId: string | number, f
  * Search emails by query on the IMAP server (server-side, searches ALL messages).
  */
 async function searchMessages(account: any, query: string, folder = 'INBOX', limit = 200) {
-  const client = await getConnectedImapClient(account)
+  let client: any
+  try {
+    client = await getConnectedImapClient(account)
+  } catch (err: any) {
+    releaseImapClient(account.id || account.email)
+    throw new Error(formatImapError(err))
+  }
   const messages: any[] = []
-  const lock = await client.getMailboxLock(folder)
+  let lock: any = null
+  try {
+    lock = await client.getMailboxLock(folder)
+  } catch {
+    return { messages: [], total: 0 }
+  }
   try {
     const q = query.trim()
     const searchCriteria: any = {
@@ -756,13 +868,19 @@ async function searchMessages(account: any, query: string, folder = 'INBOX', lim
         timestamp: env.date ? new Date(env.date).getTime() : Date.now(),
         read: msg.flags ? msg.flags.has('\\Seen') : false,
         starred: msg.flags ? msg.flags.has('\\Flagged') : false,
+        draft: msg.flags ? msg.flags.has('\\Draft') : false,
         snippet: '',
         hasAttachments: atts.length > 0,
         attachments: atts
       })
     }
+  } catch (err: any) {
+    releaseImapClient(account.id || account.email)
+    throw new Error(formatImapError(err))
   } finally {
-    lock.release()
+    if (lock && typeof lock.release === 'function') {
+      try { lock.release() } catch {}
+    }
   }
   messages.sort((a, b) => b.timestamp - a.timestamp)
   return { messages, total: messages.length }
@@ -826,21 +944,207 @@ async function sendEmail(account: any, payload: any) {
   }
 }
 
+function hasSaveDraftContent(payload: any): boolean {
+  if ((payload?.to || '').trim()) return true
+  if ((payload?.cc || '').trim()) return true
+  if ((payload?.bcc || '').trim()) return true
+  if ((payload?.subject || '').trim()) return true
+  if (Array.isArray(payload?.attachments) && payload.attachments.length > 0) return true
+  const body = String(payload?.body || '')
+  const text = body
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return text.length > 0
+}
+
+/**
+ * Pure lookup: finds the drafts folder path inside an already-known folder
+ * list (server LIST or cached folders) without any network roundtrip.
+ */
+function findDraftsFolderInList(list: any): string | null {
+  if (!Array.isArray(list)) return null
+  const found = list.find((m: any) => {
+    if (!m) return false
+    if ((m.role || '').toLowerCase() === 'drafts') return true
+    if (m.specialUse === '\\Drafts') return true
+    const pathLower = String(m.path || '').toLowerCase()
+    const nameLower = String(m.name || '').toLowerCase()
+    return pathLower.includes('draft') || pathLower.includes('rascunh') || nameLower.includes('draft') || nameLower.includes('rascunh')
+  })
+  return found?.path || null
+}
+
+// Drafts folder path per account: resolving it requires a full folder scan,
+// so the result is cached and warm scans reuse the in-memory folder cache.
+const draftsFolderCache = new Map<string, { path: string; timestamp: number }>()
+const DRAFTS_FOLDER_CACHE_TTL_MS = 5 * 60 * 1000
+
+function getDraftsFolderCacheKey(account: any): string {
+  return String(account?.id || account?.email || 'default')
+}
+
+async function resolveDraftsFolder(account: any, hint?: string): Promise<{ path: string; knownExists: boolean }> {
+  if (hint && hint.trim()) return { path: hint.trim(), knownExists: false }
+  const cacheKey = getDraftsFolderCacheKey(account)
+  const cached = draftsFolderCache.get(cacheKey)
+  if (cached && Date.now() - cached.timestamp < DRAFTS_FOLDER_CACHE_TTL_MS) {
+    return { path: cached.path, knownExists: true }
+  }
+  try {
+    const prefix = `${account.id || account.email}:`
+    for (const [key, entry] of Array.from(mailboxesCache.entries())) {
+      if (!key.startsWith(prefix)) continue
+      if (Date.now() - entry.timestamp >= MAILBOXES_CACHE_TTL_MS) continue
+      const found = findDraftsFolderInList(entry.folders)
+      if (found) {
+        draftsFolderCache.set(cacheKey, { path: found, timestamp: Date.now() })
+        return { path: found, knownExists: true }
+      }
+    }
+  } catch {}
+  try {
+    const folders = await listMailboxes(account)
+    const found = findDraftsFolderInList(folders)
+    if (found) {
+      draftsFolderCache.set(cacheKey, { path: found, timestamp: Date.now() })
+      return { path: found, knownExists: true }
+    }
+  } catch {}
+  try {
+    const client = await getConnectedImapClient(account)
+    const list = await client.list()
+    const found = findDraftsFolderInList(list)
+    if (found) {
+      draftsFolderCache.set(cacheKey, { path: found, timestamp: Date.now() })
+      return { path: found, knownExists: true }
+    }
+  } catch {}
+  return { path: 'Drafts', knownExists: false }
+}
+
+/**
+ * Save a composer draft into the IMAP Drafts folder via APPEND with \Draft flag.
+ * When replaceUid + replaceFolder are provided, the previous draft is removed
+ * after a successful append so reopening never duplicates drafts.
+ */
+async function saveDraft(account: any, payload: any) {
+  if (!hasSaveDraftContent(payload)) {
+    return { ok: false, error: 'Empty draft' }
+  }
+  const resolved = await resolveDraftsFolder(account, payload?.draftFolder)
+  const draftsFolder = resolved.path
+  if (!resolved.knownExists) {
+    await ensureMailboxExists(account, draftsFolder)
+  }
+  try {
+    const fromAddress = account.name ? `"${account.name}" <${account.email}>` : account.email
+    const draftTransporter = nodemailer.createTransport({
+      streamTransport: true,
+      buffer: true,
+      newline: 'unix'
+    } as any)
+    const draftOptions: any = {
+      from: fromAddress,
+      to: payload.to && String(payload.to).trim() ? payload.to : account.email,
+      subject: payload.subject && String(payload.subject).trim() ? payload.subject : '(Sem assunto)',
+      cc: payload.cc || undefined,
+      bcc: payload.bcc || undefined,
+      date: new Date()
+    }
+    if (payload.isHtml || /<[^>]+>/.test(String(payload.body || ''))) {
+      draftOptions.html = payload.body
+      draftOptions.text = String(payload.body || '').replace(/<[^>]*>?/gm, '')
+    } else {
+      draftOptions.text = payload.body
+    }
+    if (payload.inReplyTo) {
+      draftOptions.inReplyTo = payload.inReplyTo
+      draftOptions.references = payload.references || payload.inReplyTo
+    }
+    if (Array.isArray(payload.attachments) && payload.attachments.length > 0) {
+      draftOptions.attachments = payload.attachments.map((att: any) => {
+        const item: any = { filename: att.filename || 'anexo' }
+        if (att.contentType) item.contentType = att.contentType
+        if (att.base64Data) {
+          const raw = typeof att.base64Data === 'string' && att.base64Data.includes(';base64,')
+            ? att.base64Data.split(';base64,')[1]
+            : att.base64Data
+          item.content = Buffer.from(raw, 'base64')
+        } else if (att.content) {
+          const raw = typeof att.content === 'string' && att.content.includes(';base64,')
+            ? att.content.split(';base64,')[1]
+            : att.content
+          item.content = Buffer.from(raw, 'base64')
+        } else if (att.path || att.localPath) {
+          item.path = att.path || att.localPath
+        }
+        if (att.cid || att.contentId) item.cid = att.cid || att.contentId
+        return item
+      }).filter((item: any) => item.content || item.path)
+      if (draftOptions.attachments.length === 0) delete draftOptions.attachments
+    }
+    const raw = await draftTransporter.sendMail(draftOptions)
+    const rawContent = (raw as any)?.message
+    const content = Buffer.isBuffer(rawContent) ? rawContent : Buffer.from(String(rawContent || ''), 'utf-8')
+    const client = await getConnectedImapClient(account)
+    const appendResult: any = await client.append(draftsFolder, content, ['\\Draft'], new Date())
+    try {
+      draftsFolderCache.set(getDraftsFolderCacheKey(account), { path: draftsFolder, timestamp: Date.now() })
+      const prefix = `${account.id || account.email}:`
+      for (const key of Array.from(mailboxesCache.keys())) {
+        if (key.startsWith(prefix)) mailboxesCache.delete(key)
+      }
+    } catch {}
+    const replaceUid = parseInt(payload?.replaceUid ?? payload?.draftUid ?? '', 10)
+    const replaceFolder = payload?.replaceFolder || payload?.draftFolder
+    if (!isNaN(replaceUid) && replaceUid > 0 && replaceFolder) {
+      try {
+        const replaceClient = await getConnectedImapClient(account)
+        const lock = await replaceClient.getMailboxLock(replaceFolder)
+        try {
+          await replaceClient.messageDelete(replaceUid, { uid: true })
+        } finally {
+          lock.release()
+        }
+      } catch {}
+    }
+    return { ok: true, draftsFolder, uid: appendResult?.uid ?? null }
+  } catch (err: any) {
+    return { ok: false, error: err?.message || String(err) }
+  }
+}
+
 /**
  * Mark a message as read or unread.
  */
 async function setMessageReadStatus(account: any, uid: number, read: boolean, folder = 'INBOX') {
-  const client = await getConnectedImapClient(account)
-  const lock = await client.getMailboxLock(folder)
+  let client: any
   try {
+    client = await getConnectedImapClient(account)
+  } catch (err: any) {
+    releaseImapClient(account.id || account.email)
+    throw new Error(formatImapError(err))
+  }
+  let lock: any = null
+  try {
+    lock = await client.getMailboxLock(folder)
     if (read) {
       await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true })
     } else {
       await client.messageFlagsRemove(uid, ['\\Seen'], { uid: true })
     }
     return true
+  } catch (err: any) {
+    releaseImapClient(account.id || account.email)
+    throw new Error(formatImapError(err))
   } finally {
-    lock.release()
+    if (lock && typeof lock.release === 'function') {
+      try { lock.release() } catch {}
+    }
   }
 }
 
@@ -848,17 +1152,29 @@ async function setMessageReadStatus(account: any, uid: number, read: boolean, fo
  * Toggle starred flag on a message.
  */
 async function setMessageStarredStatus(account: any, uid: number, starred: boolean, folder = 'INBOX') {
-  const client = await getConnectedImapClient(account)
-  const lock = await client.getMailboxLock(folder)
+  let client: any
   try {
+    client = await getConnectedImapClient(account)
+  } catch (err: any) {
+    releaseImapClient(account.id || account.email)
+    throw new Error(formatImapError(err))
+  }
+  let lock: any = null
+  try {
+    lock = await client.getMailboxLock(folder)
     if (starred) {
       await client.messageFlagsAdd(uid, ['\\Flagged'], { uid: true })
     } else {
       await client.messageFlagsRemove(uid, ['\\Flagged'], { uid: true })
     }
     return true
+  } catch (err: any) {
+    releaseImapClient(account.id || account.email)
+    throw new Error(formatImapError(err))
   } finally {
-    lock.release()
+    if (lock && typeof lock.release === 'function') {
+      try { lock.release() } catch {}
+    }
   }
 }
 
@@ -866,9 +1182,16 @@ async function setMessageStarredStatus(account: any, uid: number, starred: boole
  * Delete a message.
  */
 async function deleteMessage(account: any, uid: number, folder = 'INBOX') {
-  const client = await getConnectedImapClient(account)
-  const lock = await client.getMailboxLock(folder)
+  let client: any
   try {
+    client = await getConnectedImapClient(account)
+  } catch (err: any) {
+    releaseImapClient(account.id || account.email)
+    throw new Error(formatImapError(err))
+  }
+  let lock: any = null
+  try {
+    lock = await client.getMailboxLock(folder)
     const list = await client.list()
     const trashBox = list.find((m: any) => m.specialUse === '\\Trash' || m.path.toLowerCase().includes('trash') || m.path.toLowerCase().includes('lixeir'))
 
@@ -878,22 +1201,80 @@ async function deleteMessage(account: any, uid: number, folder = 'INBOX') {
       await client.messageDelete(uid, { uid: true })
     }
     return true
+  } catch (err: any) {
+    releaseImapClient(account.id || account.email)
+    throw new Error(formatImapError(err))
   } finally {
-    lock.release()
+    if (lock && typeof lock.release === 'function') {
+      try { lock.release() } catch {}
+    }
   }
 }
 
 /**
- * Move message between mailboxes.
+ * Move message between mailboxes. Creates the destination mailbox on demand
+ * so standard folders like Archive always accept moves.
  */
-async function moveMessage(account: any, uid: number, fromFolder: string, toFolder: string) {
-  const client = await getConnectedImapClient(account)
-  const lock = await client.getMailboxLock(fromFolder)
+async function ensureMailboxExists(account: any, folderPath: string): Promise<void> {
+  if (!folderPath) return
   try {
-    await client.messageMove(uid, toFolder, { uid: true })
-    return true
+    const client = await getConnectedImapClient(account)
+    await client.mailboxCreate(folderPath)
+  } catch {}
+  try {
+    const prefix = `${account.id || account.email}:`
+    for (const key of Array.from(mailboxesCache.keys())) {
+      if (key.startsWith(prefix)) mailboxesCache.delete(key)
+    }
+  } catch {}
+}
+
+async function moveMessage(account: any, uid: number, fromFolder: string, toFolder: string) {
+  let client: any
+  try {
+    client = await getConnectedImapClient(account)
+  } catch (err: any) {
+    releaseImapClient(account.id || account.email)
+    throw new Error(formatImapError(err))
+  }
+  let lock: any = null
+  try {
+    lock = await client.getMailboxLock(fromFolder)
+    try {
+      await client.messageMove(uid, toFolder, { uid: true })
+      return true
+    } catch (moveErr: any) {
+      const message = String(moveErr?.message || moveErr || '').toLowerCase()
+      const missingDest =
+        message.includes('mailbox') ||
+        message.includes('folder') ||
+        message.includes('not found') ||
+        message.includes('no such') ||
+        (moveErr?.code || '').toString().toLowerCase().includes('nonexistent')
+      if (!missingDest) throw moveErr
+    }
+  } catch (err: any) {
+    releaseImapClient(account.id || account.email)
+    throw new Error(formatImapError(err))
   } finally {
-    lock.release()
+    if (lock && typeof lock.release === 'function') {
+      try { lock.release() } catch {}
+    }
+  }
+  await ensureMailboxExists(account, toFolder)
+  const retryClient = await getConnectedImapClient(account)
+  let retryLock: any = null
+  try {
+    retryLock = await retryClient.getMailboxLock(fromFolder)
+    await retryClient.messageMove(uid, toFolder, { uid: true })
+    return true
+  } catch (err: any) {
+    releaseImapClient(account.id || account.email)
+    throw new Error(formatImapError(err))
+  } finally {
+    if (retryLock && typeof retryLock.release === 'function') {
+      try { retryLock.release() } catch {}
+    }
   }
 }
 
@@ -926,9 +1307,16 @@ async function downloadAttachmentToFile(
     }
   }
 
-  const client = await getConnectedImapClient(account)
-  const lock = await client.getMailboxLock(folder)
+  let client: any
   try {
+    client = await getConnectedImapClient(account)
+  } catch (err: any) {
+    releaseImapClient(account.id || account.email)
+    return null
+  }
+  let lock: any = null
+  try {
+    lock = await client.getMailboxLock(folder)
     const targetUid = typeof uidOrMessageId === 'number' ? uidOrMessageId : parseInt(String(uidOrMessageId), 10)
     let resolvedUid = targetUid
 
@@ -971,8 +1359,13 @@ async function downloadAttachmentToFile(
     }
 
     return matchedPath
+  } catch (err: any) {
+    releaseImapClient(account.id || account.email)
+    return null
   } finally {
-    lock.release()
+    if (lock && typeof lock.release === 'function') {
+      try { lock.release() } catch {}
+    }
   }
 }
 
@@ -1076,6 +1469,7 @@ module.exports = {
   createSmtpTransporter,
   getConnectedImapClient,
   releaseImapClient,
+  releaseAllImapClients,
   testAccountConnection,
   listMailboxes,
   getMailboxStatus,
@@ -1083,10 +1477,13 @@ module.exports = {
   fetchFullMessage,
   searchMessages,
   sendEmail,
+  saveDraft,
+  findDraftsFolderInList,
   setMessageReadStatus,
   setMessageStarredStatus,
   deleteMessage,
   moveMessage,
+  ensureMailboxExists,
   downloadAttachmentToFile,
   openFileWithDefaultApp,
   saveAttachmentWithDialog,

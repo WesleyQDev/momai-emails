@@ -1,7 +1,11 @@
 import type { JSX } from 'react'
-import { useExtensionLocale } from '../services/i18n'
+import { getExtensionLocale, translate, useExtensionLocale } from '../services/i18n'
 import type { WidgetProps } from './types'
 import { useUnreadEmailsWidget, type UnreadConfig } from './hooks/useUnreadEmailsWidget'
+import {
+  isUnreadConfigCustomized,
+  UNREAD_LIMIT_CHOICES
+} from './unreadCustomization'
 import { WidgetLoading, WidgetState } from './components/WidgetState'
 
 export default function EmailsUnreadWidget({ config, isEditing = false }: WidgetProps<UnreadConfig>): JSX.Element {
@@ -36,4 +40,18 @@ export default function EmailsUnreadWidget({ config, isEditing = false }: Widget
       </div>
     </div>
   )
+}
+
+EmailsUnreadWidget.customization = {
+  isCustomized: (config?: Record<string, unknown>) => isUnreadConfigCustomized(config),
+  title: translate(getExtensionLocale(), 'widget.unread.customizeTitle'),
+  defaults: {},
+  options: [
+    {
+      key: 'limit',
+      kind: 'select',
+      label: translate(getExtensionLocale(), 'widget.unread.limit'),
+      options: UNREAD_LIMIT_CHOICES.map((value) => ({ value, label: value }))
+    }
+  ]
 }
