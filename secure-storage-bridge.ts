@@ -100,6 +100,7 @@ async function decryptFromStorage(cipherText: string): Promise<string | null> {
     if (ack && ack.ok && ack.plain != null) {
       return ack.plain
     }
+    return null
   }
   if (cipherText.startsWith('aes:')) {
     return decryptFallback(cipherText)
