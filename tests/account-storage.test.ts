@@ -76,4 +76,19 @@ describe('AccountManager host storage migration', () => {
     expect(await manager.setAvatar('acc_1', `data:image/jpeg;base64,${'A'.repeat(1_500_000)}`)).toBe(false)
     expect(await manager.getAvatar('acc_1')).toBeNull()
   })
+
+  it('preserves avatar when account is removed so reconnecting restores the profile photo', async () => {
+    const storage = memoryStorage()
+    const manager = new AccountManager(tmpDir, { storage })
+    const avatar = `data:image/jpeg;base64,${'A'.repeat(20_000)}`
+    await manager.setAvatar('acc_1', avatar)
+    expect(await manager.getAvatar('acc_1')).toBe(avatar)
+
+    // Simulating account removal
+    manager.accounts.set('acc_1', { id: 'acc_1', email: 'test@example.com' })
+    await manager.removeAccount('acc_1')
+
+    // Avatar must remain available for when account is reconnected
+    expect(await manager.getAvatar('acc_1')).toBe(avatar)
+  })
 })

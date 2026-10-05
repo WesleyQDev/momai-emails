@@ -749,10 +749,6 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
   const handleRemoveAccount = async (id: string) => {
     const res = await emailApi.removeAccount(id)
     if (res.ok) {
-      try {
-        const { defaultAvatarStore, removeAvatar } = await import('./services/avatar-storage')
-        removeAvatar(defaultAvatarStore(), id)
-      } catch {}
       await loadAccounts({ allowEmpty: true })
     }
   }

@@ -538,7 +538,7 @@ class AccountManager {
       const next = Array.from(this.accounts.keys())[0]
       this.activeAccountId = next || null
     }
-    await this.removeAvatar(id)
+    // Avatars are preserved across disconnect/reconnect so re-adding the account restores the custom photo.
     await this.saveAccounts()
     return true
   }

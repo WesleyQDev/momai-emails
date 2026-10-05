@@ -1,5 +1,5 @@
 import { build, context } from 'esbuild'
-import { readFileSync, mkdirSync, existsSync } from 'node:fs'
+import { readFileSync, mkdirSync, existsSync, copyFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -98,4 +98,18 @@ if (process.argv.includes('--watch')) {
 } else {
   await build(options)
   console.log('[momai-emails:build] Built →', entries.map((e) => e.out + '.js').join(', '))
+
+  // Copy runtime scripts to dist/scripts
+  const scriptsSrc = path.join(__dirname, 'scripts')
+  const scriptsDist = path.join(__dirname, 'dist', 'scripts')
+  if (existsSync(scriptsSrc)) {
+    mkdirSync(scriptsDist, { recursive: true })
+    const files = (await import('node:fs')).readdirSync(scriptsSrc)
+    for (const f of files) {
+      if (f.endsWith('.ps1')) {
+        copyFileSync(path.join(scriptsSrc, f), path.join(scriptsDist, f))
+      }
+    }
+    console.log('[momai-emails:build] Runtime scripts copied to dist/scripts')
+  }
 }

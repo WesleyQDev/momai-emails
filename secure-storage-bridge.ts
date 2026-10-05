@@ -27,7 +27,7 @@ if (typeof process !== 'undefined' && typeof process.on === 'function') {
 
 function _request(requestType: string, payload: any): Promise<any> {
   return new Promise((resolve) => {
-    if (typeof process === 'undefined' || typeof process.send !== 'function') {
+    if (typeof process === 'undefined' || typeof process.send !== 'function' || process.env.VITEST) {
       resolve(null)
       return
     }

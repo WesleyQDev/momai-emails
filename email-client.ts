@@ -581,8 +581,11 @@ async function generateDocumentThumbnail(docPath: string, width = 400): Promise<
   const scriptName = isPdf ? 'render-pdf-thumb.ps1' : 'render-office-thumb.ps1'
   const scriptCandidates = [
     path.join(__dirname, 'scripts', scriptName),
+    path.join(__dirname, 'dist', 'scripts', scriptName),
     path.join(__dirname, '..', 'scripts', scriptName),
-    path.join(process.cwd(), 'scripts', scriptName)
+    path.join(__dirname, '..', 'dist', 'scripts', scriptName),
+    path.join(process.cwd(), 'scripts', scriptName),
+    path.join(process.cwd(), 'dist', 'scripts', scriptName)
   ]
   const scriptPath = scriptCandidates.find((p) => fs.existsSync(p))
   if (!scriptPath) {
