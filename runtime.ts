@@ -53,12 +53,31 @@ function safeSend(msg: any) {
   }
 }
 
+// Fatal errors are logged with the full stack. The worker stays alive (same
+// policy as the WhatsApp extension): the host revives dead workers on the next
+// call, but exiting here would silently stop background notifications until
+// then. If the host health-check is guaranteed to restart crashes, this can be
+// changed to process.exit(1).
 process.on('uncaughtException', (err) => {
-  console.error('[runtime:momai-emails] Uncaught exception:', err)
+  console.error('[runtime:momai-emails] Uncaught exception:', err?.stack || err)
 })
 process.on('unhandledRejection', (reason) => {
   console.error('[runtime:momai-emails] Unhandled rejection:', reason)
 })
+
+// Tool argument bounds: schema limits are re-checked here so a malformed or
+// hostile call can never request an unbounded amount of mail.
+const TOOL_MAX_LIMIT = 500
+
+function clampToolLimit(value: any, fallback: number): number {
+  const numeric = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : fallback
+  return Math.min(Math.max(1, numeric), TOOL_MAX_LIMIT)
+}
+
+function clampToolOffset(value: any): number {
+  const numeric = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : 0
+  return Math.max(0, numeric)
+}
 
 const { AccountManager } = require('./account-manager.ts')
 const { classifyEmailCategory, shouldNotifyForCategory } = require('./email-categories.ts')
@@ -111,7 +130,7 @@ accountManager.setOnNewEmail(async ({ accountId, email, totalUnread }: any) => {
     const fromStr = email.from ? (email.from.name ? `${email.from.name} <${email.from.address}>` : email.from.address) : _wtr('notifications_unknownSender')
     const toStr = Array.isArray(email.to) ? email.to.map((t: any) => t.address || t.name).join(', ') : ''
 
-    const category = classifyEmailCategory({ from: email.from, subject: email.subject })
+    const category = classifyEmailCategory({ from: email.from, subject: email.subject, labels: email.labels, category: email.category })
     const prefs = await accountManager.getNotificationPrefs()
     const wantsNotice = shouldNotifyForCategory(category, prefs.primaryOnly)
 
@@ -155,6 +174,9 @@ accountManager.setOnNewEmail(async ({ accountId, email, totalUnread }: any) => {
         count: true
       }
     })
+
+    // The user can turn native notifications off in the connection screen.
+    if (prefs.notificationsEnabled === false) return
 
     // 4. Emit native OS notification directly from background worker
     const senderName =
@@ -260,7 +282,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
 
     // ── Folders & Mailboxes ──
     case 'list_folders': {
-      const account = accountManager.getAccount(args.accountId)
+      const account = accountManager.getAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail configurada.' }
       try {
         const prefs = await accountManager.getNotificationPrefs()
@@ -273,14 +295,18 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
 
     // ── Emails ──
     case 'list_emails': {
-      const account = accountManager.getAccount(args.accountId)
+      const account = accountManager.getAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail encontrada.' }
       try {
         const folder = args.folder || 'INBOX'
-        const limit = typeof args.limit === 'number' ? args.limit : 50
-        const offset = typeof args.offset === 'number' ? args.offset : 0
+        const limit = clampToolLimit(args.limit, 50)
+        const offset = clampToolOffset(args.offset)
         const unreadOnly = Boolean(args.unreadOnly)
-        const result = await fetchMessages(account, folder, limit, unreadOnly, offset)
+        const categorize = args.includeCategories !== false
+        const result = await fetchMessages(account, folder, limit, unreadOnly, offset, {
+          categorize,
+          gmailCategory: args.category
+        })
         return {
           ok: true,
           folder,
@@ -299,7 +325,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'read_email': {
-      const account = accountManager.getAccount(args.accountId)
+      const account = accountManager.getAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail encontrada.' }
       try {
         const messageId = args.messageId || args.id || args.uid
@@ -324,7 +350,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'open_attachment': {
-      const account = accountManager.getAccount(args.accountId)
+      const account = accountManager.getAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail encontrada.' }
       try {
         const messageId = args.messageId || args.id || args.uid
@@ -356,7 +382,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'save_attachment': {
-      const account = accountManager.getAccount(args.accountId)
+      const account = accountManager.getAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail encontrada.' }
       try {
         const messageId = args.messageId || args.id || args.uid
@@ -392,7 +418,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'get_attachment_preview': {
-      const account = accountManager.getAccount(args.accountId)
+      const account = accountManager.getAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Conta não encontrada.' }
       try {
         const messageId = args.messageId || args.id || args.uid
@@ -404,7 +430,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
         let previewDataUrl: string | null = null
         const ext = path.extname(filePath).toLowerCase()
         if (['.pdf', '.docx', '.doc', '.rtf', '.odt', '.xlsx', '.xls', '.csv'].includes(ext)) {
-          previewDataUrl = await generateDocumentThumbnail(filePath, 400)
+          previewDataUrl = await generateDocumentThumbnail(filePath)
         } else if (/\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(filePath)) {
           const buf = fs.readFileSync(filePath)
           const imgExt = ext.slice(1)
@@ -417,13 +443,13 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'search_emails': {
-      const account = accountManager.getAccount(args.accountId)
+      const account = accountManager.getAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail encontrada.' }
       try {
         const query = args.query || ''
         const folder = args.folder || 'INBOX'
-        const limit = typeof args.limit === 'number' ? args.limit : 200
-        const result = await searchMessages(account, query, folder, limit)
+        const limit = clampToolLimit(args.limit, 200)
+        const result = await searchMessages(account, query, folder, limit, { categorize: true })
         return {
           ok: true,
           query,
@@ -441,7 +467,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'send_email': {
-      const account = accountManager.getAccount(args.accountId)
+      const account = accountManager.getAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail configurada para envio.' }
       try {
         const result = await sendEmail(account, {
@@ -480,7 +506,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'save_draft': {
-      const account = accountManager.getAccount(args.accountId)
+      const account = accountManager.getAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail configurada para rascunho.' }
       try {
         const result = await saveDraft(account, {
@@ -512,7 +538,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'reply_email': {
-      const account = accountManager.getAccount(args.accountId)
+      const account = accountManager.getAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail configurada.' }
       try {
         const origEmail = await fetchFullMessage(account, args.messageId, args.folder || 'INBOX')
@@ -553,7 +579,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'forward_email': {
-      const account = accountManager.getAccount(args.accountId)
+      const account = accountManager.getAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail configurada.' }
       try {
         const origEmail = await fetchFullMessage(account, args.messageId, args.folder || 'INBOX')
@@ -588,7 +614,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'mark_as_read': {
-      const account = accountManager.getAccount(args.accountId)
+      const account = accountManager.getAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Conta não encontrada.' }
       const uid = parseInt(args.messageId || args.uid, 10)
       const ok = await setMessageReadStatus(account, uid, true, args.folder || 'INBOX')
@@ -606,7 +632,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'mark_as_unread': {
-      const account = accountManager.getAccount(args.accountId)
+      const account = accountManager.getAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Conta não encontrada.' }
       const uid = parseInt(args.messageId || args.uid, 10)
       const ok = await setMessageReadStatus(account, uid, false, args.folder || 'INBOX')
@@ -622,7 +648,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'toggle_starred': {
-      const account = accountManager.getAccount(args.accountId)
+      const account = accountManager.getAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Conta não encontrada.' }
       const uid = parseInt(args.messageId || args.uid, 10)
       const ok = await setMessageStarredStatus(account, uid, Boolean(args.starred), args.folder || 'INBOX')
@@ -630,7 +656,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'delete_email': {
-      const account = accountManager.getAccount(args.accountId)
+      const account = accountManager.getAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Conta não encontrada.' }
       const uid = parseInt(args.messageId || args.uid, 10)
       const ok = await deleteMessage(account, uid, args.folder || 'INBOX')
@@ -638,7 +664,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'move_email': {
-      const account = accountManager.getAccount(args.accountId)
+      const account = accountManager.getAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Conta não encontrada.' }
       const uid = parseInt(args.messageId || args.uid, 10)
       const ok = await moveMessage(account, uid, args.fromFolder || 'INBOX', args.toFolder)
@@ -653,6 +679,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     case 'set_notification_prefs': {
       const prefs = await accountManager.setNotificationPrefs({
         primaryOnly: typeof args.primaryOnly === 'boolean' ? args.primaryOnly : undefined,
+        notificationsEnabled: typeof args.notificationsEnabled === 'boolean' ? args.notificationsEnabled : undefined,
         unreadWindowHours: typeof args.unreadWindowHours === 'number' ? args.unreadWindowHours : undefined
       })
       return { ok: true, ...prefs }

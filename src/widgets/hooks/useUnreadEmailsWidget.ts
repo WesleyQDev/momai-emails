@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { fetchUnreadWidgetEmails, type WidgetEmail } from '../services/emailWidgets'
+import { resolveUnreadLimit } from '../unreadCustomization'
 
 export interface UnreadConfig {
   accountId?: string
@@ -21,7 +22,9 @@ export function useUnreadEmailsWidget(
   const [state, setState] = useState<UnreadState>({ loading: true, error: '', rows: [], total: 0 })
   const accountId = config.accountId
   const folder = config.folder ?? 'INBOX'
-  const limit = config.limit ?? 5
+  // Customization stores the choice as a string ("3"/"5"/"10"), so it must go
+  // through the resolver; otherwise the tool would ignore it.
+  const limit = resolveUnreadLimit(config as Record<string, unknown>)
 
   useEffect(() => {
     if (isEditing) {

@@ -1,6 +1,3 @@
-// src/components/EmailList.tsx
-// Message list view with infinite scroll and server-side search
-
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import {
   StarIcon as StarSolid,
@@ -17,6 +14,8 @@ import {
   ChevronRightIcon,
   PaperClipIcon,
   ArrowUturnLeftIcon,
+  ArrowUturnRightIcon,
+  ArchiveBoxIcon,
   FolderIcon
 } from '@heroicons/react/24/outline'
 import { StarIcon as StarOutline } from '@heroicons/react/24/outline'
@@ -32,6 +31,22 @@ import { isArchiveFolder, isDraftMessage, isSpamFolder, isStarredFolder, getMove
 import { formatSentRecipients, shouldShowRecipients } from '../services/recipients'
 import { isKnownDraftMessage } from '../services/draft'
 import { starredToneClass } from '../services/starred-tone'
+
+const MoveToTabIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3.75 6.75A2.25 2.25 0 016 4.5h3.879a2.25 2.25 0 011.59.659l1.622 1.622c.422.422.995.659 1.59.659H18A2.25 2.25 0 0120.25 9.75v8.5A2.25 2.25 0 0118 20.5H6A2.25 2.25 0 013.75 18.25V6.75z" />
+    <path d="M10 13.5h5m0 0l-2-2m2 2l-2 2" />
+  </svg>
+)
+
+const ReplyAllIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+    <path d="M13.5 15l-6-6 6-6" />
+  </svg>
+)
+
+const ALL_CATEGORY_IDS = ['primary', 'promotions', 'social', 'updates'] as const
 
 interface EmailListProps {
   messages: EmailMessage[]
@@ -55,6 +70,11 @@ interface EmailListProps {
   onOpenAttachment?: (msg: EmailMessage, attachment: EmailAttachment) => Promise<any> | void
   folders?: EmailFolder[]
   onReply?: (msg: EmailMessage) => void
+  onReplyAll?: (msg: EmailMessage) => void
+  onForward?: (msg: EmailMessage) => void
+  onForwardAsAttachment?: (msg: EmailMessage) => void
+  onArchive?: (msg: EmailMessage) => void
+  onMoveToCategory?: (msg: EmailMessage, category: 'primary' | 'promotions' | 'social' | 'updates') => void
   onMove?: (id: string, toFolder: string) => void
   onNotSpam?: (id: string) => void
   hasMore?: boolean
@@ -90,6 +110,11 @@ export const EmailList: React.FC<EmailListProps> = ({
   onOpenAttachment,
   folders = [],
   onReply,
+  onReplyAll,
+  onForward,
+  onForwardAsAttachment,
+  onArchive,
+  onMoveToCategory,
   onMove,
   onNotSpam,
   hasMore = false,
@@ -152,7 +177,7 @@ export const EmailList: React.FC<EmailListProps> = ({
 
   // Gmail category for inbox tabs (shared rules with the background notifier)
   const classifyEmail = useCallback((msg: EmailMessage): EmailCategory => {
-    return classifyEmailCategory({ from: msg.from, subject: msg.subject })
+    return classifyEmailCategory({ from: msg.from, subject: msg.subject, labels: msg.labels, category: msg.category })
   }, [])
 
   // Filter by unreadOnly toggle + category (categories only apply in INBOX with tabs visible)
@@ -223,14 +248,14 @@ export const EmailList: React.FC<EmailListProps> = ({
             title={t('list.selectAll')}
           />
 
+          {/* Manual refresh stays clickable during background fills */}
           <button
             type="button"
             onClick={() => {
               setManualRefresh(true)
               onRefresh()
             }}
-            disabled={loading || loadingMore}
-            className="p-1.5 rounded-lg hover:bg-input text-text-muted hover:text-text active:scale-90 active:translate-y-0.5 active:bg-input/80 transition-all duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+            className="p-1.5 rounded-lg hover:bg-input text-text-muted hover:text-text active:scale-90 active:translate-y-0.5 active:bg-input/80 transition-all duration-150 cursor-pointer"
             title={t('list.refresh')}
           >
             <ArrowPathIcon className={`w-4 h-4 ${manualRefresh ? 'animate-spin text-accent' : ''}`} />
@@ -299,8 +324,15 @@ export const EmailList: React.FC<EmailListProps> = ({
         <div className="flex items-center gap-1.5 text-xs text-text-muted select-none pl-1 shrink-0">
             <span className="font-mono text-[11px] whitespace-nowrap">
               {filteredMessages.length === 0
-                ? '0 de 0'
-                : `${pageWindow.start + 1}–${pageWindow.start + pageMessages.length} de ${(totalCount && totalCount > filteredMessages.length ? totalCount : filteredMessages.length).toLocaleString('pt-BR')}`}
+                ? t('list.counterEmpty')
+                : t('list.counterRange', {
+                    start: pageWindow.start + 1,
+                    end: pageWindow.start + pageMessages.length,
+                    total: (totalCount && totalCount > filteredMessages.length
+                      ? totalCount
+                      : filteredMessages.length
+                    ).toLocaleString(locale)
+                  })}
             </span>
             <div className="flex items-center">
               <button
@@ -330,7 +362,7 @@ export const EmailList: React.FC<EmailListProps> = ({
           </div>
         </div>
 
-      {/* Main Email Content (below toolbar, with lateral separator from sidebar) */}
+      {/* Main Email Content */}
       <div className="flex-1 min-h-0 flex flex-col border-l border-border overflow-hidden">
         {/* Gmail Category Tabs: Principal, Promoções, Social, Atualizações (only in INBOX) */}
         {useCategories && (
@@ -343,9 +375,6 @@ export const EmailList: React.FC<EmailListProps> = ({
           ]).map(({ id, Icon }) => {
             const isActive = activeCategory === id
             const info = getCategoryInfo(id, locale)
-            const unreadCount = messages.filter(
-              (m) => classifyEmail(m) === id && !m.read && isWithinUnreadWindow(m.timestamp, Date.now(), unreadWindowMs)
-            ).length
             return (
               <button
                 key={id}
@@ -363,16 +392,6 @@ export const EmailList: React.FC<EmailListProps> = ({
               >
                 <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-accent stroke-2' : 'text-text-muted'}`} />
                 <span className="truncate">{info.label}</span>
-                <span className="text-[10px] tabular-nums opacity-60 shrink-0">· {categoryTotals[id]}</span>
-                {unreadCount > 0 && (
-                  <span
-                    className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0 tabular-nums leading-none ${
-                      isActive ? 'bg-accent/15 text-accent' : 'bg-input text-text-muted'
-                    }`}
-                  >
-                    {unreadCount > 999 ? '999+' : unreadCount}
-                  </span>
-                )}
                 {isActive && (
                   <span className="absolute bottom-0 left-0 right-0 h-[3px] bg-accent rounded-t-sm" />
                 )}
@@ -425,7 +444,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                   e.stopPropagation()
                   setContextMenu({ x: e.clientX, y: e.clientY, msg })
                 }}
-                className={`group flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 cursor-pointer text-xs transition-colors relative flex-nowrap min-w-0 overflow-hidden ${
+                className={`group flex items-start gap-2 sm:gap-3 px-3 sm:px-4 py-2 cursor-pointer text-xs transition-colors relative flex-nowrap min-w-0 overflow-hidden ${
                   isSelected
                     ? 'bg-accent/10 border-l-2 border-l-accent'
                     : isChecked
@@ -460,7 +479,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                   </button>
                 </div>
 
-                {/* Sender or recipients (Gmail outgoing views show Para: without avatar) */}
+                {/* Sender or recipients */}
                 {showRecipients ? (
                   <div
                     className="w-28 sm:w-40 md:w-48 shrink-0 truncate"
@@ -484,22 +503,23 @@ export const EmailList: React.FC<EmailListProps> = ({
                 </div>
                 )}
 
-                {/* Subject, snippet & Attachment Chips — RIGOROSAMENTE NA MESMA LINHA */}
-                <div className="flex-1 min-w-0 flex items-center gap-2 overflow-hidden whitespace-nowrap">
-                  <span className={`truncate shrink-0 max-w-[50%] sm:max-w-[60%] md:max-w-none ${msg.read ? 'text-text/80 font-normal' : 'text-text font-bold'}`}>
-                    {msg.subject || t('list.noSubject')}
-                  </span>
-                  {msg.snippet && (
-                    <span className="text-text-muted font-normal truncate hidden lg:inline min-w-0 flex-1">
-                      — {msg.snippet}
+                {/* Subject, snippet and attachment chips */}
+                <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                  <div className="flex items-center gap-2 min-w-0 overflow-hidden whitespace-nowrap">
+                    <span className={`truncate shrink-0 max-w-[50%] sm:max-w-[60%] md:max-w-none ${msg.read ? 'text-text/80 font-normal' : 'text-text font-bold'}`}>
+                      {msg.subject || t('list.noSubject')}
                     </span>
-                  )}
+                    {msg.snippet && (
+                      <span className="text-text-muted font-normal truncate hidden lg:inline min-w-0 flex-1">
+                        — {msg.snippet}
+                      </span>
+                    )}
+                  </div>
 
-                  {/* Attachment chip (Gmail style) NA MESMA LINHA */}
                   {msg.attachments && msg.attachments.length > 0 && (() => {
                     const firstAtt = msg.attachments![0]
                     return (
-                      <div className="shrink-0 flex items-center gap-1.5 overflow-hidden">
+                      <div className="flex items-center gap-1.5 overflow-hidden whitespace-nowrap min-w-0">
                         <AttachmentBadge
                           attachment={firstAtt}
                           variant="chip"
@@ -523,7 +543,6 @@ export const EmailList: React.FC<EmailListProps> = ({
 
                 {/* Right: Clip, Date or Hover Actions */}
                 <div className="shrink-0 flex items-center gap-2 ml-auto text-right whitespace-nowrap">
-                  {/* Paperclip indicator */}
                   {(msg.hasAttachments || (msg.attachments && msg.attachments.length > 0)) && (
                     <PaperClipIcon className="w-3.5 h-3.5 text-text-muted shrink-0" title={t('list.hasAttachments')} />
                   )}
@@ -604,7 +623,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                           onMarkRead(msg.id)
                         }}
                         className="p-1 rounded hover:bg-input text-text-muted hover:text-text"
-                title={t('list.markRead')}
+                        title={t('list.markRead')}
                       >
                         <EnvelopeOpenIcon className="w-3.5 h-3.5" />
                       </button>
@@ -635,81 +654,101 @@ export const EmailList: React.FC<EmailListProps> = ({
       </div>
       </div>
 
-      {contextMenu && (
-        <ContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
-          onClose={() => setContextMenu(null)}
-          items={[
-            {
-              id: 'open',
-              label: t('list.open'),
-              onClick: () => onSelectEmail(contextMenu.msg)
-            },
-            ...(onReply
-              ? [
-                  {
-                    id: 'reply',
-                    label: t('list.reply'),
-                    onClick: () => onReply(contextMenu.msg)
+      {/* Gmail-style Right-Click Context Menu */}
+      {contextMenu && (() => {
+        const msgCategory = classifyEmail(contextMenu.msg)
+        const targetCategories = isInbox
+          ? ALL_CATEGORY_IDS.filter((cat) => cat !== msgCategory)
+          : ALL_CATEGORY_IDS
+
+        const getCategoryIcon = (cat: 'primary' | 'promotions' | 'social' | 'updates') => {
+          switch (cat) {
+            case 'primary':
+              return InboxIcon
+            case 'promotions':
+              return TagIcon
+            case 'social':
+              return UserGroupIcon
+            case 'updates':
+              return InformationCircleIcon
+          }
+        }
+
+        return (
+          <ContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            onClose={() => setContextMenu(null)}
+            items={[
+              {
+                id: 'move-to-tab',
+                label: t('list.moveToTab'),
+                icon: MoveToTabIcon,
+                children: targetCategories.map((cat) => ({
+                  id: `tab-${cat}`,
+                  label: getCategoryInfo(cat, locale).label,
+                  icon: getCategoryIcon(cat),
+                  onClick: () => onMoveToCategory?.(contextMenu.msg, cat)
+                }))
+              },
+              { divider: true },
+              {
+                id: 'reply',
+                label: t('list.reply'),
+                icon: ArrowUturnLeftIcon,
+                onClick: () => (onReply ? onReply(contextMenu.msg) : onSelectEmail(contextMenu.msg))
+              },
+              {
+                id: 'reply-all',
+                label: t('list.replyAll'),
+                icon: ReplyAllIcon,
+                onClick: () => (onReplyAll ? onReplyAll(contextMenu.msg) : onReply?.(contextMenu.msg))
+              },
+              {
+                id: 'forward',
+                label: t('list.forward'),
+                icon: ArrowUturnRightIcon,
+                onClick: () => (onForward ? onForward(contextMenu.msg) : onSelectEmail(contextMenu.msg))
+              },
+              {
+                id: 'forward-attachment',
+                label: t('list.forwardAsAttachment'),
+                icon: PaperClipIcon,
+                onClick: () =>
+                  onForwardAsAttachment ? onForwardAsAttachment(contextMenu.msg) : onForward?.(contextMenu.msg)
+              },
+              { divider: true },
+              {
+                id: 'archive',
+                label: t('list.archive'),
+                icon: ArchiveBoxIcon,
+                onClick: () =>
+                  onArchive ? onArchive(contextMenu.msg) : onMove?.(contextMenu.msg.id, 'Archive')
+              },
+              {
+                id: 'delete',
+                label: t('list.delete'),
+                icon: TrashIcon,
+                danger: true,
+                onClick: () => onDelete(contextMenu.msg.id)
+              },
+              contextMenu.msg.read
+                ? {
+                    id: 'unread',
+                    label: t('list.markUnread'),
+                    icon: EnvelopeIcon,
+                    onClick: () => onMarkUnread(contextMenu.msg.id)
                   }
-                ]
-              : []),
-            {
-              id: 'star',
-              label: contextMenu.msg.starred ? t('list.unfavorite') : t('list.favorite'),
-              onClick: () => onToggleStarred(contextMenu.msg.id, contextMenu.msg.starred)
-            },
-            ...(showingSpam && onNotSpam
-              ? [
-                  {
-                    id: 'not-spam',
-                    label: t('list.notSpam'),
-                    onClick: () => onNotSpam(contextMenu.msg.id)
+                : {
+                    id: 'read',
+                    label: t('list.markRead'),
+                    icon: EnvelopeOpenIcon,
+                    onClick: () => onMarkRead(contextMenu.msg.id)
                   }
-                ]
-              : []),
-            contextMenu.msg.read
-              ? {
-                  id: 'unread',
-                  label: t('list.markUnread'),
-                  onClick: () => onMarkUnread(contextMenu.msg.id)
-                }
-              : {
-                  id: 'read',
-                  label: t('list.markRead'),
-                  onClick: () => onMarkRead(contextMenu.msg.id)
-                },
-            {
-              id: 'copy-subject',
-              label: t('list.copySubject'),
-              onClick: () => {
-                try {
-                  void navigator.clipboard?.writeText?.(contextMenu.msg.subject || t('list.noSubject'))
-                } catch {}
-              }
-            },
-            {
-              id: 'copy-from',
-              label: t('list.copyFrom'),
-              onClick: () => {
-                try {
-                  const from = contextMenu.msg.from?.name
-                    ? `${contextMenu.msg.from.name} <${contextMenu.msg.from.address}>`
-                    : contextMenu.msg.from?.address || ''
-                  void navigator.clipboard?.writeText?.(from)
-                } catch {}
-              }
-            },
-            {
-              id: 'delete',
-              label: t('list.delete'),
-              danger: true,
-              onClick: () => onDelete(contextMenu.msg.id)
-            }
-          ]}
-        />
-      )}
+            ]}
+          />
+        )
+      })()}
 
       {moveMenu && onMove && (
         <ContextMenu

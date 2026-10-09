@@ -103,6 +103,17 @@ export const EmailSettings: React.FC<EmailSettingsProps> = ({
 
         <Section title={t('settings.notificationsSection')}>
           <Row
+            label={t('settings.notificationsEnabled')}
+            hint={t('settings.notificationsEnabledHint')}
+            control={
+              <Toggle
+                on={settings.notificationsEnabled}
+                onToggle={() => onChange({ notificationsEnabled: !settings.notificationsEnabled })}
+                label={t('settings.notificationsEnabled')}
+              />
+            }
+          />
+          <Row
             label={t('settings.notifyPrimaryOnly')}
             hint={t('settings.notifyPrimaryOnlyHint')}
             control={

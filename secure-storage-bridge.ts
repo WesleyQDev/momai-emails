@@ -1,10 +1,20 @@
 // secure-storage-bridge.ts
-// Bridge between the momai-emails worker and the Electron OS keychain (safeStorage),
-// with an AES-256-GCM fallback when running outside Electron or if safeStorage is unavailable.
+// Bridge between the momai-emails worker and the Electron OS keychain (safeStorage).
+//
+// Security model (aligned with the WhatsApp extension): credentials are only
+// persisted through the host keychain. There is no machine-derived "fallback"
+// encryption anymore — a weak key derived from COMPUTERNAME/USERNAME offered
+// no real protection and gave a false sense of safety.
+// When the keychain is unavailable, saveAccounts keeps the accounts in memory
+// for the current session and warns instead of writing reversible ciphertext.
+//
+// The `aes:` reader is kept only to migrate data written by older versions:
+// once the keychain works again, the next save re-encrypts to `ss:`.
 
 const crypto = require('node:crypto')
 
 const SECURE_STORAGE_TIMEOUT_MS = 5000
+const LEGACY_PREFIX = 'aes:'
 const pending = new Map<string, { resolve: (val: any) => void; timeout: any }>()
 let nextId = 1
 
@@ -47,29 +57,24 @@ function _request(requestType: string, payload: any): Promise<any> {
   })
 }
 
-// AES-256-GCM fallback encryption key derived from machine identifier or local constant
-function getFallbackKey(): Buffer {
+// ---------------------------------------------------------------------------
+// Legacy reader only. Never used to write new data.
+// ---------------------------------------------------------------------------
+
+function getLegacyKey(): Buffer {
   const seed = process.env.COMPUTERNAME || process.env.HOSTNAME || process.env.USERNAME || 'momai-default-key-seed'
   return crypto.createHash('sha256').update(`momai-emails-salt-${seed}`).digest()
 }
 
-function encryptFallback(plain: string): string {
-  const iv = crypto.randomBytes(12)
-  const cipher = crypto.createCipheriv('aes-256-gcm', getFallbackKey(), iv)
-  const encrypted = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()])
-  const tag = cipher.getAuthTag()
-  return `aes:${Buffer.concat([iv, tag, encrypted]).toString('base64')}`
-}
-
-function decryptFallback(cipherText: string): string | null {
+function decryptLegacy(cipherText: string): string | null {
   try {
-    if (!cipherText.startsWith('aes:')) return null
-    const buf = Buffer.from(cipherText.slice(4), 'base64')
+    if (!cipherText.startsWith(LEGACY_PREFIX)) return null
+    const buf = Buffer.from(cipherText.slice(LEGACY_PREFIX.length), 'base64')
     if (buf.length < 28) return null
     const iv = buf.subarray(0, 12)
     const tag = buf.subarray(12, 28)
     const data = buf.subarray(28)
-    const decipher = crypto.createDecipheriv('aes-256-gcm', getFallbackKey(), iv)
+    const decipher = crypto.createDecipheriv('aes-256-gcm', getLegacyKey(), iv)
     decipher.setAuthTag(tag)
     return decipher.update(data, undefined, 'utf8') + decipher.final('utf8')
   } catch {
@@ -78,19 +83,22 @@ function decryptFallback(cipherText: string): string | null {
 }
 
 /**
- * Encrypt a plaintext string. Uses OS safeStorage via host bridge first, with AES-256-GCM fallback.
+ * Encrypt a plaintext string through the OS keychain. Returns null when the
+ * keychain is unavailable; callers must not persist plaintext themselves.
  */
-async function encryptForStorage(plain: string): Promise<string> {
+async function encryptForStorage(plain: string): Promise<string | null> {
   if (!plain) return ''
   const ack = await _request('secure-storage:encrypt', { plain })
   if (ack && ack.ok && ack.encrypted) {
     return `ss:${ack.encrypted}`
   }
-  return encryptFallback(plain)
+  return null
 }
 
 /**
- * Decrypt a ciphertext string. Handles both safeStorage and AES-256-GCM formats.
+ * Decrypt a stored value. Accepts the current `ss:` format and the legacy
+ * `aes:` format (migration only). Returns null when nothing could be
+ * decrypted; never echoes the ciphertext back as if it were plaintext.
  */
 async function decryptFromStorage(cipherText: string): Promise<string | null> {
   if (!cipherText) return ''
@@ -102,15 +110,15 @@ async function decryptFromStorage(cipherText: string): Promise<string | null> {
     }
     return null
   }
-  if (cipherText.startsWith('aes:')) {
-    return decryptFallback(cipherText)
+  if (cipherText.startsWith(LEGACY_PREFIX)) {
+    return decryptLegacy(cipherText)
   }
-  // Try decrypting as safeStorage fallback without prefix
+  // Very old entries had no prefix. Try the keychain, then the legacy reader.
   const ack = await _request('secure-storage:decrypt', { encryptedBase64: cipherText })
   if (ack && ack.ok && ack.plain != null) {
     return ack.plain
   }
-  return decryptFallback(`aes:${cipherText}`) || cipherText
+  return decryptLegacy(`${LEGACY_PREFIX}${cipherText}`)
 }
 
 module.exports = { encryptForStorage, decryptFromStorage }

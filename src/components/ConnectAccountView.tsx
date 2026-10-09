@@ -10,12 +10,13 @@ import {
   EyeIcon,
   EyeSlashIcon,
   TrashIcon,
-  UserIcon,
-  KeyIcon
+  UserIcon
 } from '@heroicons/react/24/outline'
 import { GmailIcon, OutlookIcon, YahooIcon, CustomMailIcon } from './ProviderIcons'
 import { PROVIDERS, ProviderId, detectProviderFromEmail, getLocalizedProvider } from '../services/providers'
 import { useExtensionLocale, type ExtensionLocale } from '../services/i18n'
+import { emailApi } from '../services/api'
+import { loadEmailSettings, saveEmailSettings } from '../services/settings'
 
 interface ConnectAccountViewProps {
   onSave: (data: any) => Promise<{ ok: boolean; error?: string }>
@@ -26,7 +27,6 @@ interface ConnectAccountViewProps {
 interface AutofillProfile {
   id: string
   email: string
-  password?: string
   name?: string
   provider: ProviderId
   imap?: any
@@ -41,7 +41,25 @@ function getSavedProfiles(): AutofillProfile[] {
     const raw = localStorage.getItem(AUTOFILL_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
+    if (!Array.isArray(parsed)) return []
+    // Security migration: older versions stored the account password in plain
+    // text here. Strip it and persist the cleaned list.
+    let strippedPassword = false
+    const profiles: AutofillProfile[] = parsed
+      .filter((entry: any) => entry && typeof entry === 'object')
+      .map((entry: any) => {
+        const { password, ...rest } = entry
+        if (typeof password === 'string' && password.length > 0) strippedPassword = true
+        return rest as AutofillProfile
+      })
+    if (strippedPassword) {
+      try {
+        localStorage.setItem(AUTOFILL_KEY, JSON.stringify(profiles))
+      } catch {
+        // Cleanup is best effort; the password is still dropped from memory.
+      }
+    }
+    return profiles
   } catch {
     return []
   }
@@ -113,6 +131,20 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
 
   useEffect(() => {
     setSavedProfiles(getSavedProfiles())
+    // Reflect the real worker preference (the old checkbox wrote a localStorage
+    // key nobody read, so it never controlled notifications).
+    let cancelled = false
+    emailApi
+      .getNotificationPrefs()
+      .then((res) => {
+        if (!cancelled && res?.ok && typeof res.notificationsEnabled === 'boolean') {
+          setNotifyOnNewEmails(res.notificationsEnabled)
+        }
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   // Close autofill and context menu on outside click
@@ -167,7 +199,6 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
   // Handle selecting an autocomplete suggestion
   const handleSelectSuggestion = (profile: AutofillProfile) => {
     setEmail(profile.email)
-    if (profile.password) setPassword(profile.password)
     if (profile.name) setName(profile.name)
     if (profile.imap) {
       if (profile.imap.host) setImapHost(profile.imap.host)
@@ -217,8 +248,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
         name: name.trim() || email.split('@')[0],
         email: email.trim(),
         password: password.trim(),
-        provider: selectedProvider,
-        rememberCredentials
+        provider: selectedProvider
       }
 
       if (selectedProvider === 'custom') {
@@ -239,11 +269,11 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
       if (!res.ok) {
         setError(res.error || t('connect.errorFallback'))
       } else {
-        // Save to autofill if rememberCredentials is on
+        // Autofill stores only non-secret data (address, name, servers).
+        // The password never leaves the encrypted worker storage.
         if (rememberCredentials) {
           const updated = saveAutofillProfile({
             email: email.trim(),
-            password: password.trim(),
             name: name.trim(),
             provider: selectedProvider,
             imap: selectedProvider === 'custom' ? payload.imap : undefined,
@@ -252,10 +282,12 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
           setSavedProfiles(updated)
         }
 
-        // Save notification preference for new incoming emails
+        // Persist the native-notification choice in the worker, where the
+        // background poller actually emits notifications, and mirror it in the
+        // shared settings so the page does not overwrite it on next launch.
         try {
-          localStorage.setItem('momai_emails_notifications_enabled', notifyOnNewEmails ? 'true' : 'false')
-          localStorage.setItem(`momai_emails_notify_${email.trim().toLowerCase()}`, notifyOnNewEmails ? 'true' : 'false')
+          await emailApi.setNotificationPrefs({ notificationsEnabled: notifyOnNewEmails })
+          saveEmailSettings({ ...loadEmailSettings(), notificationsEnabled: notifyOnNewEmails })
         } catch {}
 
         setSuccess(true)
@@ -448,15 +480,15 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
               type="email"
               required
               autoComplete="off"
-              placeholder={
+              placeholder={t(
                 selectedProvider === 'gmail'
-                  ? 'seuemail@gmail.com'
-                  : selectedProvider === 'outlook'
-                    ? 'seuemail@outlook.com'
+                  ? 'connect.emailPlaceholder.gmail'
+                  : selectedProvider === 'outlook' || selectedProvider === 'hotmail'
+                    ? 'connect.emailPlaceholder.outlook'
                     : selectedProvider === 'yahoo'
-                      ? 'seuemail@yahoo.com'
-                      : 'voce@seudominio.com'
-              }
+                      ? 'connect.emailPlaceholder.yahoo'
+                      : 'connect.emailPlaceholder.custom'
+              )}
               value={email}
               onFocus={() => setShowAutofill(true)}
               onChange={(e) => handleEmailChange(e.target.value)}
@@ -489,12 +521,6 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
-                      {item.password && (
-                        <span className="text-[10px] text-accent flex items-center gap-1 font-mono">
-                          <KeyIcon className="w-3 h-3" />
-                          <span>••••</span>
-                        </span>
-                      )}
                       <button
                         type="button"
                         onClick={(e) => handleDeleteSuggestion(item.id, e)}
@@ -532,11 +558,11 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
               <input
                 type={showPassword ? 'text' : 'password'}
                 required
-                placeholder={
+                placeholder={t(
                   selectedProvider === 'gmail'
-                    ? 'Senha de app de 16 letras (ex: abcd efgh ijkl mnop)'
-                    : 'Senha de aplicativo gerada na sua conta'
-                }
+                    ? 'connect.gmailPasswordPlaceholder'
+                    : 'connect.genericPasswordPlaceholder'
+                )}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full pl-4 pr-11 py-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted outline-none focus:outline-none focus:border-accent font-mono"
@@ -558,7 +584,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
             </label>
             <input
               type="text"
-              placeholder="Ex: Trabalho, Pessoal"
+              placeholder={t('connect.displayNamePlaceholder')}
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="w-full px-4 py-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted outline-none focus:outline-none focus:border-accent"
@@ -599,7 +625,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
                         onChange={(e) => setImapSecure(e.target.checked)}
                         className="rounded border-border"
                       />
-                      <span>SSL / TLS</span>
+                      <span>{t('connect.sslTls')}</span>
                     </label>
                   </div>
                 </div>
@@ -630,7 +656,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
                         onChange={(e) => setSmtpSecure(e.target.checked)}
                         className="rounded border-border"
                       />
-                      <span>SSL</span>
+                      <span>{t('connect.ssl')}</span>
                     </label>
                     <label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer">
                       <input
@@ -639,7 +665,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
                         onChange={(e) => setSmtpRequireTLS(e.target.checked)}
                         className="rounded border-border"
                       />
-                      <span>STARTTLS</span>
+                      <span>{t('connect.starttls')}</span>
                     </label>
                   </div>
                 </div>
@@ -927,19 +953,24 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
           {selectedProvider === 'outlook' && (
             <div className="space-y-1.5 leading-relaxed">
               <p>
-                1. Acesse as opções de{' '}
+                {t('connect.outlookFaq.step1Before')}
                 <a
                   href="https://account.live.com/proofs/manage/additional"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-accent underline font-medium inline-flex items-center gap-0.5"
                 >
-                  Segurança Adicional da Microsoft
+                  {t('connect.outlookFaq.securityLink')}
                   <ArrowTopRightOnSquareIcon className="w-3 h-3" />
-                </a>.
+                </a>
+                {t('connect.outlookFaq.step1After')}
               </p>
               <p>
-                2. Na seção <strong>Senhas de aplicativo</strong>, clique em <strong>Criar nova senha</strong> e cole o código gerado acima.
+                {t('connect.outlookFaq.step2Before')}
+                <strong>{t('connect.outlookFaq.appPasswords')}</strong>
+                {t('connect.outlookFaq.step2Mid')}
+                <strong>{t('connect.outlookFaq.createNewPassword')}</strong>
+                {t('connect.outlookFaq.step2After')}
               </p>
             </div>
           )}
@@ -947,28 +978,29 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
           {selectedProvider === 'yahoo' && (
             <div className="space-y-1.5 leading-relaxed">
               <p>
-                1. Acesse{' '}
+                {t('connect.yahooFaq.step1Before')}
                 <a
                   href="https://login.yahoo.com/account/security"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-accent underline font-medium inline-flex items-center gap-0.5"
                 >
-                  Segurança da Conta Yahoo
+                  {t('connect.yahooFaq.securityLink')}
                   <ArrowTopRightOnSquareIcon className="w-3 h-3" />
-                </a>.
+                </a>
+                {t('connect.yahooFaq.step1After')}
               </p>
               <p>
-                2. Clique em <strong>Gerar senha de aplicativo</strong>, digite <strong>MomAI</strong> e copie a senha gerada.
+                {t('connect.yahooFaq.step2Before')}
+                <strong>{t('connect.yahooFaq.createAppPassword')}</strong>
+                {t('connect.yahooFaq.step2After')}
               </p>
             </div>
           )}
 
           {selectedProvider === 'custom' && (
             <div className="space-y-1.5 leading-relaxed">
-              <p>
-                Para servidores corporativos, cPanel, Zoho ou Hostgator, utilize as portas <strong>993 (IMAP SSL)</strong> e <strong>587 (SMTP STARTTLS)</strong>. Provedores como Zoho e iCloud exigem senha de app gerada no painel de segurança da conta.
-              </p>
+              <p>{t('connect.customFaq.tip')}</p>
             </div>
           )}
         </div>

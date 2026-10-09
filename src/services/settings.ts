@@ -7,6 +7,7 @@ export type UnreadWindowHours = 24 | 48
 
 export interface EmailSettings {
   notifyPrimaryOnly: boolean
+  notificationsEnabled: boolean
   showCategoryTabs: boolean
   unreadWindowHours: UnreadWindowHours
   autoMarkRead: boolean
@@ -14,6 +15,7 @@ export interface EmailSettings {
 
 export const DEFAULT_EMAIL_SETTINGS: EmailSettings = {
   notifyPrimaryOnly: true,
+  notificationsEnabled: true,
   showCategoryTabs: true,
   unreadWindowHours: 48,
   autoMarkRead: true
@@ -68,6 +70,10 @@ export function loadEmailSettings(store: SettingsStore = defaultSettingsStore())
         typeof parsed.notifyPrimaryOnly === 'boolean'
           ? parsed.notifyPrimaryOnly
           : DEFAULT_EMAIL_SETTINGS.notifyPrimaryOnly,
+      notificationsEnabled:
+        typeof parsed.notificationsEnabled === 'boolean'
+          ? parsed.notificationsEnabled
+          : DEFAULT_EMAIL_SETTINGS.notificationsEnabled,
       showCategoryTabs:
         typeof parsed.showCategoryTabs === 'boolean' ? parsed.showCategoryTabs : DEFAULT_EMAIL_SETTINGS.showCategoryTabs,
       unreadWindowHours: asWindowHours(parsed.unreadWindowHours),

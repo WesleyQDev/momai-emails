@@ -37,6 +37,9 @@ export interface EmailMessage {
   read: boolean
   starred: boolean
   draft?: boolean
+  labels?: string[]
+  /** Real category resolved by the server (Gmail), when available. */
+  category?: 'primary' | 'promotions' | 'social' | 'updates'
   snippet: string
   text?: string
   html?: string

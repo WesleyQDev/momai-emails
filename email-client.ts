@@ -8,7 +8,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
-const { exec, execFile } = require('node:child_process')
+const { execFile } = require('node:child_process')
 const { ImapFlow } = require('imapflow')
 const nodemailer = require('nodemailer')
 const { simpleParser } = require('mailparser')
@@ -36,6 +36,91 @@ function getAttachmentsBaseDir(): string {
   }
   return path.join(os.tmpdir(), 'momai-emails-attachments')
 }
+
+/**
+ * Turns arbitrary IMAP values (account email, folder path, message id) into a
+ * single portable path segment so cache directories never contain characters
+ * that are invalid on Windows (e.g. '<', '>', '/' or spaces).
+ */
+function sanitizeCacheSegment(value: unknown): string {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '_')
+}
+
+/**
+ * Per-message cache directory scoped by account, folder and UID. IMAP UIDs are
+ * only unique inside a mailbox, so the folder must be part of the path or the
+ * same UID in two folders would share (and cross-contaminate) the cache.
+ */
+function getMessageCacheDir(account: any, folder: string, uid: string | number): string {
+  const accountKey = sanitizeCacheSegment(account?.email || account?.id || 'default') || 'default'
+  const folderKey = sanitizeCacheSegment(folder || 'inbox') || 'inbox'
+  const uidKey = sanitizeCacheSegment(uid) || 'unknown'
+  return path.join(getAttachmentsBaseDir(), accountKey, folderKey, uidKey)
+}
+
+/** How long parsed-message and attachment caches are kept on disk. */
+const MESSAGE_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
+
+/**
+ * Removes the local cache (parsed body, attachments and thumbnails) of one
+ * message. Called after delete/move so content the user removed stops living
+ * on disk; the copy on the mail server is never touched.
+ */
+function invalidateMessageCache(account: any, folder: string, uid: string | number): void {
+  try {
+    fs.rmSync(getMessageCacheDir(account, folder, uid), { recursive: true, force: true })
+  } catch {
+    // Cache removal is best effort and must never break the mail operation.
+  }
+}
+
+/**
+ * Age-based cleanup of the whole message cache (base/account/folder/uid).
+ * Runs in the background on worker startup; returns how many message
+ * directories were removed. Failures are ignored on purpose.
+ */
+function pruneMessageCache(maxAgeMs: number = MESSAGE_CACHE_MAX_AGE_MS): number {
+  const base = getAttachmentsBaseDir()
+  let removed = 0
+  const now = Date.now()
+
+  const walk = (dir: string, depth: number): void => {
+    let entries: any[]
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const full = path.join(dir, entry.name)
+      const childDepth = depth + 1
+      if (childDepth >= 3) {
+        try {
+          const st = fs.statSync(full)
+          if (now - st.mtimeMs > maxAgeMs) {
+            fs.rmSync(full, { recursive: true, force: true })
+            removed += 1
+            continue
+          }
+        } catch {
+          continue
+        }
+      }
+      walk(full, childDepth)
+    }
+  }
+
+  walk(base, 0)
+  return removed
+}
+
+// Document previews are rendered at this width; PDFs up to this size also keep
+// an inline base64 copy so the reader can draw a fallback preview without I/O.
+const DOCUMENT_THUMBNAIL_WIDTH = 400
+const MAX_INLINE_PDF_BYTES = 15 * 1024 * 1024
 
 interface ConnectionTestResult {
   ok: boolean
@@ -66,48 +151,70 @@ function formatImapError(err: any): string {
   return String(err)
 }
 
+// IMAP operational timeouts to prevent worker starvation and 120s locks
+const IMAP_CONNECTION_TIMEOUT_MS = 15000
+const IMAP_GREETING_TIMEOUT_MS = 10000
+const IMAP_SOCKET_TIMEOUT_MS = 30000
+
+/**
+ * Builds the ImapFlow options. Exported for tests: certificates are always
+ * verified and non-secure ports are forced to upgrade with STARTTLS.
+ */
+function buildImapClientOptions(account: any) {
+  const secure = Boolean(account.imap?.secure)
+  return {
+    host: account.imap.host,
+    port: account.imap.port,
+    secure,
+    auth: {
+      user: account.imap?.user || account.email,
+      pass: account.password || ''
+    },
+    logger: false,
+    emitLogs: false,
+    connectionTimeout: IMAP_CONNECTION_TIMEOUT_MS,
+    greetingTimeout: IMAP_GREETING_TIMEOUT_MS,
+    socketTimeout: IMAP_SOCKET_TIMEOUT_MS,
+    ...(secure ? {} : { doSTARTTLS: true })
+  }
+}
+
 /**
  * Creates an ImapFlow client instance for the specified account.
  */
 function createImapClient(account: any, logger = false) {
-  const username = account.imap?.user || account.email
-  const password = account.password || ''
-  const client = new ImapFlow({
-    host: account.imap.host,
-    port: account.imap.port,
-    secure: account.imap.secure,
-    auth: {
-      user: username,
-      pass: password
-    },
-    logger: logger ? false : false,
-    emitLogs: false,
-    tls: {
-      rejectUnauthorized: false
-    }
+  const client = new ImapFlow(buildImapClientOptions(account))
+  client.on('error', (err: any) => {
+    console.warn(
+      `[momai-emails] IMAP connection error for ${account.imap?.host || account.email}:`,
+      err?.message || err
+    )
   })
-  client.on('error', () => {})
   return client
+}
+
+/**
+ * Builds the Nodemailer transport options. Exported for tests: no
+ * rejectUnauthorized override and STARTTLS required on non-secure ports.
+ */
+function buildSmtpTransportOptions(account: any) {
+  return {
+    host: account.smtp.host,
+    port: account.smtp.port,
+    secure: Boolean(account.smtp?.secure),
+    requireTLS: account.smtp?.requireTLS === true,
+    auth: {
+      user: account.smtp?.user || account.email,
+      pass: account.password || ''
+    }
+  }
 }
 
 /**
  * Creates a Nodemailer transporter for the specified account.
  */
 function createSmtpTransporter(account: any) {
-  const username = account.smtp?.user || account.email
-  const password = account.password || ''
-  return nodemailer.createTransport({
-    host: account.smtp.host,
-    port: account.smtp.port,
-    secure: account.smtp.secure,
-    auth: {
-      user: username,
-      pass: password
-    },
-    tls: {
-      rejectUnauthorized: false
-    }
-  })
+  return nodemailer.createTransport(buildSmtpTransportOptions(account))
 }
 
 // Active IMAP connection pool (1 warm client per account)
@@ -146,7 +253,21 @@ async function getConnectedImapClient(account: any) {
         imapPool.delete(key)
       })
 
-      await client.connect()
+      const connectPromise = client.connect()
+      let timer: NodeJS.Timeout | null = null
+      const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          try { client.close() } catch {}
+          reject(new Error(`Timeout de conexão IMAP após ${IMAP_CONNECTION_TIMEOUT_MS}ms para ${account.imap?.host || account.email}`))
+        }, IMAP_CONNECTION_TIMEOUT_MS)
+      })
+
+      try {
+        await Promise.race([connectPromise, timeoutPromise])
+      } finally {
+        if (timer) clearTimeout(timer)
+      }
+
       imapPool.set(key, client)
       return client
     } catch (err) {
@@ -435,11 +556,212 @@ function extractAttachmentsFromBodyStructure(structure: any): any[] {
   return attachments
 }
 
+/** Maps Gmail's category name to the four tabs used by the inbox UI. */
+const GMAIL_CATEGORY_TO_UI: Record<string, string> = {
+  primary: 'primary',
+  personal: 'primary',
+  promotions: 'promotions',
+  social: 'social',
+  updates: 'updates',
+  forums: 'updates'
+}
+
+function mapGmailCategoryToUi(category: string): string | null {
+  return GMAIL_CATEGORY_TO_UI[String(category || '').toLowerCase()] || null
+}
+
+/** Gmail categories accepted by the X-GM-RAW `category:` search. */
+const GMAIL_SEARCH_CATEGORIES = new Set(['primary', 'promotions', 'social', 'updates', 'forums'])
+
+/**
+ * Normalizes a requested category to its Gmail search name. Accepts the
+ * server alias `personal` (Gmail's label for Primary) and returns null for
+ * unknown values so callers can fall back to normal listing.
+ */
+function normalizeGmailCategory(value: any): string | null {
+  if (value == null) return null
+  const normalized = String(value).trim().toLowerCase()
+  if (normalized === 'personal') return 'primary'
+  return GMAIL_SEARCH_CATEGORIES.has(normalized) ? normalized : null
+}
+
+/**
+ * Reads the real Gmail category through the X-GM-RAW IMAP extension, so the
+ * tabs match what Gmail already decided instead of a local heuristic. Works
+ * for any account advertising X-GM-EXT-1 (Gmail and Google Workspace) —
+ * no sender/domain list involved. Returns null when unsupported or when the
+ * lookup failed; categories are best effort and must never break listing.
+ */
+async function resolveGmailCategories(client: any, uids: number[]): Promise<Map<number, string> | null> {
+  const wanted = Array.from(
+    new Set((uids || []).map((uid) => Number(uid)).filter((uid) => Number.isFinite(uid) && uid > 0))
+  )
+  if (wanted.length === 0) return null
+  if (!client?.capabilities || typeof client.capabilities.has !== 'function') return null
+  if (!client.capabilities.has('X-GM-EXT-1')) return null
+
+  try {
+    const sorted = wanted.slice().sort((a, b) => a - b)
+    const uidRange = `${sorted[0]}:${sorted[sorted.length - 1]}`
+    const wantedSet = new Set(wanted)
+    const resolved = new Map<number, string>()
+
+    // Gmail assigns exactly one category per message; whatever is absent from
+    // the non-primary buckets is Primary. Run sequentially to avoid socket
+    // collisions on imapflow client.
+    const gmailCategories = ['promotions', 'social', 'updates', 'forums']
+    for (const gmailCategory of gmailCategories) {
+      const found = await client.search({ uid: uidRange, gmraw: `category:${gmailCategory}` }, { uid: true })
+      for (const uid of Array.isArray(found) ? found : []) {
+        const numeric = Number(uid)
+        if (wantedSet.has(numeric) && !resolved.has(numeric)) {
+          resolved.set(numeric, mapGmailCategoryToUi(gmailCategory) || 'primary')
+        }
+      }
+    }
+    for (const uid of wanted) {
+      if (!resolved.has(uid)) resolved.set(uid, 'primary')
+    }
+    return resolved
+  } catch (err: any) {
+    console.warn('[momai-emails] Gmail category lookup failed (falling back to local heuristic):', err?.message || err)
+    return null
+  }
+}
+
+/** Applies resolved Gmail categories to a page of messages, when enabled. */
+async function applyGmailCategories(client: any, messages: any[], enabled: boolean): Promise<void> {
+  if (!enabled || !Array.isArray(messages) || messages.length === 0) return
+  const map = await resolveGmailCategories(client, messages.map((message) => Number(message.uid)))
+  if (!map) return
+  for (const message of messages) {
+    const category = map.get(Number(message.uid))
+    if (category) message.category = category
+  }
+}
+
+/**
+ * Category enrichment for the background poller: runs only for messages that
+ * actually arrived, so X-GM-RAW searches never repeat on idle polls.
+ */
+async function resolveGmailCategoriesForMessages(account: any, messages: any[]): Promise<void> {
+  if (!Array.isArray(messages) || messages.length === 0) return
+  let client: any
+  try {
+    client = await getConnectedImapClient(account)
+  } catch {
+    return
+  }
+  let lock: any = null
+  try {
+    lock = await client.getMailboxLock('INBOX')
+    await applyGmailCategories(client, messages, true)
+  } catch {
+    // Best effort: notifications fall back to the local classifier.
+  } finally {
+    if (lock && typeof lock.release === 'function') {
+      try {
+        lock.release()
+      } catch {}
+    }
+  }
+}
+
+/** Maps one imapflow fetch result into the message shape used by the extension. */
+function toFetchedMessage(msg: any, account: any, folder: string): any {
+  const env = msg.envelope || {}
+  const fromAddr = env.from?.[0] || { name: '', address: 'desconhecido@email.com' }
+  const toAddrs = (env.to || []).map((t: any) => ({ name: t.name || '', address: t.address || '' }))
+  const atts = extractAttachmentsFromBodyStructure(msg.bodyStructure)
+  const labels = msg.labels ? Array.from(msg.labels) : []
+  let detectedCategory: string | undefined = undefined
+  if (labels.length > 0) {
+    const lowerLabels = labels.map((l: any) => String(l).toLowerCase())
+    if (lowerLabels.some((l) => l.includes('smartlabel_promo') || l.includes('promotions') || l.includes('category-promotions') || l.includes('category_promotions'))) {
+      detectedCategory = 'promotions'
+    } else if (lowerLabels.some((l) => l.includes('smartlabel_social') || l.includes('category-social') || l.includes('category_social') || l.includes('social'))) {
+      detectedCategory = 'social'
+    } else if (lowerLabels.some((l) => l.includes('smartlabel_notification') || l.includes('smartlabel_update') || l.includes('category-updates') || l.includes('category_updates') || l.includes('smartlabel_group') || l.includes('category-forums') || l.includes('category_forums') || l.includes('updates'))) {
+      detectedCategory = 'updates'
+    } else if (lowerLabels.some((l) => l.includes('smartlabel_personal') || l.includes('category-personal') || l.includes('category_personal') || l.includes('personal') || l.includes('primary'))) {
+      detectedCategory = 'primary'
+    }
+  }
+  return {
+    id: String(msg.uid || msg.seq),
+    uid: msg.uid || msg.seq,
+    messageId: env.messageId || String(msg.uid || msg.seq),
+    accountId: account.id || account.email,
+    folder,
+    subject: env.subject || '(Sem assunto)',
+    from: { name: fromAddr.name || fromAddr.address, address: fromAddr.address },
+    to: toAddrs,
+    date: env.date ? new Date(env.date).toISOString() : new Date().toISOString(),
+    timestamp: env.date ? new Date(env.date).getTime() : Date.now(),
+    read: msg.flags ? msg.flags.has('\\Seen') : false,
+    starred: msg.flags ? msg.flags.has('\\Flagged') : false,
+    draft: msg.flags ? msg.flags.has('\\Draft') : false,
+    labels,
+    category: detectedCategory,
+    snippet: '',
+    hasAttachments: atts.length > 0,
+    attachments: atts
+  }
+}
+
+/**
+ * Lists the newest messages of a single Gmail category (X-GM-RAW
+ * `category:<name>`) directly on the server. Gmail already assigns exactly one
+ * category per message, so a sparse tab such as Primary can fill a full page
+ * without scanning the whole inbox client-side. Returns null when the account
+ * is not Gmail or the search failed, so callers fall back to normal listing.
+ */
+async function listCategoryMessages(
+  client: any,
+  account: any,
+  folder: string,
+  gmailCategory: string,
+  limit: number,
+  offset: number
+) {
+  if (!client?.capabilities || typeof client.capabilities.has !== 'function') return null
+  if (!client.capabilities.has('X-GM-EXT-1')) return null
+  try {
+    const uids = await client.search({ gmraw: `category:${gmailCategory}` }, { uid: true })
+    if (!Array.isArray(uids) || uids.length === 0) return { messages: [], hasMore: false, total: 0 }
+    uids.sort((a: number, b: number) => b - a)
+    const targetUids = uids.slice(offset, offset + limit)
+    const hasMore = (offset + limit) < uids.length
+    const messages: any[] = []
+    for await (const msg of client.fetch(
+      targetUids.join(','),
+      { uid: true, envelope: true, flags: true, bodyStructure: true, size: true, labels: true },
+      { uid: true }
+    )) {
+      const mapped = toFetchedMessage(msg, account, folder)
+      mapped.category = mapGmailCategoryToUi(gmailCategory) || 'primary'
+      messages.push(mapped)
+    }
+    messages.sort((a, b) => b.timestamp - a.timestamp)
+    return { messages, hasMore, total: uids.length }
+  } catch (err: any) {
+    console.warn('[momai-emails] Gmail category listing failed (falling back to normal listing):', err?.message || err)
+    return null
+  }
+}
+
 /**
  * Fetch messages list from a mailbox using warm connection.
  * Supports offset-based pagination for infinite scroll.
  */
-async function fetchMessages(account: any, folder = 'INBOX', limit = 50, unreadOnly = false, offset = 0) {
+async function fetchMessages(
+  account: any,
+  folder = 'INBOX',
+  limit = 50,
+  unreadOnly = false,
+  offset = 0,
+  options: { categorize?: boolean; gmailCategory?: string | null } = {}
+) {
   let client: any
   try {
     client = await getConnectedImapClient(account)
@@ -466,6 +788,17 @@ async function fetchMessages(account: any, folder = 'INBOX', limit = 50, unreadO
     const count = mailbox?.exists || 0
     if (count === 0) return { messages: [], hasMore: false, total: 0 }
 
+    // Gmail category listing goes straight to the server: one X-GM-RAW search
+    // plus one small fetch, instead of scanning the inbox window by window.
+    if (options.gmailCategory) {
+      const normalized = normalizeGmailCategory(options.gmailCategory)
+      if (normalized) {
+        const listed = await listCategoryMessages(client, account, folder, normalized, limit, offset)
+        if (listed) return listed
+        return { messages: [], hasMore: false, total: 0, categoryUnsupported: true }
+      }
+    }
+
     if (unreadOnly) {
       const uids = await client.search({ seen: false }, { uid: true })
       if (!uids || uids.length === 0) return { messages: [], hasMore: false, total: 0 }
@@ -474,32 +807,12 @@ async function fetchMessages(account: any, folder = 'INBOX', limit = 50, unreadO
       const hasMore = (offset + limit) < uids.length
       for await (const msg of client.fetch(
         targetUids.join(','),
-        { uid: true, envelope: true, flags: true, bodyStructure: true, size: true },
+        { uid: true, envelope: true, flags: true, bodyStructure: true, size: true, labels: true },
         { uid: true }
       )) {
-        const env = msg.envelope || {}
-        const fromAddr = env.from?.[0] || { name: '', address: 'desconhecido@email.com' }
-        const toAddrs = (env.to || []).map((t: any) => ({ name: t.name || '', address: t.address || '' }))
-        const atts = extractAttachmentsFromBodyStructure(msg.bodyStructure)
-        messages.push({
-          id: String(msg.uid || msg.seq),
-          uid: msg.uid || msg.seq,
-          messageId: env.messageId || String(msg.uid || msg.seq),
-          accountId: account.id || account.email,
-          folder,
-          subject: env.subject || '(Sem assunto)',
-          from: { name: fromAddr.name || fromAddr.address, address: fromAddr.address },
-          to: toAddrs,
-          date: env.date ? new Date(env.date).toISOString() : new Date().toISOString(),
-          timestamp: env.date ? new Date(env.date).getTime() : Date.now(),
-          read: msg.flags ? msg.flags.has('\\Seen') : false,
-          starred: msg.flags ? msg.flags.has('\\Flagged') : false,
-          draft: msg.flags ? msg.flags.has('\\Draft') : false,
-          snippet: '',
-          hasAttachments: atts.length > 0,
-          attachments: atts
-        })
+        messages.push(toFetchedMessage(msg, account, folder))
       }
+      await applyGmailCategories(client, messages, Boolean(options.categorize))
       messages.sort((a, b) => b.timestamp - a.timestamp)
       return { messages, hasMore, total: uids.length }
     } else {
@@ -511,32 +824,12 @@ async function fetchMessages(account: any, folder = 'INBOX', limit = 50, unreadO
       const range = `${startSeq}:${endSeq}`
       for await (const msg of client.fetch(
         range,
-        { uid: true, envelope: true, flags: true, bodyStructure: true, size: true },
+        { uid: true, envelope: true, flags: true, bodyStructure: true, size: true, labels: true },
         { uid: false }
       )) {
-        const env = msg.envelope || {}
-        const fromAddr = env.from?.[0] || { name: '', address: 'desconhecido@email.com' }
-        const toAddrs = (env.to || []).map((t: any) => ({ name: t.name || '', address: t.address || '' }))
-        const atts = extractAttachmentsFromBodyStructure(msg.bodyStructure)
-        messages.push({
-          id: String(msg.uid || msg.seq),
-          uid: msg.uid || msg.seq,
-          messageId: env.messageId || String(msg.uid || msg.seq),
-          accountId: account.id || account.email,
-          folder,
-          subject: env.subject || '(Sem assunto)',
-          from: { name: fromAddr.name || fromAddr.address, address: fromAddr.address },
-          to: toAddrs,
-          date: env.date ? new Date(env.date).toISOString() : new Date().toISOString(),
-          timestamp: env.date ? new Date(env.date).getTime() : Date.now(),
-          read: msg.flags ? msg.flags.has('\\Seen') : false,
-          starred: msg.flags ? msg.flags.has('\\Flagged') : false,
-          draft: msg.flags ? msg.flags.has('\\Draft') : false,
-          snippet: '',
-          hasAttachments: atts.length > 0,
-          attachments: atts
-        })
+        messages.push(toFetchedMessage(msg, account, folder))
       }
+      await applyGmailCategories(client, messages, Boolean(options.categorize))
       const hasMore = startSeq > 1
       messages.sort((a, b) => b.timestamp - a.timestamp)
       return { messages, hasMore, total: count }
@@ -556,12 +849,30 @@ async function fetchMessages(account: any, folder = 'INBOX', limit = 50, unreadO
 /**
  * Generates a real PNG thumbnail of the first page/sheet of a document (PDF, DOCX, XLSX, etc.)
  * using native Windows WinRT and Office headless automation.
+ * Concurrent requests for the same file share one render (single-flight).
  */
-async function generateDocumentThumbnail(docPath: string, width = 400): Promise<string | null> {
+const documentThumbnailJobs = new Map<string, Promise<string | null>>()
+
+async function generateDocumentThumbnail(docPath: string, width = DOCUMENT_THUMBNAIL_WIDTH): Promise<string | null> {
+  const jobKey = `${docPath}:${width}`
+  const inflight = documentThumbnailJobs.get(jobKey)
+  if (inflight) return inflight
+
+  const job = renderDocumentThumbnail(docPath, width)
+  documentThumbnailJobs.set(jobKey, job)
+  try {
+    return await job
+  } finally {
+    documentThumbnailJobs.delete(jobKey)
+  }
+}
+
+async function renderDocumentThumbnail(docPath: string, width: number): Promise<string | null> {
   if (process.platform !== 'win32') return null
   if (!docPath || !fs.existsSync(docPath)) return null
 
   const thumbPath = `${docPath}.thumb.png`
+  const failMarkerPath = `${docPath}.thumb.failed`
   if (fs.existsSync(thumbPath)) {
     try {
       const st = fs.statSync(thumbPath)
@@ -570,6 +881,17 @@ async function generateDocumentThumbnail(docPath: string, width = 400): Promise<
         return `data:image/png;base64,${buf.toString('base64')}`
       }
     } catch {}
+  }
+
+  // A previous render failed for this exact file (password-protected or
+  // corrupt PDF, unsupported format...). Do not spawn PowerShell again until
+  // the document itself changes: repeated 4s+ attempts only spammed the log.
+  if (fs.existsSync(failMarkerPath)) {
+    try {
+      if (fs.statSync(failMarkerPath).mtimeMs >= fs.statSync(docPath).mtimeMs) return null
+    } catch {
+      return null
+    }
   }
 
   const ext = path.extname(docPath).toLowerCase()
@@ -622,35 +944,66 @@ async function generateDocumentThumbnail(docPath: string, width = 400): Promise<
 
     execFile('powershell.exe', args, { timeout: 25000 }, (err: any) => {
       if (err) {
-        console.warn(`[momai-emails] Falha ao renderizar thumb de ${ext}:`, err?.message || err)
+        markThumbnailFailure(docPath, failMarkerPath, err)
         return resolve(null)
       }
       try {
         if (fs.existsSync(thumbPath)) {
           const buf = fs.readFileSync(thumbPath)
           if (buf.length > 0) {
+            try {
+              fs.unlinkSync(failMarkerPath)
+            } catch {}
             return resolve(`data:image/png;base64,${buf.toString('base64')}`)
           }
         }
       } catch {}
+      markThumbnailFailure(docPath, failMarkerPath, null)
       resolve(null)
     })
   })
 }
 
+/**
+ * Marks a document whose thumbnail cannot be generated, logging the real
+ * reason once instead of retrying (and logging) on every message open.
+ */
+function markThumbnailFailure(docPath: string, markerPath: string, err: any): void {
+  const raw = String(err?.stderr || err?.message || 'motivo desconhecido')
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const detail = lines.length > 0 ? lines[lines.length - 1] : 'motivo desconhecido'
+  console.warn(
+    `[momai-emails] Miniatura indisponível para ${path.basename(docPath)}: ${detail} (não será tentada de novo até o arquivo mudar)`
+  )
+  try {
+    fs.writeFileSync(markerPath, `${Date.now()}\n${detail}\n`, 'utf8')
+  } catch {}
+}
+
 const generatePdfThumbnail = generateDocumentThumbnail
+
+/**
+ * Renders a document thumbnail in the background. Generation spawns the PDF
+ * renderer or Office through PowerShell, so it must never block returning the
+ * message body; the attachment card requests the preview on demand and reuses
+ * the <file>.thumb.png left behind by this warm-up.
+ */
+function warmDocumentThumbnail(filePath: string): void {
+  generateDocumentThumbnail(filePath, DOCUMENT_THUMBNAIL_WIDTH).catch(() => {})
+}
 
 /**
  * Fetch full message details including parsed body (HTML/Text) and attachments.
  */
 async function fetchFullMessage(account: any, uidOrMessageId: string | number, folder = 'INBOX') {
-  const accKey = String(account.email || account.id || 'default').toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_')
   const targetUidNum = typeof uidOrMessageId === 'number' ? uidOrMessageId : parseInt(String(uidOrMessageId), 10)
 
   // 0ms Disk Cache: If message was parsed and cached before, return immediately without network overhead
   if (!isNaN(targetUidNum)) {
-    const quickCacheBaseDir = path.join(getAttachmentsBaseDir(), accKey, String(targetUidNum))
-    const quickMetaFile = path.join(quickCacheBaseDir, 'message_parsed.json')
+    const quickMetaFile = path.join(getMessageCacheDir(account, folder, targetUidNum), 'message_parsed.json')
     if (fs.existsSync(quickMetaFile)) {
       try {
         const cachedJson = JSON.parse(fs.readFileSync(quickMetaFile, 'utf8'))
@@ -684,7 +1037,7 @@ async function fetchFullMessage(account: any, uidOrMessageId: string | number, f
       else return null
     }
 
-    const cacheBaseDir = path.join(getAttachmentsBaseDir(), accKey, String(resolvedUid))
+    const cacheBaseDir = getMessageCacheDir(account, folder, resolvedUid)
     const metaFile = path.join(cacheBaseDir, 'message_parsed.json')
     if (fs.existsSync(metaFile)) {
       try {
@@ -746,29 +1099,16 @@ async function fetchFullMessage(account: any, uidOrMessageId: string | number, f
           mime.includes('spreadsheet') ||
           mime.includes('excel')
         ) {
-          if (att.content.length <= 15 * 1024 * 1024 && (ext === '.pdf' || mime.includes('pdf'))) {
+          if (att.content.length <= MAX_INLINE_PDF_BYTES && (ext === '.pdf' || mime.includes('pdf'))) {
             base64Data = att.content.toString('base64')
           }
           if (localPath) {
-            try {
-              const docThumb = await generateDocumentThumbnail(localPath, 400)
-              if (docThumb) {
-                previewDataUrl = docThumb
-              }
-            } catch (err) {
-              console.warn('[momai-emails] Erro ao gerar thumbnail de documento:', err)
-            }
+            warmDocumentThumbnail(localPath)
           }
         }
       } else if (fs.existsSync(filePath)) {
         localPath = filePath
-        const ext = path.extname(filename).toLowerCase()
-        if (['.pdf', '.docx', '.doc', '.rtf', '.odt', '.xlsx', '.xls', '.csv'].includes(ext)) {
-          try {
-            const docThumb = await generateDocumentThumbnail(localPath, 400)
-            if (docThumb) previewDataUrl = docThumb
-          } catch {}
-        }
+        warmDocumentThumbnail(localPath)
       }
 
       attachments.push({
@@ -806,7 +1146,14 @@ async function fetchFullMessage(account: any, uidOrMessageId: string | number, f
     }
 
     try {
-      fs.writeFileSync(path.join(cacheBaseDir, 'message_parsed.json'), JSON.stringify(resultEmail), 'utf8')
+      // Heavy attachment payloads stay in memory for the current open only.
+      // The disk copy keeps metadata + localPath, so previews are regenerated
+      // on demand instead of duplicating megabytes inside JSON.
+      const cacheSafe = {
+        ...resultEmail,
+        attachments: attachments.map(({ base64Data, previewDataUrl, ...rest }: any) => rest)
+      }
+      fs.writeFileSync(path.join(cacheBaseDir, 'message_parsed.json'), JSON.stringify(cacheSafe), 'utf8')
     } catch {}
 
     return resultEmail
@@ -823,7 +1170,13 @@ async function fetchFullMessage(account: any, uidOrMessageId: string | number, f
 /**
  * Search emails by query on the IMAP server (server-side, searches ALL messages).
  */
-async function searchMessages(account: any, query: string, folder = 'INBOX', limit = 200) {
+async function searchMessages(
+  account: any,
+  query: string,
+  folder = 'INBOX',
+  limit = 200,
+  options: { categorize?: boolean } = {}
+) {
   let client: any
   try {
     client = await getConnectedImapClient(account)
@@ -832,6 +1185,8 @@ async function searchMessages(account: any, query: string, folder = 'INBOX', lim
     throw new Error(formatImapError(err))
   }
   const messages: any[] = []
+  // Real number of matches on the server, independent of the page returned.
+  let totalMatches = 0
   let lock: any = null
   try {
     lock = await client.getMailboxLock(folder)
@@ -845,19 +1200,21 @@ async function searchMessages(account: any, query: string, folder = 'INBOX', lim
     }
     const uids = await client.search(searchCriteria, { uid: true })
     if (!uids || uids.length === 0) return { messages: [], total: 0 }
+    totalMatches = uids.length
 
     uids.sort((a: number, b: number) => b - a)
     const targetUids = uids.slice(0, limit)
 
     for await (const msg of client.fetch(
       targetUids.join(','),
-      { uid: true, envelope: true, flags: true, bodyStructure: true },
+      { uid: true, envelope: true, flags: true, bodyStructure: true, labels: true },
       { uid: true }
     )) {
       const env = msg.envelope || {}
       const fromAddr = env.from?.[0] || { name: '', address: '' }
       const toAddrs = (env.to || []).map((t: any) => ({ name: t.name || '', address: t.address || '' }))
       const atts = extractAttachmentsFromBodyStructure(msg.bodyStructure)
+      const labels = msg.labels ? Array.from(msg.labels) : []
       messages.push({
         id: String(msg.uid),
         uid: msg.uid,
@@ -872,6 +1229,7 @@ async function searchMessages(account: any, query: string, folder = 'INBOX', lim
         read: msg.flags ? msg.flags.has('\\Seen') : false,
         starred: msg.flags ? msg.flags.has('\\Flagged') : false,
         draft: msg.flags ? msg.flags.has('\\Draft') : false,
+        labels,
         snippet: '',
         hasAttachments: atts.length > 0,
         attachments: atts
@@ -885,8 +1243,9 @@ async function searchMessages(account: any, query: string, folder = 'INBOX', lim
       try { lock.release() } catch {}
     }
   }
+  await applyGmailCategories(client, messages, Boolean(options.categorize))
   messages.sort((a, b) => b.timestamp - a.timestamp)
-  return { messages, total: messages.length }
+  return { messages, total: totalMatches }
 }
 
 /**
@@ -1110,6 +1469,7 @@ async function saveDraft(account: any, payload: any) {
         const lock = await replaceClient.getMailboxLock(replaceFolder)
         try {
           await replaceClient.messageDelete(replaceUid, { uid: true })
+          invalidateMessageCache(account, replaceFolder, replaceUid)
         } finally {
           lock.release()
         }
@@ -1203,6 +1563,7 @@ async function deleteMessage(account: any, uid: number, folder = 'INBOX') {
     } else {
       await client.messageDelete(uid, { uid: true })
     }
+    invalidateMessageCache(account, folder, uid)
     return true
   } catch (err: any) {
     releaseImapClient(account.id || account.email)
@@ -1245,6 +1606,7 @@ async function moveMessage(account: any, uid: number, fromFolder: string, toFold
     lock = await client.getMailboxLock(fromFolder)
     try {
       await client.messageMove(uid, toFolder, { uid: true })
+      invalidateMessageCache(account, fromFolder, uid)
       return true
     } catch (moveErr: any) {
       const message = String(moveErr?.message || moveErr || '').toLowerCase()
@@ -1270,6 +1632,7 @@ async function moveMessage(account: any, uid: number, fromFolder: string, toFold
   try {
     retryLock = await retryClient.getMailboxLock(fromFolder)
     await retryClient.messageMove(uid, toFolder, { uid: true })
+    invalidateMessageCache(account, fromFolder, uid)
     return true
   } catch (err: any) {
     releaseImapClient(account.id || account.email)
@@ -1292,9 +1655,8 @@ async function downloadAttachmentToFile(
   filename?: string,
   part?: string
 ): Promise<string | null> {
-  const accKey = String(account.email || account.id || 'default').toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_')
   const resolvedUidStr = String(uidOrMessageId)
-  const cacheBaseDir = path.join(getAttachmentsBaseDir(), accKey, resolvedUidStr)
+  const cacheBaseDir = getMessageCacheDir(account, folder, resolvedUidStr)
 
   try {
     if (!fs.existsSync(cacheBaseDir)) fs.mkdirSync(cacheBaseDir, { recursive: true })
@@ -1345,7 +1707,7 @@ async function downloadAttachmentToFile(
 
       const ext = path.extname(cleanAttName).toLowerCase()
       if (['.pdf', '.docx', '.doc', '.rtf', '.odt', '.xlsx', '.xls', '.csv'].includes(ext) && fs.existsSync(savePath)) {
-        generateDocumentThumbnail(savePath, 400).catch(() => {})
+        warmDocumentThumbnail(savePath)
       }
 
       if (!matchedPath) {
@@ -1383,20 +1745,25 @@ function openFileWithDefaultApp(filePath: string): Promise<{ ok: boolean; path?:
       return resolve({ ok: false, error: 'Arquivo não encontrado no disco local.' })
     }
 
-    // Windows: 'start "" "filepath"' safely handles spaces and launches the default shell program
-    const cmd = process.platform === 'win32'
-      ? `start "" "${normalized}"`
-      : process.platform === 'darwin'
-        ? `open "${normalized}"`
-        : `xdg-open "${normalized}"`
-
-    exec(cmd, (err: any) => {
-      if (err) {
+    const done = (err: any) => {
+      // explorer.exe exits with a non-zero code after handing the file to its
+      // associated app, so on Windows the exit code is not a failure signal.
+      if (err && process.platform !== 'win32') {
         console.error('[momai-emails] Erro ao abrir arquivo no sistema:', err)
         return resolve({ ok: false, error: err?.message || String(err) })
       }
       return resolve({ ok: true, path: normalized })
-    })
+    }
+
+    // execFile (no shell) with an argument array: a file name can never be
+    // interpreted as part of a command, unlike the previous string command.
+    if (process.platform === 'win32') {
+      execFile('explorer.exe', [normalized], done)
+    } else if (process.platform === 'darwin') {
+      execFile('open', ['--', normalized], done)
+    } else {
+      execFile('xdg-open', [normalized], done)
+    }
   })
 }
 
@@ -1470,6 +1837,8 @@ function saveAttachmentWithDialog(sourceFilePath: string, suggestedName?: string
 module.exports = {
   createImapClient,
   createSmtpTransporter,
+  buildImapClientOptions,
+  buildSmtpTransportOptions,
   getConnectedImapClient,
   releaseImapClient,
   releaseAllImapClients,
@@ -1494,6 +1863,16 @@ module.exports = {
   generateDocumentThumbnail,
   getAttachmentsBaseDir,
   setAttachmentsBaseDir,
+  getMessageCacheDir,
+  invalidateMessageCache,
+  pruneMessageCache,
+  MESSAGE_CACHE_MAX_AGE_MS,
+  mapGmailCategoryToUi,
+  normalizeGmailCategory,
+  resolveGmailCategories,
+  applyGmailCategories,
+  resolveGmailCategoriesForMessages,
+  listCategoryMessages,
   getStartOfToday,
   countUnreadTodayInFolder,
   getUnreadWindowStart,

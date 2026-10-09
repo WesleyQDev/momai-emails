@@ -11,7 +11,6 @@ import {
   CodeBracketIcon,
   DocumentTextIcon,
   PaperAirplaneIcon,
-  ShieldCheckIcon,
   FolderIcon,
   CheckCircleIcon,
   StarIcon as StarOutline
@@ -321,7 +320,7 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
         {/* Attachments Section (Gmail style) */}
         {email.attachments && email.attachments.length > 0 && (
           <div className="space-y-3.5 pt-6 border-t border-border/80">
-            {/* Header: "1 anexo • Verificado por MomAI" */}
+            {/* Header: attachment count */}
             <div className="flex items-center justify-between gap-2 text-xs">
               <div className="flex items-center gap-2 text-text">
                 <span className="font-semibold text-sm">
@@ -329,11 +328,6 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
                     ? t('reader.attachments.one')
                     : t('reader.attachments.many', { count: email.attachments.length })}
                 </span>
-                <span className="text-text-muted">•</span>
-                <div className="flex items-center gap-1.5 text-text-muted text-xs">
-                  <ShieldCheckIcon className="w-4 h-4 text-emerald-500" />
-                  <span>{t('reader.attachments.verified')}</span>
-                </div>
               </div>
 
               {email.attachments.length > 1 && onOpenAttachment && (

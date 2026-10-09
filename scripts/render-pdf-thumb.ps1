@@ -56,6 +56,11 @@ try {
     [System.IO.File]::WriteAllBytes($PngPath, $bytes)
     Write-Output "OK"
 } catch {
-    Write-Error $_.Exception.Message
+    # Walk to the deepest inner exception: WinRT async failures surface as
+    # AggregateException ("One or more errors occurred") hiding the real cause
+    # (e.g. password-protected PDF).
+    $ex = $_.Exception
+    while ($ex.InnerException) { $ex = $ex.InnerException }
+    Write-Error $ex.Message
     exit 1
 }

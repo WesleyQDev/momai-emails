@@ -136,38 +136,45 @@ class AccountManager {
     return total
   }
 
-  public async getNotificationPrefs(): Promise<{ primaryOnly: boolean; unreadWindowHours: 24 | 48 }> {
+  public async getNotificationPrefs(): Promise<{ primaryOnly: boolean; notificationsEnabled: boolean; unreadWindowHours: 24 | 48 }> {
     if (this.useHostStorage()) {
       try {
         const stored = await this.readStoredJson('notify-prefs', this.notifyPrefsFile)
         if (stored && typeof stored === 'object') {
           return {
             primaryOnly: typeof stored.primaryOnly === 'boolean' ? stored.primaryOnly : true,
+            notificationsEnabled:
+              typeof stored.notificationsEnabled === 'boolean' ? stored.notificationsEnabled : true,
             unreadWindowHours: stored.unreadWindowHours === 24 ? 24 : 48
           }
         }
       } catch {}
-      return { primaryOnly: true, unreadWindowHours: 48 }
+      return { primaryOnly: true, notificationsEnabled: true, unreadWindowHours: 48 }
     }
     try {
       if (fs.existsSync(this.notifyPrefsFile)) {
         const parsed = JSON.parse(fs.readFileSync(this.notifyPrefsFile, 'utf8')) || {}
         return {
           primaryOnly: typeof parsed.primaryOnly === 'boolean' ? parsed.primaryOnly : true,
+          notificationsEnabled:
+            typeof parsed.notificationsEnabled === 'boolean' ? parsed.notificationsEnabled : true,
           unreadWindowHours: parsed.unreadWindowHours === 24 ? 24 : 48
         }
       }
     } catch {}
-    return { primaryOnly: true, unreadWindowHours: 48 }
+    return { primaryOnly: true, notificationsEnabled: true, unreadWindowHours: 48 }
   }
 
-  public async setNotificationPrefs(prefs: { primaryOnly?: boolean; unreadWindowHours?: number }): Promise<{
+  public async setNotificationPrefs(prefs: { primaryOnly?: boolean; notificationsEnabled?: boolean; unreadWindowHours?: number }): Promise<{
     primaryOnly: boolean
+    notificationsEnabled: boolean
     unreadWindowHours: 24 | 48
   }> {
     const current = await this.getNotificationPrefs()
     const next = {
       primaryOnly: typeof prefs.primaryOnly === 'boolean' ? prefs.primaryOnly : current.primaryOnly,
+      notificationsEnabled:
+        typeof prefs.notificationsEnabled === 'boolean' ? prefs.notificationsEnabled : current.notificationsEnabled,
       unreadWindowHours: (prefs.unreadWindowHours === 24 ? 24 : prefs.unreadWindowHours === 48 ? 48 : current.unreadWindowHours) as 24 | 48
     }
     try {
@@ -238,6 +245,18 @@ class AccountManager {
     await this.loadAccounts()
     await this.primeInitialUids()
     this.startBackgroundPoller()
+    // Disk cleanup runs after startup so a large cache never delays the worker.
+    const pruneTimer = setTimeout(() => {
+      try {
+        const removed = emailClient.pruneMessageCache()
+        if (removed > 0) {
+          console.log(`[AccountManager] Pruned ${removed} expired message cache dir(s)`)
+        }
+      } catch (err: any) {
+        console.warn('[AccountManager] Cache prune failed:', err?.message || err)
+      }
+    }, 5000)
+    if (typeof pruneTimer.unref === 'function') pruneTimer.unref()
   }
 
   private isQuotaCoolingDown(accountId: string, now: number = Date.now()): boolean {
@@ -372,7 +391,10 @@ class AccountManager {
         if (!rawEnc || !rawEnc.trim()) return
 
         const decrypted = await decryptFromStorage(rawEnc)
-        if (!decrypted) return
+        if (!decrypted) {
+          console.warn('[AccountManager] Could not decrypt accounts (secure storage unavailable?)')
+          return
+        }
 
         const list: any[] = JSON.parse(decrypted)
         this.accounts.clear()
@@ -416,12 +438,21 @@ class AccountManager {
     }
   }
 
-  public async saveAccounts(): Promise<void> {
+  public async saveAccounts(): Promise<boolean> {
     try {
       const list = Array.from(this.accounts.values())
       const plain = JSON.stringify(list, null, 2)
       const encrypted = await encryptForStorage(plain)
+      if (!encrypted) {
+        // No OS keychain available: never write reversible "encryption".
+        // Accounts stay usable in memory for this session only.
+        console.warn(
+          '[AccountManager] Secure storage unavailable; accounts are kept for this session only and will not be persisted'
+        )
+        return false
+      }
       await this.writeStoredText('accounts', encrypted, this.accountsFile)
+      return true
     } catch (err) {
       console.error('[AccountManager] Failed to save accounts:', err)
       throw err
@@ -436,6 +467,24 @@ class AccountManager {
         active: acc.id === this.activeAccountId
       }
     })
+  }
+
+  /**
+   * Resolves the account for a tool call. Accepts an account id or e-mail
+   * address (both are documented in the tool contract). An explicit value
+   * that matches nothing is an error (null): silently falling back to the
+   * active account could send, move or delete a message on the wrong account.
+   */
+  public getAccountForTool(idOrEmail?: string): any | null {
+    if (idOrEmail) {
+      if (this.accounts.has(idOrEmail)) return this.accounts.get(idOrEmail)!
+      const wanted = String(idOrEmail).trim().toLowerCase()
+      for (const account of this.accounts.values()) {
+        if (String(account.email || '').trim().toLowerCase() === wanted) return account
+      }
+      return null
+    }
+    return this.getAccount()
   }
 
   public getAccount(id?: string): any | null {
@@ -608,6 +657,13 @@ class AccountManager {
               .sort((a: any, b: any) => (a.uid || 0) - (b.uid || 0))
 
             this.lastSeenUids.set(accId, latestUid)
+
+            if (newMessages.length > 0) {
+              // Resolve Gmail's real category for the new arrivals so
+              // Primary-only gating does not treat a promotion as Primary.
+              // Runs only when mail actually arrived (never on idle polls).
+              await emailClient.resolveGmailCategoriesForMessages(acc, newMessages).catch(() => {})
+            }
 
             for (const msg of newMessages) {
               const uid = msg.uid || 0

@@ -29,6 +29,7 @@ describe('email settings (concise gear menu)', () => {
   it('defaults to Primary-only notifications with category tabs visible', () => {
     expect(DEFAULT_EMAIL_SETTINGS).toEqual({
       notifyPrimaryOnly: true,
+      notificationsEnabled: true,
       showCategoryTabs: true,
       unreadWindowHours: 48,
       autoMarkRead: true
@@ -40,9 +41,19 @@ describe('email settings (concise gear menu)', () => {
   })
 
   it('round-trips user choices through storage', () => {
-    saveEmailSettings({ notifyPrimaryOnly: false, showCategoryTabs: false, unreadWindowHours: 24, autoMarkRead: false }, store)
+    saveEmailSettings(
+      {
+        notifyPrimaryOnly: false,
+        notificationsEnabled: false,
+        showCategoryTabs: false,
+        unreadWindowHours: 24,
+        autoMarkRead: false
+      },
+      store
+    )
     expect(loadEmailSettings(store)).toEqual({
       notifyPrimaryOnly: false,
+      notificationsEnabled: false,
       showCategoryTabs: false,
       unreadWindowHours: 24,
       autoMarkRead: false

@@ -6,6 +6,12 @@
 import type { EmailFolder, EmailMessage } from './types'
 import { isVirtualStarredFolder } from './folders'
 
+/** Pause between two folder fetches so the shared IMAP socket is not flooded. */
+export const PREWARM_THROTTLE_MS = 350
+
+/** How many times a failed folder fetch is retried before it is dropped. */
+export const PREWARM_MAX_ATTEMPTS = 3
+
 /**
  * Assigns priority weights to standard and custom folders.
  * Lower weight = higher pre-warming priority.
@@ -73,6 +79,19 @@ export function mergeFolderMessages(
   return merged
 }
 
+/**
+ * Sorts messages newest first. Needed when batches fetched from different
+ * depths of the mailbox are merged (e.g. the Gmail category supplement), so
+ * the list order never depends on batch arrival order. Ties keep their
+ * previous relative order.
+ */
+export function sortMessagesNewestFirst(messages: EmailMessage[]): EmailMessage[] {
+  return messages
+    .map((msg, index) => ({ msg, index }))
+    .sort((a, b) => (b.msg.timestamp || 0) - (a.msg.timestamp || 0) || a.index - b.index)
+    .map((entry) => entry.msg)
+}
+
 export interface PrewarmTaskOptions {
   accountId: string
   folders: EmailFolder[]
@@ -80,64 +99,124 @@ export interface PrewarmTaskOptions {
   fetchEmails: (folderPath: string, accountId: string) => Promise<{ ok: boolean; messages?: EmailMessage[] }>
   onFolderLoaded: (folderPath: string, accountId: string, messages: EmailMessage[]) => void
   throttleMs?: number
+  maxAttempts?: number
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Session-scoped folder warmer. Calling `start` again with fresh folders for
+ * the account that is already being warmed appends only the new folders to the
+ * running queue instead of cancelling it and starting over, so frequent folder
+ * list refreshes (new mail, sync, settings) cannot starve the queue.
+ */
 export class FolderPrewarmer {
   private currentAccountId: string | null = null
   private isRunning = false
   private cancelled = false
+  private generation = 0
+  private options: PrewarmTaskOptions | null = null
+  private queue: EmailFolder[] = []
+  private queuedPaths = new Set<string>()
+  private attempts = new Map<string, number>()
 
   public start(options: PrewarmTaskOptions): void {
-    this.stop()
+    if (this.currentAccountId === options.accountId && this.isRunning) {
+      this.options = options
+      this.enqueue(options.folders)
+      return
+    }
+
+    this.reset()
+    this.options = options
     this.currentAccountId = options.accountId
     this.cancelled = false
+    this.enqueue(options.folders)
     this.isRunning = true
-
-    const sorted = sortFoldersForPrewarm(options.folders)
-    const throttle = typeof options.throttleMs === 'number' ? options.throttleMs : 350
-
-    void (async () => {
-      for (const folder of sorted) {
-        if (this.cancelled || this.currentAccountId !== options.accountId) {
-          break
-        }
-
-        // If already in memory cache with valid data, skip or proceed lightly
-        const alreadyCached = options.isCached(folder.path, options.accountId)
-        if (alreadyCached) {
-          continue
-        }
-
-        try {
-          const res = await options.fetchEmails(folder.path, options.accountId)
-          if (this.cancelled || this.currentAccountId !== options.accountId) {
-            break
-          }
-
-          if (res && res.ok && Array.isArray(res.messages)) {
-            options.onFolderLoaded(folder.path, options.accountId, res.messages)
-          }
-        } catch {}
-
-        // Gentle pause between folders to prevent flooding the network socket
-        if (throttle > 0 && !this.cancelled && this.currentAccountId === options.accountId) {
-          await new Promise((resolve) => setTimeout(resolve, throttle))
-        }
-      }
-
-      if (this.currentAccountId === options.accountId) {
-        this.isRunning = false
-      }
-    })()
+    void this.run(options.accountId, this.generation)
   }
 
   public stop(): void {
-    this.cancelled = true
-    this.isRunning = false
-    this.currentAccountId = null
+    this.reset()
   }
 
   public isActive(): boolean {
     return this.isRunning
+  }
+
+  private reset(): void {
+    this.generation += 1
+    this.cancelled = true
+    this.isRunning = false
+    this.currentAccountId = null
+    this.options = null
+    this.queue = []
+    this.queuedPaths.clear()
+    this.attempts.clear()
+  }
+
+  private enqueue(folders: EmailFolder[]): void {
+    for (const folder of sortFoldersForPrewarm(folders)) {
+      if (this.queuedPaths.has(folder.path)) continue
+      this.queuedPaths.add(folder.path)
+      this.queue.push(folder)
+    }
+    this.queue = sortFoldersForPrewarm(this.queue)
+  }
+
+  private async run(accountId: string, generation: number): Promise<void> {
+    while (!this.cancelled && this.currentAccountId === accountId && this.generation === generation) {
+      const folder = this.queue.shift()
+      if (!folder) break
+      const options = this.options
+      if (!options) break
+
+      let handled = false
+      try {
+        if (options.isCached(folder.path, accountId)) {
+          handled = true
+        } else {
+          const res = await options.fetchEmails(folder.path, accountId)
+          if (this.cancelled || this.currentAccountId !== accountId || this.generation !== generation) break
+          if (res && res.ok && Array.isArray(res.messages)) {
+            options.onFolderLoaded(folder.path, accountId, res.messages)
+            handled = true
+          }
+        }
+      } catch {
+        handled = false
+      }
+
+      if (handled) {
+        this.queuedPaths.delete(folder.path)
+        this.attempts.delete(folder.path)
+      } else if (!this.cancelled && this.currentAccountId === accountId && this.generation === generation) {
+        this.retry(folder)
+      }
+
+      if (this.cancelled || this.currentAccountId !== accountId || this.generation !== generation) break
+      const throttle = typeof options.throttleMs === 'number' ? options.throttleMs : PREWARM_THROTTLE_MS
+      if (throttle > 0) await delay(throttle)
+    }
+
+    if (this.currentAccountId === accountId && this.generation === generation) {
+      this.isRunning = false
+    }
+  }
+
+  private retry(folder: EmailFolder): void {
+    const attempts = (this.attempts.get(folder.path) || 0) + 1
+    const options = this.options
+    const maxAttempts =
+      options && typeof options.maxAttempts === 'number' ? options.maxAttempts : PREWARM_MAX_ATTEMPTS
+    if (attempts < maxAttempts) {
+      this.attempts.set(folder.path, attempts)
+      this.queue.push(folder)
+      return
+    }
+    this.attempts.delete(folder.path)
+    this.queuedPaths.delete(folder.path)
   }
 }

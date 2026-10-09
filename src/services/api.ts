@@ -30,8 +30,24 @@ export const emailApi = {
 
   // Folders & Messages
   listFolders: (accountId?: string) => executeCommand<{ ok: boolean; folders: any[] }>('list_folders', { accountId }),
-  listEmails: (folder = 'INBOX', accountId?: string, limit = EMAIL_PAGE_SIZE, unreadOnly = false, offset = 0) =>
-    executeCommand<{ ok: boolean; messages: any[]; folder: string; hasMore?: boolean; total?: number }>('list_emails', { folder, accountId, limit, unreadOnly, offset }),
+  listEmails: (
+    folder = 'INBOX',
+    accountId?: string,
+    limit = EMAIL_PAGE_SIZE,
+    unreadOnly = false,
+    offset = 0,
+    includeCategories = true,
+    category?: string
+  ) =>
+    executeCommand<{ ok: boolean; messages: any[]; folder: string; hasMore?: boolean; total?: number }>('list_emails', {
+      folder,
+      accountId,
+      limit,
+      unreadOnly,
+      offset,
+      includeCategories,
+      category
+    }),
   readEmail: (messageId: string, folder = 'INBOX', accountId?: string, markRead = true) =>
     executeCommand<{ ok: boolean; email: any }>('read_email', { messageId, folder, accountId, markRead }, 20000),
   openAttachment: (data: { messageId: string | number; filename?: string; part?: string; folder?: string; accountId?: string }) =>
@@ -60,8 +76,11 @@ export const emailApi = {
     executeCommand<{ ok: boolean }>('move_email', { messageId, toFolder, fromFolder, accountId }),
 
   // Notification preferences (Primary-only gate + badge window shared with the background worker)
-  getNotificationPrefs: () => executeCommand<{ ok: boolean; primaryOnly?: boolean; unreadWindowHours?: number }>('get_notification_prefs'),
-  setNotificationPrefs: (prefs: { primaryOnly?: boolean; unreadWindowHours?: number }) =>
+  getNotificationPrefs: () =>
+    executeCommand<{ ok: boolean; primaryOnly?: boolean; notificationsEnabled?: boolean; unreadWindowHours?: number }>(
+      'get_notification_prefs'
+    ),
+  setNotificationPrefs: (prefs: { primaryOnly?: boolean; notificationsEnabled?: boolean; unreadWindowHours?: number }) =>
     executeCommand<{ ok: boolean }>('set_notification_prefs', prefs),
 
   // Custom profile photos (persisted in host storage so they survive restarts)

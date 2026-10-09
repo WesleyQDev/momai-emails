@@ -2,14 +2,14 @@
 // Main application page for MomAI E-mails extension
 
 import React, { useState, useEffect, useCallback, useTransition, useRef } from 'react'
-import sdk from 'momai:sdk'
+import sdk, { useExtensionVisibility } from 'momai:sdk'
 import { useExtensionEvents } from 'momai:events'
 import { emailApi } from './services/api'
 import { emailStorageCache } from './services/cache'
 import { loadEmailSettings, saveEmailSettings, unreadWindowMs, type EmailSettings as EmailSettingsState } from './services/settings'
 import { adjustFolderUnread, getFolderDisplayUnread, syncInboxPrimaryUnread } from './services/unread-today'
 import { classifyEmailCategory, shouldNotifyForCategory } from './services/email-categories'
-import { EMAIL_PAGE_SIZE } from './services/paging'
+import { EMAIL_PAGE_SIZE, INBOX_FIRST_LOAD_LIMIT, nextFreshRunLength, type FreshRunState } from './services/paging'
 import {
   dedupeFoldersByRole,
   getStarredMessages,
@@ -22,6 +22,7 @@ import {
   isInboxFolder,
   mergeWithDefaultFolders,
   getDefaultFolders,
+  resolveArchivePath,
   DEFAULT_STATIC_FOLDERS
 } from './services/folders'
 import { buildPendingDraft, removePendingDrafts, rememberDraftMessage, forgetDraftMessage } from './services/draft'
@@ -31,7 +32,8 @@ import {
   getArchiveOrigin,
   clearArchiveOrigin
 } from './services/archive-origins'
-import { FolderPrewarmer, mergeFolderMessages } from './services/prewarm'
+import { FolderPrewarmer, mergeFolderMessages, sortMessagesNewestFirst, PREWARM_THROTTLE_MS } from './services/prewarm'
+import { BodyPrefetcher, BODY_PREFETCH_PER_FOLDER } from './services/body-prefetch'
 import type { PublicEmailAccount, EmailFolder, EmailMessage, EmailAttachment, SendEmailPayload } from './services/types'
 import { useExtensionLocale } from './services/i18n'
 import { EmailsHeader } from './components/EmailsHeader'
@@ -44,18 +46,25 @@ import { EmailSettings } from './components/EmailSettings'
 import { PROVIDERS, detectProviderFromEmail } from './services/providers'
 import { shouldAcceptAccountsResponse } from './services/accounts-sync'
 
-export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => {
+export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsActive = true }) => {
+  const isActive = useExtensionVisibility(propIsActive, 'momai-emails')
   const [, startTransition] = useTransition()
   const { t } = useExtensionLocale()
 
   // In-memory SWR caches & request tracking
   const folderCacheRef = useRef<Map<string, EmailMessage[]>>(new Map())
   const emailBodyCacheRef = useRef<Map<string, EmailMessage>>(new Map())
-  const prefetchInflightRef = useRef<Set<string>>(new Set())
+  const bodyPrefetcherRef = useRef(new BodyPrefetcher())
   const notifiedEmailsRef = useRef<Set<string>>(new Set())
   const burstReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const currentReqSeqRef = useRef(0)
   const prewarmerRef = useRef(new FolderPrewarmer())
+  // Contiguous server run per account+folder: how many of the newest messages
+  // were fetched in one unbroken window. Drives load-more offsets; never use
+  // messages.length here because the visible list also holds older cached
+  // messages outside the window (each one would permanently skip a newer
+  // message on the server).
+  const serverRunRef = useRef<FreshRunState | null>(null)
 
   // Accounts state (initialized immediately from persistent cache if available)
   const [accounts, setAccounts] = useState<PublicEmailAccount[]>(() => {
@@ -120,22 +129,53 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
       const next = { ...prev, ...patch }
       saveEmailSettings(next)
       emailApi
-        .setNotificationPrefs({ primaryOnly: next.notifyPrimaryOnly, unreadWindowHours: next.unreadWindowHours })
+        .setNotificationPrefs({
+          primaryOnly: next.notifyPrimaryOnly,
+          notificationsEnabled: next.notificationsEnabled,
+          unreadWindowHours: next.unreadWindowHours
+        })
         .catch(() => {})
       return next
     })
   }, [])
+
+  // Stores a fetched body in both caches; the persistent copy is sanitized by
+  // emailStorageCache so heavy attachment payloads never reach localStorage.
+  const storeEmailBody = useCallback((accId: string, msgId: string, email: EmailMessage) => {
+    const enriched = { ...email, accountId: email.accountId || accId }
+    emailBodyCacheRef.current.set(`${accId}:${msgId}`, enriched)
+    emailStorageCache.setEmailBody(accId, msgId, enriched)
+  }, [])
+
+  // Background body pre-fetch queue: keeps opening any message instantaneous.
+  useEffect(() => {
+    bodyPrefetcherRef.current.configure({
+      isCached: (accountId, messageId) =>
+        emailBodyCacheRef.current.has(`${accountId}:${messageId}`) ||
+        Boolean(emailStorageCache.getEmailBody(accountId, messageId)),
+      fetchBody: (message, accountId) =>
+        emailApi.readEmail(message.id, message.folder || activeFolderRef.current, accountId, false),
+      onBodyLoaded: (accountId, message, email) => {
+        storeEmailBody(accountId, message.id, email)
+      }
+    })
+  }, [storeEmailBody])
 
   // Push the worker-owned choices on startup as well,
   // so OS badges keep working while this page is closed.
   useEffect(() => {
     const initial = loadEmailSettings()
     emailApi
-      .setNotificationPrefs({ primaryOnly: initial.notifyPrimaryOnly, unreadWindowHours: initial.unreadWindowHours })
+      .setNotificationPrefs({
+        primaryOnly: initial.notifyPrimaryOnly,
+        notificationsEnabled: initial.notificationsEnabled,
+        unreadWindowHours: initial.unreadWindowHours
+      })
       .catch(() => {})
 
     return () => {
       prewarmerRef.current.stop()
+      bodyPrefetcherRef.current.stop()
     }
   }, [])
 
@@ -228,7 +268,8 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
             return folderCacheRef.current.has(key) || (emailStorageCache.getFolderEmails(aId, folderPath) !== null)
           },
           fetchEmails: async (folderPath, aId) => {
-            return emailApi.listEmails(folderPath, aId, PAGE_SIZE, false, 0)
+            const limit = isInboxFolder(folderPath) ? INBOX_FIRST_LOAD_LIMIT : PAGE_SIZE
+            return emailApi.listEmails(folderPath, aId, limit, false, 0)
           },
           onFolderLoaded: (folderPath, aId, msgs) => {
             const key = `${aId}:${folderPath}`
@@ -239,6 +280,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
             const merged = mergeFolderMessages(existing, msgs)
             folderCacheRef.current.set(key, merged)
             emailStorageCache.setFolderEmails(aId, folderPath, merged)
+            bodyPrefetcherRef.current.enqueue(aId, merged.slice(0, BODY_PREFETCH_PER_FOLDER))
             if (isInboxFolder(folderPath)) {
               setFolders((prevFolders) => {
                 const updated = syncInboxPrimaryUnread(prevFolders, merged, settings.showCategoryTabs, windowMs)
@@ -247,7 +289,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
               })
             }
           },
-          throttleMs: 350
+          throttleMs: PREWARM_THROTTLE_MS
         })
 
         // A selected duplicate disappears from the unified list: follow the surviving same-role folder.
@@ -295,6 +337,14 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
   const [isSearchMode, setIsSearchMode] = useState(false)
   const [page, setPage] = useState(0)
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Timers must not fire after the page unmounts or leak between sessions.
+  useEffect(() => {
+    return () => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+      if (burstReloadTimerRef.current) clearTimeout(burstReloadTimerRef.current)
+    }
+  }, [])
 
   const PAGE_SIZE = EMAIL_PAGE_SIZE
 
@@ -390,34 +440,15 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
   const prefetchEmailBody = useCallback((msg: EmailMessage) => {
     const accId = activeAccountIdRef.current
     if (!accId || !msg?.id) return
-    const originFolder = msg.folder || activeFolderRef.current
-    const bodyKey = `${accId}:${msg.id}`
-    if (emailBodyCacheRef.current.has(bodyKey)) return
-    if (prefetchInflightRef.current.has(bodyKey)) return
-    let cached = false
-    try {
-      cached = Boolean(emailStorageCache.getEmailBody(accId, msg.id))
-    } catch {
-      cached = false
-    }
-    if (cached) return
-    prefetchInflightRef.current.add(bodyKey)
-    emailApi.readEmail(msg.id, originFolder, accId, false).then((r) => {
-      if (r?.ok && r.email) {
-        const enriched = { ...r.email, accountId: r.email.accountId || accId }
-        emailBodyCacheRef.current.set(bodyKey, enriched)
-        try {
-          emailStorageCache.setEmailBody(accId, msg.id, enriched)
-        } catch {}
-      }
-    }).catch(() => {}).finally(() => {
-      prefetchInflightRef.current.delete(bodyKey)
-    })
+    bodyPrefetcherRef.current.enqueue(accId, [msg], 'urgent')
   }, [])
 
   const loadEmails = useCallback(async (folder = 'INBOX', accId = activeAccountIdRef.current, silent = false, forceRefresh = false) => {
     if (!accId) return
     const reqSeq = ++currentReqSeqRef.current
+    // A new load owns the list again: drop the previous "has more" so the
+    // auto-fill never fires for a stale folder while the fresh fetch runs.
+    setHasMoreMessages(false)
 
     if (isVirtualStarredFolder(folder, foldersRef.current)) {
       setMessages(readCachedStarred(accId))
@@ -461,7 +492,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
     setIsSearchMode(false)
 
     try {
-      const fetchLimit = isInboxFolder(folder) ? 80 : PAGE_SIZE
+      const fetchLimit = isInboxFolder(folder) ? INBOX_FIRST_LOAD_LIMIT : PAGE_SIZE
       const res = await emailApi.listEmails(folder, accId, fetchLimit, false, 0)
       // Discard if user already switched to another folder or account
       if (reqSeq !== currentReqSeqRef.current || accId !== activeAccountIdRef.current) return
@@ -474,11 +505,21 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
         const prevList = cached ?? []
         const mergedMessages =
           stampedMessages.length > 0
-            ? mergeFolderMessages(prevList, stampedMessages, 500)
+            ? sortMessagesNewestFirst(mergeFolderMessages(prevList, stampedMessages, 500))
             : []
         folderCacheRef.current.set(cacheKey, mergedMessages)
         emailStorageCache.setFolderEmails(accId, folder, mergedMessages)
         setMessages(mergedMessages)
+        // Record the contiguous server window (never messages.length: the
+        // merged list also holds older cached messages outside this window).
+        const runKey = `${accId}:${folder}`
+        const prevRun = serverRunRef.current && serverRunRef.current.key === runKey ? serverRunRef.current : null
+        const newTotal = typeof res.total === 'number' ? res.total : prevRun?.total ?? stampedMessages.length
+        serverRunRef.current = {
+          key: runKey,
+          length: nextFreshRunLength(prevRun?.length ?? null, prevRun?.total ?? null, stampedMessages.length, newTotal),
+          total: newTotal
+        }
         setHasMoreMessages(Boolean(res.hasMore))
 
         if (isInboxFolder(folder)) {
@@ -489,11 +530,8 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
           })
         }
 
-        // Background pre-fetch top email body so opening is instantaneous
-        const topMsg = mergedMessages[0]
-        if (topMsg) {
-          prefetchEmailBody(topMsg)
-        }
+        // Warm the first visible bodies in the background so any open is instant
+        bodyPrefetcherRef.current.enqueue(accId, mergedMessages.slice(0, BODY_PREFETCH_PER_FOLDER), 'urgent')
       } else if (!cached) {
         setMessagesError(t('page.errors.loadMessages'))
       }
@@ -503,13 +541,15 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
         setMessagesError(err?.message || t('page.errors.connection'))
       }
     } finally {
-      if (reqSeq === currentReqSeqRef.current && accId === activeAccountIdRef.current) {
-        setLoadingMessages(false)
-      }
+      // Always settle: a spinner must never stick because its request was
+      // superseded or the account moved. A newer load re-asserts loading.
+      setLoadingMessages(false)
     }
-  }, [readCachedStarred, prefetchEmailBody])
+  }, [readCachedStarred])
 
-  // Load more messages (next page) — appends to current list
+  // Load more messages (next page) — appends to current list. The offset
+  // continues the contiguous server run tracked by loadEmails, never
+  // messages.length (cached extras would skip newer messages server-side).
   const loadMoreEmails = useCallback(async () => {
     const currentAccId = activeAccountIdRef.current
     const currentFolder = activeFolderRef.current
@@ -519,7 +559,9 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
     const reqSeq = currentReqSeqRef.current
     setLoadingMoreMessages(true)
     try {
-      const offset = messages.length
+      const runKey = `${currentAccId}:${currentFolder}`
+      const prevRun = serverRunRef.current && serverRunRef.current.key === runKey ? serverRunRef.current : null
+      const offset = prevRun ? prevRun.length : messages.length
       const res = await emailApi.listEmails(currentFolder, currentAccId, PAGE_SIZE, false, offset)
 
       // Guard: if user switched account or folder while request was in-flight, discard!
@@ -533,6 +575,11 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
 
       if (res && res.ok && Array.isArray(res.messages) && res.messages.length > 0) {
         const stampedNew = res.messages.map((m: EmailMessage) => ({ ...m, accountId: m.accountId || currentAccId }))
+        serverRunRef.current = {
+          key: runKey,
+          length: (prevRun ? prevRun.length : offset) + res.messages.length,
+          total: typeof res.total === 'number' ? res.total : prevRun?.total ?? offset + res.messages.length
+        }
         setMessages((prevMessages) => {
           // Strictly ensure previous messages belong to this account
           const validPrev = prevMessages.filter((m) => !m.accountId || m.accountId === currentAccId)
@@ -553,11 +600,11 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
     } catch {
       // Silently fail on load more — user can scroll again to retry
     } finally {
-      if (currentAccId === activeAccountIdRef.current) {
-        setLoadingMoreMessages(false)
-      }
+      // Always settle so the refresh button and auto-fill never lock up when
+      // the account or folder moved mid-flight.
+      setLoadingMoreMessages(false)
     }
-  }, [hasMoreMessages, isSearchMode, loadingMoreMessages, messages.length])
+  }, [hasMoreMessages, isSearchMode, loadingMoreMessages])
 
   // Server-side IMAP search (debounced)
   const handleSearchChange = useCallback((query: string) => {
@@ -602,21 +649,31 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
     }
 
     // Debounce 500ms before hitting IMAP server
+    const scheduledAccount = activeAccountId
+    const scheduledFolder = activeFolder
     searchTimerRef.current = setTimeout(async () => {
-      if (!activeAccountId) return
+      if (!scheduledAccount) return
       setIsSearchMode(true)
       setLoadingMessages(true)
       setHasMoreMessages(false)
       try {
-        const res = await emailApi.searchEmails(query.trim(), activeFolder, activeAccountId)
+        const res = await emailApi.searchEmails(query.trim(), scheduledFolder, scheduledAccount)
+        // Discard results if the user switched account/folder meanwhile.
+        if (
+          activeAccountIdRef.current !== scheduledAccount ||
+          activeFolderRef.current !== scheduledFolder
+        ) {
+          return
+        }
         if (res && res.ok && Array.isArray(res.messages)) {
           setMessages(res.messages)
         } else {
           setMessages([])
         }
       } catch {
-        setMessages([])
+        // Keep the previous list on failure instead of blanking it.
       } finally {
+        // Always settle even when the account or folder moved mid-search.
         setLoadingMessages(false)
       }
     }, 500)
@@ -682,7 +739,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
       if (!isActive) {
         const category =
           (event.data && event.data.category) ||
-          classifyEmailCategory({ from: typeof from === 'string' ? from : undefined, subject })
+          classifyEmailCategory({ from: typeof from === 'string' ? from : undefined, subject, labels: event.data?.labels })
         if (shouldNotifyForCategory(category, loadEmailSettings().notifyPrimaryOnly)) {
           sdk.badge.set(true, 'momai-emails')
         }
@@ -694,6 +751,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
   const handleSelectAccount = useCallback(async (id: string) => {
     if (!id || id === activeAccountIdRef.current) return
     prewarmerRef.current.stop()
+    bodyPrefetcherRef.current.stop()
     activeAccountIdRef.current = id
     currentReqSeqRef.current++
     currentFoldersSeqRef.current++
@@ -826,9 +884,10 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
       const res = await emailApi.readEmail(msg.id, originFolder, accId, settings.autoMarkRead)
       if (res.ok && res.email) {
         const enriched = { ...res.email, read: true }
-        emailBodyCacheRef.current.set(cacheKey, enriched)
         if (accId) {
-          emailStorageCache.setEmailBody(accId, msg.id, enriched)
+          storeEmailBody(accId, msg.id, enriched)
+        } else {
+          emailBodyCacheRef.current.set(cacheKey, enriched)
         }
         setSelectedEmail(enriched)
       }
@@ -1078,9 +1137,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
     }
     if (activeAccountId) {
       emailBodyCacheRef.current.delete(`${activeAccountId}:${id}`)
-      try {
-        window.localStorage?.removeItem(`momai_emails_v1_body_${activeAccountId}_${id}`)
-      } catch {}
+      emailStorageCache.removeEmailBody(activeAccountId, id)
       const cacheKey = `${activeAccountId}:${activeFolder}`
       const cached = folderCacheRef.current.get(cacheKey)
       if (cached && !viewingFavorites) {
@@ -1235,6 +1292,61 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
       body: `\n\n---------- ${t('page.forwardHeader')} ----------\n${t('page.forwardFrom')}: ${email.from.name || email.from.address}\n${t('page.forwardDate')}: ${email.date}\n${t('page.forwardSubject')}: ${email.subject}\n${t('page.forwardTo')}: ${email.to.map((t) => t.address).join(', ')}\n\n${email.text || email.snippet}`
     })
     setIsComposeOpen(true)
+  }
+
+  const handleForwardAsAttachment = (email: EmailMessage) => {
+    const forwardSubject = email.subject.startsWith('Fwd:') || email.subject.startsWith('Enc:')
+      ? email.subject
+      : `Fwd: ${email.subject}`
+
+    const filename = `${(email.subject || 'email').replace(/[^a-zA-Z0-9_-]/g, '_')}.eml`
+    const attachmentContent = [
+      `From: ${email.from.name ? `"${email.from.name}" <${email.from.address}>` : email.from.address}`,
+      `To: ${(email.to || []).map((t) => (t.name ? `"${t.name}" <${t.address}>` : t.address)).join(', ')}`,
+      `Date: ${email.date}`,
+      `Subject: ${email.subject}`,
+      `MIME-Version: 1.0`,
+      `Content-Type: text/plain; charset=utf-8`,
+      '',
+      email.text || email.snippet || ''
+    ].join('\r\n')
+
+    setComposeInitialData({
+      accountId: activeAccountId || undefined,
+      subject: forwardSubject,
+      body: `\n\n---------- ${t('page.forwardHeader')} ----------\n${t('page.forwardFrom')}: ${email.from.name || email.from.address}\n${t('page.forwardDate')}: ${email.date}\n${t('page.forwardSubject')}: ${email.subject}\n\n`,
+      attachments: [
+        {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          filename,
+          contentType: 'message/rfc822',
+          size: attachmentContent.length,
+          base64Data: typeof btoa !== 'undefined' ? btoa(unescape(encodeURIComponent(attachmentContent))) : undefined
+        }
+      ]
+    })
+    setIsComposeOpen(true)
+  }
+
+  const handleArchiveMessage = (email: EmailMessage) => {
+    const archivePath = resolveArchivePath(folders)
+    handleMoveEmail(email.id, archivePath)
+  }
+
+  const handleMoveToCategory = (email: EmailMessage, category: 'primary' | 'promotions' | 'social' | 'updates') => {
+    const updatedEmail = { ...email, category }
+    setMessages((prev) => {
+      const next = prev.map((m) => (m.id === email.id ? updatedEmail : m))
+      if (activeAccountId && !viewingFavorites) {
+        emailStorageCache.setFolderEmails(activeAccountId, activeFolder, next)
+      }
+      return next
+    })
+    const cacheKey = `${activeAccountId}:${activeFolder}`
+    const cached = folderCacheRef.current.get(cacheKey)
+    if (cached) {
+      folderCacheRef.current.set(cacheKey, cached.map((m) => (m.id === email.id ? updatedEmail : m)))
+    }
   }
 
   // Background draft notice hides itself a few seconds after each update.
@@ -1526,6 +1638,11 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive = true }
             onOpenAttachment={handleOpenAttachment}
             folders={folders}
             onReply={(msg) => handleReply(msg, false)}
+            onReplyAll={(msg) => handleReply(msg, true)}
+            onForward={handleForward}
+            onForwardAsAttachment={handleForwardAsAttachment}
+            onArchive={handleArchiveMessage}
+            onMoveToCategory={handleMoveToCategory}
             onMove={handleMoveEmail}
             onNotSpam={handleNotSpam}
             hasMore={hasMoreMessages}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mergeFolderMessages } from '../src/services/prewarm'
+import { mergeFolderMessages, sortMessagesNewestFirst } from '../src/services/prewarm'
 import type { EmailMessage } from '../src/services/types'
 
 function makeMessages(ids: string[]): EmailMessage[] {
@@ -58,5 +58,27 @@ describe('folder cache merge', () => {
     const merged = mergeFolderMessages(existing, incoming, 150)
     expect(merged).toHaveLength(150)
     expect(merged[0].id).toBe('m1')
+  })
+})
+
+describe('sortMessagesNewestFirst', () => {
+  function at(id: string, timestamp: number): EmailMessage {
+    return { id, folder: 'INBOX', subject: `Subject ${id}`, timestamp } as EmailMessage
+  }
+
+  it('orders batches from different depths by recency, not arrival order', () => {
+    // Category supplement batch (older) merged before the general window.
+    const merged = [at('old1', 100), at('old2', 200), at('new1', 3000), at('new2', 4000)]
+    expect(sortMessagesNewestFirst(merged).map((m) => m.id)).toEqual(['new2', 'new1', 'old2', 'old1'])
+  })
+
+  it('keeps the previous relative order for equal timestamps', () => {
+    const merged = [at('a', 500), at('b', 500), at('c', 900)]
+    expect(sortMessagesNewestFirst(merged).map((m) => m.id)).toEqual(['c', 'a', 'b'])
+  })
+
+  it('treats missing timestamps as oldest without dropping messages', () => {
+    const merged = [at('missing', 0), at('dated', 10)]
+    expect(sortMessagesNewestFirst(merged).map((m) => m.id)).toEqual(['dated', 'missing'])
   })
 })

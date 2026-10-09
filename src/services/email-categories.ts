@@ -5,9 +5,24 @@
 
 export type EmailCategory = 'primary' | 'promotions' | 'social' | 'updates'
 
-interface CategoryInput {
+export interface CategoryInput {
   from?: { name?: string | null; address?: string | null } | string | null
   subject?: string | null
+  labels?: string[] | Set<string> | null
+  rawLabels?: string[] | Set<string> | null
+  xGmLabels?: string[] | Set<string> | null
+  /** Real category resolved by the server (Gmail X-GM-RAW); wins over heuristics. */
+  category?: string | null
+}
+
+function extractLabels(input: CategoryInput): string[] {
+  if (!input) return []
+  const raw = input.labels || input.rawLabels || input.xGmLabels
+  if (Array.isArray(raw)) return raw.map(String)
+  if (raw && typeof (raw as any)[Symbol.iterator] === 'function' && typeof raw !== 'string') {
+    return Array.from(raw).map(String)
+  }
+  return []
 }
 
 function readAddress(input: CategoryInput): { from: string; name: string; subject: string } {
@@ -17,26 +32,59 @@ function readAddress(input: CategoryInput): { from: string; name: string; subjec
   return { from: address.toLowerCase(), name: name.toLowerCase(), subject: (input?.subject || '').toLowerCase() }
 }
 
+// Server-provided categories (Gmail X-GM-RAW) win over local heuristics.
+const EXPLICIT_CATEGORY_MAP: Record<string, EmailCategory> = {
+  primary: 'primary',
+  personal: 'primary',
+  promotions: 'promotions',
+  social: 'social',
+  updates: 'updates',
+  forums: 'updates'
+}
+
+function normalizeExplicitCategory(value?: string | null): EmailCategory | null {
+  if (!value) return null
+  return EXPLICIT_CATEGORY_MAP[String(value).toLowerCase()] || null
+}
+
 export function classifyEmailCategory(input: CategoryInput): EmailCategory {
   const { from, name, subject } = readAddress(input)
 
+  const explicit = normalizeExplicitCategory(input?.category)
+  if (explicit) return explicit
+
+  const labels = extractLabels(input)
+  if (labels.length > 0) {
+    const lowerLabels = labels.map((l) => l.toLowerCase())
+    if (lowerLabels.some((l) => l.includes('smartlabel_promo') || l.includes('promotions') || l.includes('promoções') || l.includes('category_promotions') || l.includes('category promotions') || l.includes('category-promotions'))) {
+      return 'promotions'
+    }
+    if (lowerLabels.some((l) => l.includes('smartlabel_social') || l.includes('category_social') || l.includes('category social') || l.includes('category-social') || l.includes('social'))) {
+      return 'social'
+    }
+    if (lowerLabels.some((l) => l.includes('smartlabel_notification') || l.includes('smartlabel_update') || l.includes('category_updates') || l.includes('category updates') || l.includes('category-updates') || l.includes('atualizações') || l.includes('smartlabel_group') || l.includes('category_forums') || l.includes('category forums') || l.includes('category-forums') || l.includes('fóruns') || l.includes('updates'))) {
+      return 'updates'
+    }
+    if (lowerLabels.some((l) => l.includes('smartlabel_personal') || l.includes('category_personal') || l.includes('category personal') || l.includes('category-personal') || l.includes('principal') || l.includes('primary') || l.includes('personal'))) {
+      return 'primary'
+    }
+  }
+
   if (from.includes('calendar') || (from.includes('google') && from.includes('event'))) return 'primary'
 
-  const socialDomains = ['facebook', 'twitter', 'linkedin', 'instagram', 'tiktok', 'pinterest', 'reddit', 'discord', 'slack', 'whatsapp', 'telegram', 'snapchat', 'youtube', 'twitch', 'meetup', 'quora', 'tumblr']
-  if (socialDomains.some((d) => from.includes(d))) return 'social'
-  const socialKeywords = ['friend request', 'solicitação de amizade', 'seguiu você', 'followed you', 'mentioned you', 'mencionou você', 'commented', 'comentou', 'liked', 'curtiu', 'shared', 'compartilhou', 'tagged', 'marcou', 'invite', 'convite', 'joined', 'entrou']
-  if (socialKeywords.some((k) => subject.includes(k) || name.includes(k))) return 'social'
+  // 1. Social network domains
+  const socialDomains = ['facebook', 'twitter', 'linkedin', 'instagram', 'tiktok', 'pinterest', 'reddit', 'discord', 'snapchat', 'twitch']
+  if (socialDomains.some((d) => from.includes(d) || name.includes(d))) return 'social'
 
-  const updateDomains = ['notify', 'notification', 'alert', 'update', 'security', 'account', 'billing', 'support', 'service', 'info@', 'system', 'admin', 'postmaster', 'mailer-daemon', 'github', 'gitlab', 'copilot']
+  // 2. Automated bounce system domains
+  const updateDomains = ['postmaster@', 'mailer-daemon@', 'system-notice@']
   if (updateDomains.some((d) => from.includes(d))) return 'updates'
-  const updateKeywords = ['verificação', 'verification', 'confirmação', 'confirmation', 'senha', 'password', 'código', 'code', 'login', 'acesso', 'segurança', 'security', 'atualização', 'update', 'fatura', 'invoice', 'recibo', 'receipt', 'pagamento', 'payment', 'entrega', 'delivery', 'rastreio', 'tracking', 'pedido', 'order']
-  if (updateKeywords.some((k) => subject.includes(k))) return 'updates'
 
-  const promoDomains = ['newsletter', 'marketing', 'promo', 'offers', 'deals', 'shop', 'store', 'sale', 'mailer', 'campaign', 'mailchimp', 'sendgrid', 'hubspot', 'mailgun']
-  if (promoDomains.some((d) => from.includes(d))) return 'promotions'
-  const promoKeywords = ['unsubscribe', 'cancelar inscrição', 'descadastrar', 'oferta', 'offer', 'promoção', 'promotion', 'desconto', 'discount', 'cupom', 'coupon', 'sale', 'deal', 'newsletter', 'black friday', 'frete grátis', 'free shipping', 'compre', 'buy now', 'limited time', 'tempo limitado', 'exclusivo', 'exclusive']
-  if (promoKeywords.some((k) => subject.includes(k))) return 'promotions'
+  // 3. Dedicated marketing & newsletter sender addresses
+  const promoSenders = ['news@', 'promo@', 'promocoes@', 'ofertas@', 'newsletter@', 'deals@', 'marketing@', 'mailchimp.com', 'sendgrid.net', 'hubspot.com']
+  if (promoSenders.some((d) => from.includes(d))) return 'promotions'
 
+  // 4. Default: Primary (preserves the exact chronological mailbox order from Gmail)
   return 'primary'
 }
 

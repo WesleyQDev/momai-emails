@@ -2,7 +2,7 @@
 // Sandboxed, CSS-isolated iframe renderer for HTML emails with full responsiveness, auto-height, and external link handling
 
 import React, { useEffect, useRef, useState, useMemo } from 'react'
-import DOMPurify from 'dompurify'
+import { sanitizeEmailHtml } from '../services/sanitize-html'
 
 export const EMAIL_SHELL_MAX_WIDTH_PX = 640
 export const EMAIL_HEIGHT_PADDING_PX = 20
@@ -224,58 +224,7 @@ export const preInvertForInvertedShell = (value: string, fallback: string): stri
   return toRgbString(invertChannels(rotateHue180(color)))
 }
 
-const sanitizeHtmlContent = (raw: string): string => {
-  if (!raw) return ''
-
-  const sanitizeConfig = {
-    WHOLE_DOCUMENT: false,
-    ADD_TAGS: ['style', 'center'],
-    ADD_ATTR: [
-      'target',
-      'align',
-      'valign',
-      'bgcolor',
-      'border',
-      'cellpadding',
-      'cellspacing',
-      'width',
-      'height',
-      'style',
-      'color',
-      'size',
-      'face',
-      'colspan',
-      'rowspan',
-      'class',
-      'id'
-    ],
-    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'applet', 'form', 'base'],
-    FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur', 'formaction']
-  }
-
-  try {
-    const rawPurify = DOMPurify as any
-    const purifyInstance =
-      typeof rawPurify?.sanitize === 'function'
-        ? rawPurify
-        : typeof rawPurify?.default?.sanitize === 'function'
-          ? rawPurify.default
-          : typeof rawPurify === 'function' && typeof window !== 'undefined'
-            ? rawPurify(window)
-            : null
-
-    if (purifyInstance && typeof purifyInstance.sanitize === 'function') {
-      return purifyInstance.sanitize(raw, sanitizeConfig)
-    }
-  } catch {
-    // Fallback if DOMPurify fails to initialize
-  }
-
-  // Safe basic fallback stripping scripts and iframes
-  return raw
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
-}
+const sanitizeHtmlContent = (raw: string): string => sanitizeEmailHtml(raw)
 
 export const EmailHtmlViewer: React.FC<EmailHtmlViewerProps> = ({ html, className = '', canvas: canvasOverride }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null)

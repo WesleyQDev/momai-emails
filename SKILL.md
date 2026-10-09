@@ -10,7 +10,7 @@ Você tem acesso completo à extensão de E-mails do usuário para consultar, le
 ### Ferramentas Disponíveis
 
 1. **list_accounts** — Lista as contas de e-mail cadastradas e seus status (sem expor senhas).
-2. **list_emails** — Lista as mensagens mais recentes de uma pasta (padrão: INBOX). Pode filtrar por quantidade (`limit`) ou apenas não lidos (`unreadOnly`).
+2. **list_emails** — Lista as mensagens mais recentes de uma pasta (padrão: INBOX). Pode filtrar por quantidade (`limit`), apenas não lidos (`unreadOnly`) ou pela categoria do Gmail (`category`: primary, promotions, social, updates, forums — somente contas Gmail).
 3. **read_email** — Lê o conteúdo completo, assunto, remetente, data e corpo de uma mensagem pelo seu `messageId`.
 4. **search_emails** — Pesquisa e-mails no servidor por remetente, assunto ou palavra-chave (`query`).
 5. **send_email** — Envia um e-mail via SMTP com `to`, `subject` e `body`.

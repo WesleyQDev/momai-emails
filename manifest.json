@@ -169,11 +169,14 @@
   "background": true,
   "backgroundScript": "runtime.ts",
   "permissions": [
-    "network"
+    "network",
+    "filesystem:read",
+    "filesystem:write",
+    "shell"
   ],
   "sdkVersion": 1,
-  "momai_compat": ">=1.15.0",
-  "version": "1.4.0",
+  "momai_compat": ">=1.16.0",
+  "version": "1.5.0",
   "ui": {
     "page": "dist/page.js",
     "pageType": "momai-emails-page",
@@ -318,7 +321,9 @@
           },
           "limit": {
             "type": "number",
-            "description": "Quantidade máxima de mensagens a retornar (padrão: 20)"
+            "description": "Quantidade máxima de mensagens a retornar (padrão: 50, máximo: 500)",
+            "minimum": 1,
+            "maximum": 500
           },
           "unreadOnly": {
             "type": "boolean",
@@ -326,7 +331,23 @@
           },
           "offset": {
             "type": "number",
-            "description": "Deslocamento da pagina (opcional)"
+            "description": "Deslocamento da pagina (opcional)",
+            "minimum": 0
+          },
+          "includeCategories": {
+            "type": "boolean",
+            "description": "Resolver a categoria real do Gmail para cada mensagem (padrão: true)"
+          },
+          "category": {
+            "type": "string",
+            "description": "Filtrar pela categoria do Gmail (somente contas Gmail)",
+            "enum": [
+              "primary",
+              "promotions",
+              "social",
+              "updates",
+              "forums"
+            ]
           }
         }
       }
@@ -511,7 +532,9 @@
           },
           "limit": {
             "type": "number",
-            "description": "Limite de resultados (padrão: 15)"
+            "description": "Limite de resultados (padrão: 200, máximo: 500)",
+            "minimum": 1,
+            "maximum": 500
           }
         }
       }

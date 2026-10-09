@@ -67,9 +67,6 @@ function detectCompanyDomain(name?: string, address?: string): string | null {
   if (n.includes('nubank') || a.includes('nubank')) {
     return 'nubank.com.br'
   }
-  if (n.includes('mercado livre') || a.includes('mercadolivre')) {
-    return 'mercadolivre.com.br'
-  }
   if (n.includes('facebook') || a.includes('facebook')) {
     return 'facebook.com'
   }

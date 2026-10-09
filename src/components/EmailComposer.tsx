@@ -22,6 +22,7 @@ import ContextMenu from './ContextMenu'
 import { useExtensionLocale } from '../services/i18n'
 import { closeAndSaveDraftInBackground } from '../services/draft'
 import { closeAndSendInBackground } from '../services/send'
+import { sanitizeEmailHtml, escapeHtmlAttribute } from '../services/sanitize-html'
 import { OfficialFileIcon, formatFileSize, getAttachmentFileInfo } from './AttachmentBadge'
 
 interface EmailComposerProps {
@@ -174,6 +175,8 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
   const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null)
   const [selectedInlineImg, setSelectedInlineImg] = useState<HTMLImageElement | null>(null)
   const dragCounter = useRef(0)
+  // Tracks which initialData was applied, so account refreshes never reset the editor.
+  const appliedInitialRef = useRef<{ open: boolean; data?: Partial<SendEmailPayload> }>({ open: false })
 
   // Refs for editor and file inputs
   const editorRef = useRef<HTMLDivElement>(null)
@@ -194,7 +197,11 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
   const toAutofillRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (isOpen) {
+    // Apply initial data only when the composer opens or a new draft/reply is
+    // loaded. Account list refreshes must never overwrite what the user typed.
+    const alreadyApplied = appliedInitialRef.current.open && appliedInitialRef.current.data === initialData
+    if (isOpen && !alreadyApplied) {
+      appliedInitialRef.current = { open: true, data: initialData }
       setSelectedAccountId(initialData?.accountId || activeAccountId || accounts[0]?.id || '')
       setTo(initialData?.to || '')
       setCc(initialData?.cc || '')
@@ -202,7 +209,9 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
       setShowCc(Boolean(initialData?.cc))
       setShowBcc(Boolean(initialData?.bcc))
       setSubject(initialData?.subject || '')
-      const initBody = initialData?.body || ''
+      // Draft/reply HTML comes from the mail server and is sanitized before it
+      // reaches the editor, same policy as the read view.
+      const initBody = sanitizeEmailHtml(initialData?.body || '')
       setBody(initBody)
       if (editorRef.current) {
         editorRef.current.innerHTML = initBody
@@ -217,8 +226,12 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
       setIsDraggingOver(false)
       setSelectedInlineImg(null)
       setRecentRecipients(getRecentRecipients())
+    } else if (!isOpen && appliedInitialRef.current.open) {
+      appliedInitialRef.current = { open: false, data: undefined }
     }
-  }, [isOpen, initialData, activeAccountId, accounts])
+    // accounts/activeAccountId are read only on open, never as reset triggers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, initialData])
 
   // Sync editor content when initialData changes
   useEffect(() => {
@@ -275,7 +288,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
     restoreSelection()
 
     const imgId = `img-inline-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-    const imgHtml = `<img id="${imgId}" src="${src}" alt="${finalAlt}" tabIndex="0" class="momai-inline-img hover:opacity-95 transition-all cursor-pointer" style="max-width: 100%; height: auto; border-radius: 8px; margin: 8px 0; display: block; box-shadow: 0 2px 8px rgba(0,0,0,0.15); outline: none;" />`
+    const imgHtml = `<img id="${imgId}" src="${escapeHtmlAttribute(src)}" alt="${escapeHtmlAttribute(finalAlt)}" tabIndex="0" class="momai-inline-img hover:opacity-95 transition-all cursor-pointer" style="max-width: 100%; height: auto; border-radius: 8px; margin: 8px 0; display: block; box-shadow: 0 2px 8px rgba(0,0,0,0.15); outline: none;" />`
 
     document.execCommand('insertHTML', false, imgHtml)
     setIsHtml(true)
@@ -1179,7 +1192,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
 
               <div className="h-4 w-px bg-border/60 mx-0.5" />
 
-              <label className="flex items-center gap-1 text-xs text-text-muted cursor-pointer hover:text-text select-none" title="Enviar e-mail formatado como HTML">
+              <label className="flex items-center gap-1 text-xs text-text-muted cursor-pointer hover:text-text select-none" title={t('composer.htmlTitle')}>
                 <input
                   type="checkbox"
                   checked={isHtml}

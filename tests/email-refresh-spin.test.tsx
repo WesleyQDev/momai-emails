@@ -48,4 +48,22 @@ describe('refresh button spin (manual clicks only)', () => {
     const markup = renderToStaticMarkup(createElement(EmailList, { ...baseProps, loading: false }))
     expect(markup).not.toContain('animate-spin')
   })
+
+  it('stays clickable while background fills the list', async () => {
+    const { EmailList } = await import('../src/components/EmailList')
+    // Manual refresh cancels background fills (new request generation
+    // discards stale results), so it must never lock while loading.
+    // The refresh button is identified by its localized title (pt-BR default
+    // in tests).
+    const refreshTag = (markup: string) => markup.match(/<button[^>]*title="Atualizar pasta"[^>]*>/)?.[0] ?? ''
+    const busy = renderToStaticMarkup(
+      createElement(EmailList, { ...baseProps, loading: true, loadingMore: true, hasMore: true })
+    )
+    const idle = renderToStaticMarkup(
+      createElement(EmailList, { ...baseProps, loading: false, loadingMore: false })
+    )
+    expect(refreshTag(busy)).toContain('title=')
+    expect(refreshTag(busy)).not.toContain('disabled')
+    expect(refreshTag(idle)).not.toContain('disabled')
+  })
 })

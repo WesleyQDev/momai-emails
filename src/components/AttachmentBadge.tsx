@@ -385,7 +385,7 @@ export const AttachmentBadge: React.FC<AttachmentBadgeProps> = ({
               <span>{t('attachment.openingComputer')}</span>
             </div>
           ) : savedSuccess ? (
-            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-600 text-white text-xs font-semibold shadow-lg">
+            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-accent text-bg text-xs font-semibold shadow-lg">
               <CheckIcon className="w-4 h-4 stroke-2" />
               <span>{t('attachment.saved')}</span>
             </div>
@@ -449,7 +449,7 @@ export const AttachmentBadge: React.FC<AttachmentBadgeProps> = ({
               className="p-1 rounded-md hover:bg-input text-text-muted hover:text-accent transition-colors cursor-pointer"
             >
               {savedSuccess ? (
-                <CheckIcon className="w-3.5 h-3.5 text-emerald-500 stroke-2" />
+                <CheckIcon className="w-3.5 h-3.5 text-accent stroke-2" />
               ) : (
                 <ArrowDownTrayIcon className="w-3.5 h-3.5" />
               )}
