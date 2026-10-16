@@ -13,7 +13,7 @@
 
 const crypto = require('node:crypto')
 
-const SECURE_STORAGE_TIMEOUT_MS = 5000
+const SECURE_STORAGE_TIMEOUT_MS = 15000
 const LEGACY_PREFIX = 'aes:'
 const pending = new Map<string, { resolve: (val: any) => void; timeout: any }>()
 let nextId = 1

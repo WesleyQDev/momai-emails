@@ -47,8 +47,18 @@ function normalizeExplicitCategory(value?: string | null): EmailCategory | null 
   return EXPLICIT_CATEGORY_MAP[String(value).toLowerCase()] || null
 }
 
+// Senders pinned to Updates, even when Gmail itself puts them in Primary:
+// GitHub notification mail belongs under Atualizações by user preference.
+const PINNED_UPDATE_SENDERS = ['notifications@github.com']
+
+function isPinnedUpdateSender(from: string): boolean {
+  return PINNED_UPDATE_SENDERS.some((sender) => from.includes(sender))
+}
+
 export function classifyEmailCategory(input: CategoryInput): EmailCategory {
   const { from, name, subject } = readAddress(input)
+
+  if (isPinnedUpdateSender(from)) return 'updates'
 
   const explicit = normalizeExplicitCategory(input?.category)
   if (explicit) return explicit

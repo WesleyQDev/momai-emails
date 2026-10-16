@@ -16,11 +16,13 @@ const CASES: Array<{ from: any; subject: string; labels?: string[]; category?: s
   { from: { address: 'calendar-notification@google.com', name: '' }, subject: 'Convite: Reunião de equipe', expected: 'primary' },
   { from: { address: 'events-noreply@google.com', name: '' }, subject: 'Detalhes do seu evento', expected: 'primary' },
   { from: 'joao@email.com', subject: 'Oi', expected: 'primary' },
-  // Real-world cases from user screenshots (exact same chronological list as Gmail's Principal):
-  { from: { address: 'notifications@github.com', name: 'Wesley Queiroz 2' }, subject: '[WesleyQDev/gpu-lab] Run failed: pages build and deployment - main (fa928ee)', expected: 'primary' },
+  // Real-world cases from user screenshots (exact same chronological list as
+  // Gmail's Principal), except notifications@github.com, which is pinned to
+  // Updates by user preference below:
+  { from: { address: 'notifications@github.com', name: 'Wesley Queiroz 2' }, subject: '[WesleyQDev/gpu-lab] Run failed: pages build and deployment - main (fa928ee)', expected: 'updates' },
   { from: { address: 'noreply@steampowered.com', name: 'Steam' }, subject: 'A Promoção de Primavera do Steam está no ar, com ofertas recomendadas para você.', expected: 'primary' },
   { from: { address: 'digital@bancodobrasil.com.br', name: 'digital' }, subject: 'FATURA CLIENTE - OUROCARD FACIL VISA - Banco do Brasil', expected: 'primary' },
-  { from: { address: 'notifications@github.com', name: 'Copilot' }, subject: 'Re: [WesleyQDev/momai] chore(daily): checkpoint 2026-10-05 (PR #470)', expected: 'primary' },
+  { from: { address: 'notifications@github.com', name: 'Copilot' }, subject: 'Re: [WesleyQDev/momai] chore(daily): checkpoint 2026-10-05 (PR #470)', expected: 'updates' },
   { from: { address: 'noreply@indeed.com', name: 'Indeed' }, subject: 'Desenvolvedor Backend na empresa Gaudium - R$ 9.974,70', expected: 'primary' },
   { from: { address: 'santander@santander.com.br', name: 'Santander Open Acad.' }, subject: 'Temos novidades sobre a tua candidatura', expected: 'primary' },
   { from: { address: 'noreply@cloudflare.com', name: 'Cloudflare' }, subject: "That's a wrap on our 16th Birthday Week!", expected: 'primary' },
@@ -32,7 +34,11 @@ const CASES: Array<{ from: any; subject: string; labels?: string[]; category?: s
   { from: { address: 'noreply@prisma.io', name: 'Prisma' }, subject: 'Updates to our Terms of Service and SLA', expected: 'primary' },
   // Server-resolved category (Gmail X-GM-RAW) wins:
   { from: { address: 'noreply@mercadolivre.com.br', name: 'Mercado Livre' }, subject: 'Você tem uma nova mensagem', category: 'promotions', expected: 'promotions' },
-  // No sender is special-cased: these follow the server-resolved Gmail
+  // notifications@github.com is the only pinned sender: it stays in Updates
+  // even when Gmail resolves the message as Primary server-side.
+  { from: { address: 'notifications@github.com', name: 'GitHub' }, subject: 'Run failed: pages build and deployment', category: 'primary', expected: 'updates' },
+  { from: { address: 'notifications@github.com', name: 'GitHub' }, subject: 'Run failed: pages build and deployment', category: 'updates', expected: 'updates' },
+  // No other sender is special-cased: these follow the server-resolved Gmail
   // category like any other message, so the tabs mirror Gmail exactly.
   { from: { address: 'share@tailscale.com', name: 'Tailscale' }, subject: 'Anderson Tavares shared a device with you over Tailscale', category: 'updates', expected: 'updates' },
   { from: { address: 'noreply@mercadopago.com.br', name: 'Mercado Pago' }, subject: 'Seu crédito está te esperando no Mercado Pago', category: 'promotions', expected: 'promotions' },

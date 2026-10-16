@@ -1,6 +1,6 @@
 ---
 name: E-mails
-description: Gerencie e-mails via SMTP/IMAP, liste mensagens, leia e-mails, responda, encaminhe e envie mensagens. Use quando o usuario falar de email, e-mail, correio, caixa de entrada, mensagem eletronica, ler, enviar ou responder emails.
+description: Gerencia caixas postais de correio eletrônico via IMAP e SMTP: lista caixas de entrada, pesquisa e lê mensagens de e-mail, redige novos e-mails, responde e encaminha com suporte a anexos. Use quando o usuário pedir para verificar e-mails, ler mensagens da caixa de entrada, buscar comunicações por remetente/assunto ou enviar correio eletrônico.
 ---
 
 ## Instruções para o Assistente MomAI

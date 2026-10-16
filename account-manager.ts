@@ -384,13 +384,18 @@ class AccountManager {
     }
   }
 
-  public async loadAccounts(): Promise<void> {
+  public async loadAccounts(maxRetries: number = 2): Promise<void> {
     if (this.useHostStorage()) {
       try {
         const rawEnc = await this.readStoredText('accounts', this.accountsFile)
         if (!rawEnc || !rawEnc.trim()) return
 
-        const decrypted = await decryptFromStorage(rawEnc)
+        let decrypted = await decryptFromStorage(rawEnc)
+        if (!decrypted && maxRetries > 0) {
+          // Retry with a delay in case IPC was congested during host bootstrap
+          await new Promise((resolve) => setTimeout(resolve, 1500))
+          decrypted = await decryptFromStorage(rawEnc)
+        }
         if (!decrypted) {
           console.warn('[AccountManager] Could not decrypt accounts (secure storage unavailable?)')
           return
@@ -419,7 +424,11 @@ class AccountManager {
       const rawEnc = fs.readFileSync(this.accountsFile, 'utf8')
       if (!rawEnc || !rawEnc.trim()) return
 
-      const decrypted = await decryptFromStorage(rawEnc)
+      let decrypted = await decryptFromStorage(rawEnc)
+      if (!decrypted && maxRetries > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 1500))
+        decrypted = await decryptFromStorage(rawEnc)
+      }
       if (!decrypted) return
 
       const list: any[] = JSON.parse(decrypted)

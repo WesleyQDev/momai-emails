@@ -176,7 +176,7 @@
   ],
   "sdkVersion": 1,
   "momai_compat": ">=1.16.0",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "ui": {
     "page": "dist/page.js",
     "pageType": "momai-emails-page",
@@ -1044,9 +1044,5 @@
   "theme": {
     "gradient": "from-blue-500 to-indigo-600",
     "accent": "blue"
-  },
-  "toolPriority": {
-    "label": "EMAILS",
-    "rule": "gerenciar, consultar, ler, responder ou enviar e-mails via SMTP/IMAP."
   }
 }
