@@ -155,6 +155,23 @@ function formatImapError(err: any): string {
 const IMAP_CONNECTION_TIMEOUT_MS = 15000
 const IMAP_GREETING_TIMEOUT_MS = 10000
 const IMAP_SOCKET_TIMEOUT_MS = 30000
+const IMAP_LOCK_TIMEOUT_MS = 15000
+const IMAP_OPERATION_TIMEOUT_MS = 35000
+
+/**
+ * Wraps a promise with a timeout. Rejects with an error if the timeout expires.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, errorMsg: string): Promise<T> {
+  let timer: NodeJS.Timeout | null = null
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(errorMsg))
+    }, ms)
+  })
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timer) clearTimeout(timer)
+  })
+}
 
 /**
  * Builds the ImapFlow options. Exported for tests: certificates are always
@@ -163,8 +180,8 @@ const IMAP_SOCKET_TIMEOUT_MS = 30000
 function buildImapClientOptions(account: any) {
   const secure = Boolean(account.imap?.secure)
   return {
-    host: account.imap.host,
-    port: account.imap.port,
+    host: account.imap?.host || '',
+    port: account.imap?.port || 993,
     secure,
     auth: {
       user: account.imap?.user || account.email,
@@ -310,6 +327,39 @@ if (typeof process !== 'undefined' && typeof process.on === 'function') {
   process.once('exit', shutdownCleanup)
   process.once('SIGINT', shutdownCleanup)
   process.once('SIGTERM', shutdownCleanup)
+}
+
+/**
+ * Safely acquires a mailbox lock with a timeout. If the lock times out on a
+ * pooled connection (e.g. after OS sleep or a stale half-open socket), the
+ * stale client is released and a fresh connection is attempted once.
+ */
+async function acquireMailboxLock(
+  account: any,
+  client: any,
+  folder: string,
+  timeoutMs = IMAP_LOCK_TIMEOUT_MS,
+  getConnectedClientFn?: (acc: any) => Promise<any>
+): Promise<{ client: any; lock: any }> {
+  try {
+    const lock = await withTimeout(
+      client.getMailboxLock(folder),
+      timeoutMs,
+      `Timeout (${timeoutMs}ms) aguardando liberação da pasta "${folder}" no IMAP`
+    )
+    return { client, lock }
+  } catch (err: any) {
+    const key = account.id || account.email
+    releaseImapClient(key)
+    const connectFn = getConnectedClientFn || getConnectedImapClient
+    const freshClient = await connectFn(account)
+    const freshLock = await withTimeout(
+      freshClient.getMailboxLock(folder),
+      timeoutMs,
+      `Timeout (${timeoutMs}ms) ao obter pasta "${folder}" após reconexão`
+    )
+    return { client: freshClient, lock: freshLock }
+  }
 }
 
 /**
@@ -1023,7 +1073,9 @@ async function fetchFullMessage(account: any, uidOrMessageId: string | number, f
   }
   let lock: any = null
   try {
-    lock = await client.getMailboxLock(folder)
+    const acquired = await acquireMailboxLock(account, client, folder)
+    client = acquired.client
+    lock = acquired.lock
   } catch {
     return null
   }
@@ -1032,7 +1084,11 @@ async function fetchFullMessage(account: any, uidOrMessageId: string | number, f
     let resolvedUid = targetUid
 
     if (isNaN(resolvedUid)) {
-      const found = await client.search({ header: ['message-id', uidOrMessageId] }, { uid: true })
+      const found: any = await withTimeout<any>(
+        client.search({ header: ['message-id', uidOrMessageId] }, { uid: true }),
+        IMAP_OPERATION_TIMEOUT_MS,
+        `Timeout ao buscar mensagem com ID ${uidOrMessageId}`
+      )
       if (found && found.length > 0) resolvedUid = found[0]
       else return null
     }
@@ -1048,10 +1104,18 @@ async function fetchFullMessage(account: any, uidOrMessageId: string | number, f
       } catch {}
     }
 
-    const download = await client.download(resolvedUid, undefined, { uid: true })
+    const download: any = await withTimeout<any>(
+      client.download(resolvedUid, undefined, { uid: true }),
+      IMAP_OPERATION_TIMEOUT_MS,
+      `Timeout ao baixar mensagem UID ${resolvedUid} do servidor IMAP`
+    )
     if (!download || !download.content) return null
 
-    const parsed = await simpleParser(download.content)
+    const parsed: any = await withTimeout<any>(
+      simpleParser(download.content),
+      IMAP_OPERATION_TIMEOUT_MS,
+      `Timeout ao processar conteúdo da mensagem UID ${resolvedUid}`
+    )
     const fromAddr = parsed.from?.value?.[0] || { name: '', address: 'desconhecido' }
     const toAddrs = (parsed.to?.value || []).map((t: any) => ({ name: t.name || '', address: t.address || '' }))
     const ccAddrs = (parsed.cc?.value || []).map((c: any) => ({ name: c.name || '', address: c.address || '' }))
@@ -1059,12 +1123,15 @@ async function fetchFullMessage(account: any, uidOrMessageId: string | number, f
 
     let isRead = false
     let isStarred = false
-    for await (const msg of client.fetch(String(resolvedUid), { flags: true }, { uid: true })) {
-      if (msg.flags) {
-        isRead = msg.flags.has('\\Seen')
-        isStarred = msg.flags.has('\\Flagged')
+    const fetchFlagsPromise = (async () => {
+      for await (const msg of client.fetch(String(resolvedUid), { flags: true }, { uid: true })) {
+        if (msg.flags) {
+          isRead = msg.flags.has('\\Seen')
+          isStarred = msg.flags.has('\\Flagged')
+        }
       }
-    }
+    })()
+    await withTimeout(fetchFlagsPromise, 10000, 'Timeout ao verificar flags da mensagem').catch(() => {})
 
     try {
       if (!fs.existsSync(cacheBaseDir)) fs.mkdirSync(cacheBaseDir, { recursive: true })
@@ -1681,20 +1748,34 @@ async function downloadAttachmentToFile(
   }
   let lock: any = null
   try {
-    lock = await client.getMailboxLock(folder)
+    const acquired = await acquireMailboxLock(account, client, folder)
+    client = acquired.client
+    lock = acquired.lock
     const targetUid = typeof uidOrMessageId === 'number' ? uidOrMessageId : parseInt(String(uidOrMessageId), 10)
     let resolvedUid = targetUid
 
     if (isNaN(resolvedUid)) {
-      const found = await client.search({ header: ['message-id', uidOrMessageId] }, { uid: true })
+      const found: any = await withTimeout<any>(
+        client.search({ header: ['message-id', uidOrMessageId] }, { uid: true }),
+        IMAP_OPERATION_TIMEOUT_MS,
+        `Timeout ao buscar anexo com message-id ${uidOrMessageId}`
+      )
       if (found && found.length > 0) resolvedUid = found[0]
       else return null
     }
 
-    const download = await client.download(resolvedUid, undefined, { uid: true })
+    const download: any = await withTimeout<any>(
+      client.download(resolvedUid, undefined, { uid: true }),
+      IMAP_OPERATION_TIMEOUT_MS,
+      `Timeout ao baixar anexo UID ${resolvedUid}`
+    )
     if (!download || !download.content) return null
 
-    const parsed = await simpleParser(download.content)
+    const parsed: any = await withTimeout<any>(
+      simpleParser(download.content),
+      IMAP_OPERATION_TIMEOUT_MS,
+      `Timeout ao processar anexo UID ${resolvedUid}`
+    )
     let matchedPath: string | null = null
 
     for (const att of parsed.attachments || []) {
@@ -1876,5 +1957,9 @@ module.exports = {
   getStartOfToday,
   countUnreadTodayInFolder,
   getUnreadWindowStart,
-  countUnreadInWindowInFolder
+  countUnreadInWindowInFolder,
+  withTimeout,
+  acquireMailboxLock,
+  IMAP_LOCK_TIMEOUT_MS,
+  IMAP_OPERATION_TIMEOUT_MS
 }

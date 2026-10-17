@@ -84,8 +84,8 @@ export const emailApi = {
     executeCommand<{ ok: boolean }>('set_notification_prefs', prefs),
 
   // Custom profile photos (persisted in host storage so they survive restarts)
-  getAvatar: (accountId: string) =>
-    executeCommand<{ ok: boolean; avatar?: string | null }>('get_avatar', { accountId }),
+  getAvatar: (accountId: string, email?: string) =>
+    executeCommand<{ ok: boolean; avatar?: string | null }>('get_avatar', { accountId, email }),
   setAvatar: (accountId: string, avatar: string) =>
     executeCommand<{ ok: boolean }>('set_avatar', { accountId, avatar }),
   removeAvatar: (accountId: string) =>

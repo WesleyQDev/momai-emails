@@ -686,7 +686,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'get_avatar': {
-      const avatar = await accountManager.getAvatar(args.accountId || args.id)
+      const avatar = await accountManager.getAvatar(args.accountId || args.id, args.email)
       return { ok: true, avatar }
     }
 
@@ -722,10 +722,19 @@ process.on('message', async (msg: any) => {
   if (msg.type === 'execute') {
     const { requestId, payload } = msg
     const { toolName, args } = payload || {}
+    const TOOL_TIMEOUT_MS = 60_000 // 60s safeguard to respond before server 120s timeout
+    let timer: NodeJS.Timeout | null = null
     try {
-      const result = await executeTool(toolName, args)
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`A execução da ferramenta '${toolName}' excedeu o tempo limite de ${TOOL_TIMEOUT_MS / 1000}s.`))
+        }, TOOL_TIMEOUT_MS)
+      })
+      const result = await Promise.race([executeTool(toolName, args), timeoutPromise])
+      if (timer) clearTimeout(timer)
       safeSend({ type: 'response', requestId, result })
     } catch (err: any) {
+      if (timer) clearTimeout(timer)
       safeSend({
         type: 'response',
         requestId,

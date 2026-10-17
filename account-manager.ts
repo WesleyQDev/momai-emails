@@ -6,10 +6,141 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
+const crypto = require('node:crypto')
 const { encryptForStorage, decryptFromStorage } = require('./secure-storage-bridge.ts')
 const { PROVIDERS, detectProviderFromEmail } = require('./providers-data.ts')
 const emailClient = require('./email-client.ts')
 const connectionPolicy = require('./imap-connection-policy.ts')
+
+const MAX_REMOTE_AVATAR_BYTES = 75_000
+const AVATAR_FETCH_TIMEOUT_MS = 6_000
+
+async function downloadAvatarDataUrl(
+  url: string,
+  fetchFn: typeof fetch
+): Promise<string | null> {
+  try {
+    const res = await fetchFn(url, {
+      headers: { 'User-Agent': 'MomAI-Emails/1.0' },
+      signal: typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+        ? AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS)
+        : undefined
+    } as any)
+    if (!res || !res.ok) return null
+    const rawType = String(res.headers?.get?.('content-type') || '').toLowerCase()
+    const match = rawType.match(/^image\/(png|jpeg|jpg|webp|gif)/)
+    if (!match) return null
+    const subtype = match[1] === 'jpg' ? 'jpeg' : match[1]
+    const buf = Buffer.from(await res.arrayBuffer())
+    if (buf.length === 0 || buf.length > MAX_REMOTE_AVATAR_BYTES) return null
+    return `data:image/${subtype};base64,${buf.toString('base64')}`
+  } catch {
+    return null
+  }
+}
+
+function appendAvatarSize(url: string, size: number): string {
+  const sep = url.includes('?') ? '&' : '?'
+  return `${url}${sep}s=${size}`
+}
+
+/**
+ * Resolves the user's original public profile photo associated with an e-mail
+ * address (Gravatar, Libravatar, or verified GitHub account/commit author for
+ * that exact address) and returns a bounded base64 data URL ready for storage.
+ */
+async function fetchAccountAvatar(
+  email: string,
+  fetchImpl?: typeof fetch
+): Promise<string | null> {
+  const normalized = String(email || '').trim().toLowerCase()
+  if (!normalized || !normalized.includes('@')) return null
+  const fetchFn: typeof fetch | undefined =
+    fetchImpl || (typeof fetch === 'function' ? fetch : undefined)
+  if (!fetchFn) return null
+
+  const md5 = crypto.createHash('md5').update(normalized).digest('hex')
+
+  // 1. Gravatar (d=404 ensures we only accept a real user-uploaded photo)
+  for (const size of [128, 80]) {
+    const gravatar = await downloadAvatarDataUrl(
+      `https://www.gravatar.com/avatar/${md5}?d=404&s=${size}`,
+      fetchFn
+    )
+    if (gravatar) return gravatar
+  }
+
+  // 2. Libravatar
+  for (const size of [128, 80]) {
+    const libravatar = await downloadAvatarDataUrl(
+      `https://seccdn.libravatar.org/avatar/${md5}?d=404&s=${size}`,
+      fetchFn
+    )
+    if (libravatar) return libravatar
+  }
+
+  // 3. GitHub public user lookup by exact email
+  try {
+    const userRes = await fetchFn(
+      `https://api.github.com/search/users?q=${encodeURIComponent(normalized)}+in:email&per_page=1`,
+      {
+        headers: {
+          'User-Agent': 'MomAI-Emails/1.0',
+          Accept: 'application/vnd.github+json'
+        },
+        signal: typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+          ? AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS)
+          : undefined
+      } as any
+    )
+    if (userRes && userRes.ok) {
+      const data: any = await userRes.json()
+      const first = Array.isArray(data?.items) ? data.items[0] : null
+      if (first && first.type !== 'Bot' && typeof first.avatar_url === 'string' && first.avatar_url) {
+        for (const size of [128, 80]) {
+          const img = await downloadAvatarDataUrl(appendAvatarSize(first.avatar_url, size), fetchFn)
+          if (img) return img
+        }
+      }
+    }
+  } catch {}
+
+  // 4. GitHub commit author lookup by exact author email
+  try {
+    const commitRes = await fetchFn(
+      `https://api.github.com/search/commits?q=author-email:${encodeURIComponent(normalized)}&per_page=1`,
+      {
+        headers: {
+          'User-Agent': 'MomAI-Emails/1.0',
+          Accept: 'application/vnd.github.cloak-preview+json'
+        },
+        signal: typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+          ? AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS)
+          : undefined
+      } as any
+    )
+    if (commitRes && commitRes.ok) {
+      const data: any = await commitRes.json()
+      const first = Array.isArray(data?.items) ? data.items[0] : null
+      const authorEmail = String(first?.commit?.author?.email || '').trim().toLowerCase()
+      const committerEmail = String(first?.commit?.committer?.email || '').trim().toLowerCase()
+      const avatarUrl = first?.author?.avatar_url
+      if (
+        first?.author?.type !== 'Bot' &&
+        typeof avatarUrl === 'string' &&
+        avatarUrl &&
+        (authorEmail === normalized || committerEmail === normalized)
+      ) {
+        for (const size of [128, 80]) {
+          const img = await downloadAvatarDataUrl(appendAvatarSize(avatarUrl, size), fetchFn)
+          if (img) return img
+        }
+      }
+    }
+  } catch {}
+
+  return null
+}
 
 class AccountManager {
   private storageDir: string
@@ -20,7 +151,11 @@ class AccountManager {
     set?: (key: string, value: any) => Promise<void>
     delete?: (key: string) => Promise<void>
   } | null = null
+  private avatarFetcher: ((email: string) => Promise<string | null>) | null = null
   private accounts: Map<string, any> = new Map()
+  private avatars: Map<string, string> = new Map()
+  private autoAvatarAttempted: Set<string> = new Set()
+  private removedAvatars: Set<string> = new Set()
   private activeAccountId: string | null = null
   private pollInterval: any = null
   private lastSeenUids: Map<string, number> = new Map()
@@ -41,6 +176,7 @@ class AccountManager {
       set?: (key: string, value: any) => Promise<void>
       delete?: (key: string) => Promise<void>
     }
+    avatarFetcher?: ((email: string) => Promise<string | null>) | null
   }) {
     const defaultDataDir = process.env.MOMAI_NODE_CORE_DATA_DIR || process.env.MOMAI_DATA_DIR || path.join(process.cwd(), 'data')
     // MOMAI_EXTENSION_STORAGE_DIR is mode-scoped (Symlink vs Testar Loja), so
@@ -52,6 +188,11 @@ class AccountManager {
     this.accountsFile = path.join(this.storageDir, 'accounts.json.enc')
     this.notifyPrefsFile = path.join(this.storageDir, 'notify-prefs.json')
     if (deps && deps.storage) this.injectedStorage = deps.storage
+    if (deps && 'avatarFetcher' in deps) {
+      this.avatarFetcher = deps.avatarFetcher ?? null
+    } else if (!process.env.VITEST) {
+      this.avatarFetcher = (email: string) => fetchAccountAvatar(email)
+    }
     fs.mkdirSync(this.storageDir, { recursive: true })
   }
 
@@ -195,25 +336,71 @@ class AccountManager {
     return true
   }
 
-  public async getAvatar(accountId: string): Promise<string | null> {
+  private async readStoredAvatar(accountId: string): Promise<string | null> {
     if (!accountId) return null
+    if (this.avatars.has(accountId)) {
+      return this.avatars.get(accountId)!
+    }
     try {
       if (this.useHostStorage()) {
         const stored = await this.injectedStorage!.get!(this.avatarStorageKey(accountId))
-        return this.isSupportedAvatar(stored) ? (stored as string) : null
+        if (this.isSupportedAvatar(stored)) {
+          this.avatars.set(accountId, stored as string)
+          return stored as string
+        }
       }
       const legacyFile = path.join(this.storageDir, `avatar_${accountId}.txt`)
       if (fs.existsSync(legacyFile)) {
         const raw = fs.readFileSync(legacyFile, 'utf8')
-        return this.isSupportedAvatar(raw) ? raw : null
+        if (this.isSupportedAvatar(raw)) {
+          this.avatars.set(accountId, raw)
+          if (this.useHostStorage()) {
+            try {
+              await this.injectedStorage!.set!(this.avatarStorageKey(accountId), raw)
+            } catch {}
+          }
+          return raw
+        }
       }
     } catch {}
+    return null
+  }
+
+  public async getAvatar(accountId: string, emailHint?: string): Promise<string | null> {
+    if (!accountId) return null
+    const existing = await this.readStoredAvatar(accountId)
+    if (existing) return existing
+
+    if (
+      this.avatarFetcher &&
+      !this.removedAvatars.has(accountId) &&
+      !this.autoAvatarAttempted.has(accountId)
+    ) {
+      if (this.accounts.size === 0 && !emailHint) {
+        try {
+          await this.loadAccounts()
+        } catch {}
+      }
+      const email = String(emailHint || this.accounts.get(accountId)?.email || '').trim()
+      if (email) {
+        this.autoAvatarAttempted.add(accountId)
+        try {
+          const resolved = await this.avatarFetcher(email)
+          if (resolved && this.isSupportedAvatar(resolved)) {
+            await this.setAvatar(accountId, resolved)
+            return resolved
+          }
+        } catch {}
+      }
+    }
     return null
   }
 
   public async setAvatar(accountId: string, dataUrl: string): Promise<boolean> {
     if (!accountId || !this.isSupportedAvatar(dataUrl)) return false
     try {
+      this.avatars.set(accountId, dataUrl)
+      this.removedAvatars.delete(accountId)
       if (this.useHostStorage()) {
         await this.injectedStorage!.set!(this.avatarStorageKey(accountId), dataUrl)
         return true
@@ -227,6 +414,8 @@ class AccountManager {
 
   public async removeAvatar(accountId: string): Promise<void> {
     if (!accountId) return
+    this.avatars.delete(accountId)
+    this.removedAvatars.add(accountId)
     try {
       if (this.useHostStorage()) {
         if (typeof this.injectedStorage!.delete === 'function') {
@@ -471,8 +660,10 @@ class AccountManager {
   public getPublicAccounts(): any[] {
     return Array.from(this.accounts.values()).map((acc) => {
       const { password, ...rest } = acc
+      const avatar = this.avatars.get(acc.id)
       return {
         ...rest,
+        ...(avatar ? { avatar } : {}),
         active: acc.id === this.activeAccountId
       }
     })
@@ -572,11 +763,16 @@ class AccountManager {
       this.activeAccountId = id
     }
 
+    this.removedAvatars.delete(id)
+    this.autoAvatarAttempted.delete(id)
+    const avatar = await this.getAvatar(id, email).catch(() => null)
+
     // Seed the UID baseline immediately so older messages never trigger notifications.
     await this.primeAccount(id, accountConfig)
 
     await this.saveAccounts()
     const { password: _, ...pub } = accountConfig
+    if (avatar) pub.avatar = avatar
     return { ok: true, account: pub }
   }
 
@@ -714,5 +910,7 @@ class AccountManager {
 }
 
 module.exports = {
-  AccountManager
+  AccountManager,
+  fetchAccountAvatar
 }
+

@@ -83,6 +83,7 @@ export interface EmailAccountConfig {
   status: 'connected' | 'error' | 'connecting' | 'idle'
   lastError?: string
   unreadCount?: number
+  avatar?: string
 }
 
 export type PublicEmailAccount = Omit<EmailAccountConfig, 'password'>

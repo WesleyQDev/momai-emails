@@ -91,4 +91,68 @@ describe('AccountManager host storage migration', () => {
     // Avatar must remain available for when account is reconnected
     expect(await manager.getAvatar('acc_1')).toBe(avatar)
   })
+
+  it('automatically resolves and persists the original account avatar when connecting or querying an account', async () => {
+    const { fetchAccountAvatar } = require('../account-manager.ts')
+    const samplePng = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64'
+    )
+    const mockFetch = async (url: string) => {
+      if (url.includes('gravatar.com')) {
+        return { ok: false, status: 404, headers: { get: () => 'text/plain' } }
+      }
+      if (url.includes('libravatar.org')) {
+        return { ok: false, status: 404, headers: { get: () => 'text/plain' } }
+      }
+      if (url.includes('api.github.com/search/users')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => 'application/json' },
+          json: async () => ({ items: [] })
+        }
+      }
+      if (url.includes('api.github.com/search/commits')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => 'application/json' },
+          json: async () => ({
+            items: [
+              {
+                commit: { author: { email: 'user@gmail.com' } },
+                author: { type: 'User', avatar_url: 'https://avatars.githubusercontent.com/u/123?v=4' }
+              }
+            ]
+          })
+        }
+      }
+      if (url.includes('avatars.githubusercontent.com')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => 'image/png' },
+          arrayBuffer: async () => samplePng.buffer.slice(samplePng.byteOffset, samplePng.byteOffset + samplePng.byteLength)
+        }
+      }
+      return { ok: false, status: 404, headers: { get: () => 'text/plain' } }
+    }
+
+    const resolved = await fetchAccountAvatar('user@gmail.com', mockFetch as any)
+    expect(resolved).toBe(`data:image/png;base64,${samplePng.toString('base64')}`)
+
+    const storage = memoryStorage()
+    const manager = new AccountManager(tmpDir, {
+      storage,
+      avatarFetcher: (email: string) => fetchAccountAvatar(email, mockFetch as any)
+    })
+    manager.accounts.set('acc_user', { id: 'acc_user', email: 'user@gmail.com', active: true })
+
+    const fetched = await manager.getAvatar('acc_user')
+    expect(fetched).toBe(resolved)
+    expect(storage.map.get('avatar_acc_user')).toBe(resolved)
+    expect(manager.getPublicAccounts()[0].avatar).toBe(resolved)
+  })
 })
+

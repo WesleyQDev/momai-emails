@@ -176,7 +176,7 @@
   ],
   "sdkVersion": 1,
   "momai_compat": ">=1.16.0",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "ui": {
     "page": "dist/page.js",
     "pageType": "momai-emails-page",

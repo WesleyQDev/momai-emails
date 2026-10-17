@@ -86,12 +86,14 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
 
   const providerConfig = PROVIDERS[providerId] || PROVIDERS.custom
 
-  // Avatars map: stores downscaled custom avatar per account id
+  // Avatars map: stores downscaled custom or original account avatar per account id
   const [avatarMap, setAvatarMap] = useState<Record<string, string>>(() => {
     const map: Record<string, string> = {}
     const store = defaultAvatarStore()
     for (const acc of accounts) {
-      const saved = loadAvatar(store, acc.id)
+      const saved =
+        loadAvatar(store, acc.id) ||
+        (isSupportedAvatarDataUrl(acc.avatar) ? acc.avatar : null)
       if (saved) map[acc.id] = saved
     }
     return map
@@ -103,16 +105,21 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
     const store = defaultAvatarStore()
     const cached: Record<string, string> = {}
     for (const acc of accounts) {
-      const saved = loadAvatar(store, acc.id)
-      if (saved) cached[acc.id] = saved
+      const saved =
+        loadAvatar(store, acc.id) ||
+        (isSupportedAvatarDataUrl(acc.avatar) ? acc.avatar : null)
+      if (saved) {
+        cached[acc.id] = saved
+        saveAvatar(store, acc.id, saved)
+      }
     }
     setAvatarMap(cached)
     let cancelled = false
     void (async () => {
-      const next: Record<string, string> = {}
+      const next: Record<string, string> = { ...cached }
       for (const acc of accounts) {
         try {
-          const res = await emailApi.getAvatar(acc.id)
+          const res = await emailApi.getAvatar(acc.id, acc.email)
           const avatar = res?.avatar
           if (cancelled) return
           if (isSupportedAvatarDataUrl(avatar)) {
@@ -129,7 +136,7 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
     return () => {
       cancelled = true
     }
-  }, [accounts.map((a) => a.id).join(',')])
+  }, [accounts.map((a) => `${a.id}:${a.email || ''}`).join(',')])
 
   // Close dropdown on click outside
   useEffect(() => {
