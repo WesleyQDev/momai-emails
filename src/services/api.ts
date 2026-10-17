@@ -27,6 +27,11 @@ export const emailApi = {
   removeAccount: (accountId: string) => executeCommand<{ ok: boolean }>('remove_account', { accountId }),
   setActiveAccount: (accountId: string) => executeCommand<{ ok: boolean }>('set_active_account', { accountId }),
   testAccount: (data: any) => executeCommand<{ ok: boolean; error?: string }>('test_account', data, 20000),
+  // Remembered password for the connection form autofill (encrypted at rest by the worker)
+  getRememberedPassword: (emailOrId: string) =>
+    executeCommand<{ ok: boolean; password?: string }>('get_remembered_password', { email: emailOrId }),
+  forgetRememberedPassword: (emailOrId: string) =>
+    executeCommand<{ ok: boolean }>('forget_remembered_password', { email: emailOrId }),
 
   // Folders & Messages
   listFolders: (accountId?: string) => executeCommand<{ ok: boolean; folders: any[] }>('list_folders', { accountId }),

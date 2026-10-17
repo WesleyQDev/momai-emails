@@ -264,6 +264,19 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
       return { ok }
     }
 
+    // Internal (UI-only) handlers for the connection form autofill. They are
+    // intentionally not declared as manifest tools: the Assistant never reads
+    // credentials, only the extension UI filling its own form.
+    case 'get_remembered_password': {
+      const password = accountManager.getRememberedPassword(args.email || args.accountId)
+      return password ? { ok: true, password } : { ok: false }
+    }
+
+    case 'forget_remembered_password': {
+      const ok = await accountManager.forgetRememberedPassword(args.email || args.accountId)
+      return { ok }
+    }
+
     case 'set_active_account': {
       const ok = accountManager.setActiveAccount(args.id || args.accountId)
       return { ok }

@@ -146,6 +146,7 @@ class AccountManager {
   private storageDir: string
   private accountsFile: string
   private notifyPrefsFile: string
+  private rememberedPasswordsFile: string
   private injectedStorage: {
     get?: (key: string) => Promise<any>
     set?: (key: string, value: any) => Promise<void>
@@ -154,6 +155,9 @@ class AccountManager {
   private avatarFetcher: ((email: string) => Promise<string | null>) | null = null
   private accounts: Map<string, any> = new Map()
   private avatars: Map<string, string> = new Map()
+  // Passwords the user opted to remember on the connection screen, keyed by
+  // normalized e-mail. Kept apart from `accounts` so they survive a disconnect.
+  private rememberedPasswords: Map<string, string> = new Map()
   private autoAvatarAttempted: Set<string> = new Set()
   private removedAvatars: Set<string> = new Set()
   private activeAccountId: string | null = null
@@ -187,6 +191,7 @@ class AccountManager {
       path.join(defaultDataDir, 'extensions', 'momai-emails')
     this.accountsFile = path.join(this.storageDir, 'accounts.json.enc')
     this.notifyPrefsFile = path.join(this.storageDir, 'notify-prefs.json')
+    this.rememberedPasswordsFile = path.join(this.storageDir, 'remembered-passwords.json.enc')
     if (deps && deps.storage) this.injectedStorage = deps.storage
     if (deps && 'avatarFetcher' in deps) {
       this.avatarFetcher = deps.avatarFetcher ?? null
@@ -430,8 +435,87 @@ class AccountManager {
     } catch {}
   }
 
+  private resolveRememberedPasswordKey(idOrEmail?: string): string | null {
+    const value = String(idOrEmail || '').trim()
+    if (!value) return null
+    const account = this.accounts.get(value)
+    if (account?.email) return String(account.email).trim().toLowerCase()
+    if (value.includes('@')) return value.toLowerCase()
+    return null
+  }
+
+  /**
+   * Password saved for the connection form autofill. Stored encrypted through
+   * the host keychain, never in plain text and never in localStorage.
+   */
+  public getRememberedPassword(idOrEmail?: string): string | null {
+    const key = this.resolveRememberedPasswordKey(idOrEmail)
+    if (!key) return null
+    return this.rememberedPasswords.get(key) || null
+  }
+
+  public async rememberPassword(idOrEmail: string, password: string): Promise<boolean> {
+    const key = this.resolveRememberedPasswordKey(idOrEmail)
+    if (!key || typeof password !== 'string' || !password) return false
+    this.rememberedPasswords.set(key, password)
+    return this.saveRememberedPasswords()
+  }
+
+  public async forgetRememberedPassword(idOrEmail: string): Promise<boolean> {
+    const key = this.resolveRememberedPasswordKey(idOrEmail)
+    if (!key) return true
+    const existed = this.rememberedPasswords.delete(key)
+    if (!existed) return true
+    return this.saveRememberedPasswords()
+  }
+
+  private async saveRememberedPasswords(): Promise<boolean> {
+    try {
+      const plain = JSON.stringify(Object.fromEntries(this.rememberedPasswords))
+      const encrypted = await encryptForStorage(plain)
+      if (!encrypted) {
+        console.warn(
+          '[AccountManager] Secure storage unavailable; remembered passwords are kept for this session only'
+        )
+        return false
+      }
+      await this.writeStoredText('remembered-passwords', encrypted, this.rememberedPasswordsFile)
+      return true
+    } catch (err) {
+      console.error('[AccountManager] Failed to save remembered passwords:', err)
+      return false
+    }
+  }
+
+  public async loadRememberedPasswords(maxRetries: number = 2): Promise<void> {
+    try {
+      const rawEnc = await this.readStoredText('remembered-passwords', this.rememberedPasswordsFile)
+      if (!rawEnc || !rawEnc.trim()) return
+      let decrypted = await decryptFromStorage(rawEnc)
+      if (!decrypted && maxRetries > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 1500))
+        decrypted = await decryptFromStorage(rawEnc)
+      }
+      if (!decrypted) {
+        console.warn('[AccountManager] Could not decrypt remembered passwords (secure storage unavailable?)')
+        return
+      }
+      const parsed = JSON.parse(decrypted)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return
+      this.rememberedPasswords.clear()
+      for (const [email, password] of Object.entries(parsed)) {
+        if (typeof password === 'string' && password) {
+          this.rememberedPasswords.set(String(email).trim().toLowerCase(), password)
+        }
+      }
+    } catch (err) {
+      console.error('[AccountManager] Failed to load remembered passwords:', err)
+    }
+  }
+
   public async initialize(): Promise<void> {
     await this.loadAccounts()
+    await this.loadRememberedPasswords()
     await this.primeInitialUids()
     this.startBackgroundPoller()
     // Disk cleanup runs after startup so a large cache never delays the worker.
@@ -716,6 +800,7 @@ class AccountManager {
     email: string
     password: string
     provider?: string
+    rememberPassword?: boolean
     imap?: { host: string; port: number; secure: boolean; user?: string }
     smtp?: { host: string; port: number; secure: boolean; requireTLS?: boolean; user?: string }
   }): Promise<{ ok: boolean; account?: any; error?: string }> {
@@ -771,6 +856,13 @@ class AccountManager {
     await this.primeAccount(id, accountConfig)
 
     await this.saveAccounts()
+    // The connection form decides whether this password should be remembered
+    // for the autofill. Unchecked also clears a previously remembered password.
+    if (data.rememberPassword === true) {
+      await this.rememberPassword(email, password)
+    } else if (data.rememberPassword === false) {
+      await this.forgetRememberedPassword(email)
+    }
     const { password: _, ...pub } = accountConfig
     if (avatar) pub.avatar = avatar
     return { ok: true, account: pub }

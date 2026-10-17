@@ -86,6 +86,8 @@ interface EmailListProps {
   pageSize?: number
   page?: number
   onPageChange?: (page: number) => void
+  activeCategory?: 'primary' | 'promotions' | 'social' | 'updates'
+  onCategoryChange?: (category: 'primary' | 'promotions' | 'social' | 'updates') => void
 }
 
 export const EmailList: React.FC<EmailListProps> = ({
@@ -125,11 +127,14 @@ export const EmailList: React.FC<EmailListProps> = ({
   unreadWindowMs = UNREAD_WINDOW_MS,
   pageSize = EMAIL_PAGE_SIZE,
   page = 0,
-  onPageChange
+  onPageChange,
+  activeCategory: propActiveCategory,
+  onCategoryChange
 }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [unreadOnly, setUnreadOnly] = useState(false)
-  const [activeCategory, setActiveCategory] = useState<'primary' | 'promotions' | 'social' | 'updates'>('primary')
+  const [internalCategory, setInternalCategory] = useState<'primary' | 'promotions' | 'social' | 'updates'>('primary')
+  const activeCategory = propActiveCategory ?? internalCategory
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; msg: EmailMessage } | null>(null)
   const [moveMenu, setMoveMenu] = useState<{ x: number; y: number; msg: EmailMessage } | null>(null)
   const [manualRefresh, setManualRefresh] = useState(false)
@@ -145,7 +150,7 @@ export const EmailList: React.FC<EmailListProps> = ({
 
   // Reset category and unread filter when folder changes
   useEffect(() => {
-    setActiveCategory('primary')
+    setInternalCategory('primary')
     setUnreadOnly(false)
   }, [activeFolder])
 
@@ -215,7 +220,7 @@ export const EmailList: React.FC<EmailListProps> = ({
     const needsNextPagePrefetch = filteredMessages.length < targetPrefetchCount
 
     if (needsCurrentPage) {
-      if (autoFillCountRef.current < 10) {
+      if (autoFillCountRef.current < 2) {
         autoFillCountRef.current += 1
         onLoadMore()
       }
@@ -380,7 +385,8 @@ export const EmailList: React.FC<EmailListProps> = ({
                 key={id}
                 type="button"
                 onClick={() => {
-                  setActiveCategory(id)
+                  setInternalCategory(id)
+                  onCategoryChange?.(id)
                   goToPage(0)
                 }}
                 title={info.description}

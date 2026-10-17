@@ -29,6 +29,8 @@ interface AutofillProfile {
   email: string
   name?: string
   provider: ProviderId
+  /** Whether the password was saved encrypted in the worker when connecting. */
+  rememberPassword?: boolean
   imap?: any
   smtp?: any
   savedAt: number
@@ -197,7 +199,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
   }
 
   // Handle selecting an autocomplete suggestion
-  const handleSelectSuggestion = (profile: AutofillProfile) => {
+  const handleSelectSuggestion = async (profile: AutofillProfile) => {
     setEmail(profile.email)
     if (profile.name) setName(profile.name)
     if (profile.imap) {
@@ -212,6 +214,19 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
       if (typeof profile.smtp.requireTLS === 'boolean') setSmtpRequireTLS(profile.smtp.requireTLS)
     }
     setShowAutofill(false)
+    const rememberPassword = profile.rememberPassword === true
+    setRememberCredentials(rememberPassword)
+    if (!rememberPassword) return
+    // The password never lives in localStorage: it is fetched from the
+    // worker's encrypted store, which survives disconnecting the account.
+    try {
+      const res = await emailApi.getRememberedPassword(profile.email)
+      if (res?.ok && typeof res.password === 'string' && res.password) {
+        setPassword(res.password)
+      }
+    } catch {
+      // Best effort; the user can still type the password manually.
+    }
   }
 
   // Handle right-click on an autofill item to show context menu
@@ -232,9 +247,14 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
       e.stopPropagation()
       e.preventDefault()
     }
+    const profile = savedProfiles.find((p) => p.id === id)
     const updated = deleteAutofillProfile(id)
     setSavedProfiles(updated)
     setContextMenu(null)
+    if (profile?.email) {
+      // Removing the saved entry also forgets the stored password.
+      void emailApi.forgetRememberedPassword(profile.email)
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -248,7 +268,8 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
         name: name.trim() || email.split('@')[0],
         email: email.trim(),
         password: password.trim(),
-        provider: selectedProvider
+        provider: selectedProvider,
+        rememberPassword: rememberCredentials
       }
 
       if (selectedProvider === 'custom') {
@@ -269,18 +290,19 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
       if (!res.ok) {
         setError(res.error || t('connect.errorFallback'))
       } else {
-        // Autofill stores only non-secret data (address, name, servers).
-        // The password never leaves the encrypted worker storage.
-        if (rememberCredentials) {
-          const updated = saveAutofillProfile({
-            email: email.trim(),
-            name: name.trim(),
-            provider: selectedProvider,
-            imap: selectedProvider === 'custom' ? payload.imap : undefined,
-            smtp: selectedProvider === 'custom' ? payload.smtp : undefined
-          })
-          setSavedProfiles(updated)
-        }
+        // Autofill keeps only non-secret fields in localStorage (address,
+        // name, servers). The password itself is stored encrypted by the
+        // worker; `rememberPassword` only records whether it should be
+        // fetched when this entry is selected again.
+        const updated = saveAutofillProfile({
+          email: email.trim(),
+          name: name.trim(),
+          provider: selectedProvider,
+          rememberPassword: rememberCredentials,
+          imap: selectedProvider === 'custom' ? payload.imap : undefined,
+          smtp: selectedProvider === 'custom' ? payload.smtp : undefined
+        })
+        setSavedProfiles(updated)
 
         // Persist the native-notification choice in the worker, where the
         // background poller actually emits notifications, and mirror it in the
@@ -504,7 +526,7 @@ export const ConnectAccountView: React.FC<ConnectAccountViewProps> = ({
                 {suggestions.map((item) => (
                   <div
                     key={item.id}
-                    onClick={() => handleSelectSuggestion(item)}
+                    onClick={() => void handleSelectSuggestion(item)}
                     onContextMenu={(e) => handleItemContextMenu(e, item.id)}
                     className="flex items-center justify-between px-3.5 py-2.5 cursor-pointer hover:bg-input transition-colors group text-xs select-none"
                   >

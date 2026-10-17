@@ -34,6 +34,7 @@ declare module 'momai:sdk' {
   }
   export default sdk
   export function useExtensionVisibility(explicitIsActive?: boolean, extensionId?: string): boolean
+  export function useWarmup(onWarmup: () => Promise<void> | void, deps?: unknown[]): void
 }
 
 declare module 'momai:events' {

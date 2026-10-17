@@ -2,14 +2,14 @@
 // Main application page for MomAI E-mails extension
 
 import React, { useState, useEffect, useCallback, useTransition, useRef } from 'react'
-import sdk, { useExtensionVisibility } from 'momai:sdk'
+import sdk, { useExtensionVisibility, useWarmup } from 'momai:sdk'
 import { useExtensionEvents } from 'momai:events'
 import { emailApi } from './services/api'
 import { emailStorageCache } from './services/cache'
 import { loadEmailSettings, saveEmailSettings, unreadWindowMs, type EmailSettings as EmailSettingsState } from './services/settings'
 import { adjustFolderUnread, getFolderDisplayUnread, syncInboxPrimaryUnread } from './services/unread-today'
 import { classifyEmailCategory, shouldNotifyForCategory } from './services/email-categories'
-import { EMAIL_PAGE_SIZE, INBOX_FIRST_LOAD_LIMIT, nextFreshRunLength, type FreshRunState } from './services/paging'
+import { EMAIL_PAGE_SIZE, INBOX_FIRST_LOAD_LIMIT, INBOX_CATEGORY_FIRST_LOAD, nextFreshRunLength, type FreshRunState } from './services/paging'
 import {
   dedupeFoldersByRole,
   getStarredMessages,
@@ -95,13 +95,20 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
     return getDefaultFolders()
   })
   const [activeFolder, setActiveFolder] = useState('INBOX')
+  const [activeCategory, setActiveCategory] = useState<'primary' | 'promotions' | 'social' | 'updates'>('primary')
+  const activeCategoryRef = useRef(activeCategory)
+  activeCategoryRef.current = activeCategory
 
   // Messages state (initialized from persistent cache for active account INBOX)
   const [messages, setMessages] = useState<EmailMessage[]>(() => {
     const cachedAccs = emailStorageCache.getAccounts() || []
     const active = cachedAccs.find((a) => a.active) || cachedAccs[0]
     if (active) {
-      return emailStorageCache.getFolderEmails(active.id, 'INBOX') || []
+      return (
+        emailStorageCache.getFolderEmails(active.id, 'INBOX', 'primary') ||
+        emailStorageCache.getFolderEmails(active.id, 'INBOX') ||
+        []
+      )
     }
     return []
   })
@@ -443,126 +450,130 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
     bodyPrefetcherRef.current.enqueue(accId, [msg], 'urgent')
   }, [])
 
-  const loadEmails = useCallback(async (folder = 'INBOX', accId = activeAccountIdRef.current, silent = false, forceRefresh = false) => {
-    if (!accId) return
-    const reqSeq = ++currentReqSeqRef.current
-    // A new load owns the list again: drop the previous "has more" so the
-    // auto-fill never fires for a stale folder while the fresh fetch runs.
-    setHasMoreMessages(false)
-
-    if (isVirtualStarredFolder(folder, foldersRef.current)) {
-      setMessages(readCachedStarred(accId))
+  const loadEmails = useCallback(
+    async (
+      folder = 'INBOX',
+      accId = activeAccountIdRef.current,
+      silent = false,
+      forceRefresh = false,
+      category = activeCategoryRef.current
+    ) => {
+      if (!accId) return
+      const reqSeq = ++currentReqSeqRef.current
       setHasMoreMessages(false)
-      setMessagesError(null)
-      setIsSearchMode(false)
-      setLoadingMessages(false)
-      return
-    }
 
-    const cacheKey = `${accId}:${folder}`
-
-    // 1st: check in-memory Map; 2nd: check persistent localStorage cache
-    const rawCached = folderCacheRef.current.get(cacheKey) ?? emailStorageCache.getFolderEmails(accId, folder)
-    const cached = rawCached ? rawCached.filter((m) => !m.accountId || m.accountId === accId) : null
-
-    // SWR: If cached (even if empty []), display immediately in 0ms!
-    if (cached !== null && cached !== undefined) {
-      folderCacheRef.current.set(cacheKey, cached)
-      setMessages(cached)
-      if (isInboxFolder(folder)) {
-        setFolders((prevFolders) => {
-          const updated = syncInboxPrimaryUnread(prevFolders, cached, settings.showCategoryTabs, unreadWindowMs(settings.unreadWindowHours))
-          if (accId) emailStorageCache.setFolders(accId, updated)
-          return updated
-        })
-      }
-      if (forceRefresh) {
-        setLoadingMessages(true)
-      } else {
+      if (isVirtualStarredFolder(folder, foldersRef.current)) {
+        setMessages(readCachedStarred(accId))
+        setHasMoreMessages(false)
+        setMessagesError(null)
+        setIsSearchMode(false)
         setLoadingMessages(false)
+        return
       }
-    } else {
-      // Clear previous folder messages immediately so they don't leak into the new folder view
-      setMessages([])
-      if (!silent) {
-        setLoadingMessages(true)
-      }
-    }
-    setMessagesError(null)
-    setIsSearchMode(false)
 
-    try {
-      const fetchLimit = isInboxFolder(folder) ? INBOX_FIRST_LOAD_LIMIT : PAGE_SIZE
-      const res = await emailApi.listEmails(folder, accId, fetchLimit, false, 0)
-      // Discard if user already switched to another folder or account
-      if (reqSeq !== currentReqSeqRef.current || accId !== activeAccountIdRef.current) return
+      const useCategory = isInboxFolder(folder) && settings.showCategoryTabs
+      const catKey = useCategory ? category : undefined
+      const cacheKey = useCategory ? `${accId}:${folder}:${category}` : `${accId}:${folder}`
 
-      if (res && res.ok && Array.isArray(res.messages)) {
-        const stampedMessages = res.messages.map((m: EmailMessage) => ({ ...m, accountId: m.accountId || accId }))
-        // Merge over the same-folder list instead of replacing: a refresh only
-        // brings the newest window, so replacing would erase already loaded
-        // messages and visibly shrink the Principal tab.
-        const prevList = cached ?? []
-        const mergedMessages =
-          stampedMessages.length > 0
-            ? sortMessagesNewestFirst(mergeFolderMessages(prevList, stampedMessages, 500))
-            : []
-        folderCacheRef.current.set(cacheKey, mergedMessages)
-        emailStorageCache.setFolderEmails(accId, folder, mergedMessages)
-        setMessages(mergedMessages)
-        // Record the contiguous server window (never messages.length: the
-        // merged list also holds older cached messages outside this window).
-        const runKey = `${accId}:${folder}`
-        const prevRun = serverRunRef.current && serverRunRef.current.key === runKey ? serverRunRef.current : null
-        const newTotal = typeof res.total === 'number' ? res.total : prevRun?.total ?? stampedMessages.length
-        serverRunRef.current = {
-          key: runKey,
-          length: nextFreshRunLength(prevRun?.length ?? null, prevRun?.total ?? null, stampedMessages.length, newTotal),
-          total: newTotal
-        }
-        setHasMoreMessages(Boolean(res.hasMore))
+      // 1st: check in-memory Map; 2nd: check persistent localStorage cache
+      const rawCached = folderCacheRef.current.get(cacheKey) ?? emailStorageCache.getFolderEmails(accId, folder, catKey)
+      const cached = rawCached ? rawCached.filter((m) => !m.accountId || m.accountId === accId) : null
 
+      // SWR: If cached (even if empty []), display immediately in 0ms!
+      if (cached !== null && cached !== undefined) {
+        folderCacheRef.current.set(cacheKey, cached)
+        setMessages(cached)
         if (isInboxFolder(folder)) {
           setFolders((prevFolders) => {
-            const updated = syncInboxPrimaryUnread(prevFolders, mergedMessages, settings.showCategoryTabs, unreadWindowMs(settings.unreadWindowHours))
+            const updated = syncInboxPrimaryUnread(prevFolders, cached, settings.showCategoryTabs, unreadWindowMs(settings.unreadWindowHours))
             if (accId) emailStorageCache.setFolders(accId, updated)
             return updated
           })
         }
-
-        // Warm the first visible bodies in the background so any open is instant
-        bodyPrefetcherRef.current.enqueue(accId, mergedMessages.slice(0, BODY_PREFETCH_PER_FOLDER), 'urgent')
-      } else if (!cached) {
-        setMessagesError(t('page.errors.loadMessages'))
+        if (forceRefresh) {
+          setLoadingMessages(true)
+        } else {
+          setLoadingMessages(false)
+        }
+      } else {
+        // Clear previous folder messages immediately so they don't leak into the new folder view
+        setMessages([])
+        if (!silent) {
+          setLoadingMessages(true)
+        }
       }
-    } catch (err: any) {
-      if (reqSeq !== currentReqSeqRef.current || accId !== activeAccountIdRef.current) return
-      if (!cached) {
-        setMessagesError(err?.message || t('page.errors.connection'))
-      }
-    } finally {
-      // Always settle: a spinner must never stick because its request was
-      // superseded or the account moved. A newer load re-asserts loading.
-      setLoadingMessages(false)
-    }
-  }, [readCachedStarred])
+      setMessagesError(null)
+      setIsSearchMode(false)
 
-  // Load more messages (next page) — appends to current list. The offset
-  // continues the contiguous server run tracked by loadEmails, never
-  // messages.length (cached extras would skip newer messages server-side).
+      try {
+        const fetchLimit = useCategory ? INBOX_CATEGORY_FIRST_LOAD : (isInboxFolder(folder) ? INBOX_FIRST_LOAD_LIMIT : PAGE_SIZE)
+        const res = await emailApi.listEmails(folder, accId, fetchLimit, false, 0, true, catKey)
+        // Discard if user already switched to another folder or account
+        if (reqSeq !== currentReqSeqRef.current || accId !== activeAccountIdRef.current) return
+
+        if (res && res.ok && Array.isArray(res.messages)) {
+          const stampedMessages = res.messages.map((m: EmailMessage) => ({ ...m, accountId: m.accountId || accId }))
+          const prevList = cached ?? []
+          const mergedMessages =
+            stampedMessages.length > 0
+              ? sortMessagesNewestFirst(mergeFolderMessages(prevList, stampedMessages, 500))
+              : []
+          folderCacheRef.current.set(cacheKey, mergedMessages)
+          emailStorageCache.setFolderEmails(accId, folder, mergedMessages, catKey)
+          setMessages(mergedMessages)
+
+          const runKey = cacheKey
+          const prevRun = serverRunRef.current && serverRunRef.current.key === runKey ? serverRunRef.current : null
+          const newTotal = typeof res.total === 'number' ? res.total : prevRun?.total ?? stampedMessages.length
+          serverRunRef.current = {
+            key: runKey,
+            length: nextFreshRunLength(prevRun?.length ?? null, prevRun?.total ?? null, stampedMessages.length, newTotal),
+            total: newTotal
+          }
+          setHasMoreMessages(Boolean(res.hasMore))
+
+          if (isInboxFolder(folder)) {
+            setFolders((prevFolders) => {
+              const updated = syncInboxPrimaryUnread(prevFolders, mergedMessages, settings.showCategoryTabs, unreadWindowMs(settings.unreadWindowHours))
+              if (accId) emailStorageCache.setFolders(accId, updated)
+              return updated
+            })
+          }
+
+          // Warm the first visible bodies in the background so any open is instant
+          bodyPrefetcherRef.current.enqueue(accId, mergedMessages.slice(0, BODY_PREFETCH_PER_FOLDER), 'urgent')
+        } else if (!cached) {
+          setMessagesError(t('page.errors.loadMessages'))
+        }
+      } catch (err: any) {
+        if (reqSeq !== currentReqSeqRef.current || accId !== activeAccountIdRef.current) return
+        if (!cached) {
+          setMessagesError(err?.message || t('page.errors.connection'))
+        }
+      } finally {
+        setLoadingMessages(false)
+      }
+    },
+    [readCachedStarred, settings.showCategoryTabs, settings.unreadWindowHours, t]
+  )
+
+  // Load more messages (next page) — appends to current list.
   const loadMoreEmails = useCallback(async () => {
     const currentAccId = activeAccountIdRef.current
     const currentFolder = activeFolderRef.current
+    const currentCategory = activeCategoryRef.current
     if (!currentAccId || loadingMoreMessages || !hasMoreMessages || isSearchMode) return
     if (isVirtualStarredFolder(currentFolder, foldersRef.current)) return
 
     const reqSeq = currentReqSeqRef.current
     setLoadingMoreMessages(true)
     try {
-      const runKey = `${currentAccId}:${currentFolder}`
+      const useCategory = isInboxFolder(currentFolder) && settings.showCategoryTabs
+      const catKey = useCategory ? currentCategory : undefined
+      const runKey = useCategory ? `${currentAccId}:${currentFolder}:${currentCategory}` : `${currentAccId}:${currentFolder}`
       const prevRun = serverRunRef.current && serverRunRef.current.key === runKey ? serverRunRef.current : null
       const offset = prevRun ? prevRun.length : messages.length
-      const res = await emailApi.listEmails(currentFolder, currentAccId, PAGE_SIZE, false, offset)
+      const res = await emailApi.listEmails(currentFolder, currentAccId, PAGE_SIZE, false, offset, true, catKey)
 
       // Guard: if user switched account or folder while request was in-flight, discard!
       if (
@@ -581,16 +592,15 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
           total: typeof res.total === 'number' ? res.total : prevRun?.total ?? offset + res.messages.length
         }
         setMessages((prevMessages) => {
-          // Strictly ensure previous messages belong to this account
           const validPrev = prevMessages.filter((m) => !m.accountId || m.accountId === currentAccId)
           const existingIds = new Set(validPrev.map((m) => m.id))
           const newMsgs = stampedNew.filter((m) => !existingIds.has(m.id))
           if (newMsgs.length === 0) return validPrev
 
           const merged = [...validPrev, ...newMsgs]
-          const cacheKey = `${currentAccId}:${currentFolder}`
+          const cacheKey = runKey
           folderCacheRef.current.set(cacheKey, merged)
-          emailStorageCache.setFolderEmails(currentAccId, currentFolder, merged)
+          emailStorageCache.setFolderEmails(currentAccId, currentFolder, merged, catKey)
           return merged
         })
         setHasMoreMessages(Boolean(res.hasMore))
@@ -600,11 +610,9 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
     } catch {
       // Silently fail on load more — user can scroll again to retry
     } finally {
-      // Always settle so the refresh button and auto-fill never lock up when
-      // the account or folder moved mid-flight.
       setLoadingMoreMessages(false)
     }
-  }, [hasMoreMessages, isSearchMode, loadingMoreMessages])
+  }, [hasMoreMessages, isSearchMode, loadingMoreMessages, messages.length, settings.showCategoryTabs])
 
   // Server-side IMAP search (debounced)
   const handleSearchChange = useCallback((query: string) => {
@@ -679,18 +687,52 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
     }, 500)
   }, [activeAccountId, activeFolder])
 
+  const handleCategoryChange = useCallback(
+    (cat: 'primary' | 'promotions' | 'social' | 'updates') => {
+      setActiveCategory(cat)
+      activeCategoryRef.current = cat
+      setPage(0)
+      loadEmails(activeFolderRef.current, activeAccountIdRef.current || undefined, false, false, cat)
+    },
+    [loadEmails]
+  )
+
   useEffect(() => {
     if (activeAccountId) {
       setSearchQuery('')
       setIsSearchMode(false)
       loadFolders(activeAccountId)
-      loadEmails(activeFolder, activeAccountId)
+      const initialCat = isInboxFolder(activeFolder) && settings.showCategoryTabs ? activeCategoryRef.current : undefined
+      loadEmails(activeFolder, activeAccountId, false, false, initialCat)
     } else {
       setFolders([])
       setMessages([])
       setSelectedEmail(null)
     }
-  }, [activeAccountId, activeFolder, loadFolders, loadEmails])
+  }, [activeAccountId, activeFolder, loadFolders, loadEmails, settings.showCategoryTabs])
+
+  // 3b. Background warmup: pre-fetch secondary Gmail category tabs using the official MomAI SDK hook
+  useWarmup(async () => {
+    const accId = activeAccountIdRef.current
+    if (!accId || !settings.showCategoryTabs) return
+
+    const remainingCategories: Array<'promotions' | 'updates' | 'social'> = ['promotions', 'updates', 'social']
+    for (const cat of remainingCategories) {
+      try {
+        const cacheKey = `${accId}:INBOX:${cat}`
+        if (!folderCacheRef.current.has(cacheKey) && !emailStorageCache.getFolderEmails(accId, 'INBOX', cat)) {
+          const res = await emailApi.listEmails('INBOX', accId, PAGE_SIZE, false, 0, true, cat)
+          if (res && res.ok && Array.isArray(res.messages) && res.messages.length > 0) {
+            const stamped = res.messages.map((m: EmailMessage) => ({ ...m, accountId: m.accountId || accId }))
+            folderCacheRef.current.set(cacheKey, stamped)
+            emailStorageCache.setFolderEmails(accId, 'INBOX', stamped, cat)
+          }
+        }
+      } catch {
+        // Non-blocking best effort
+      }
+    }
+  }, [activeAccountId, settings.showCategoryTabs])
 
   // 4. Real-time updates: listen to new incoming emails and dispatch native OS notification
   useExtensionEvents({
@@ -1617,12 +1659,14 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
             loading={loadingMessages}
             error={messagesError}
             activeFolder={activeFolder}
+            activeCategory={activeCategory}
+            onCategoryChange={handleCategoryChange}
             selectedEmailId={selectedEmail ? (selectedEmail as EmailMessage).id : null}
             searchQuery={searchQuery}
             onSearchChange={handleSearchChange}
             onRefresh={() => {
               setPage(0)
-              loadEmails(activeFolder, activeAccountId || undefined, false, true)
+              loadEmails(activeFolder, activeAccountId || undefined, false, true, activeCategory)
               loadFolders(activeAccountId || undefined)
             }}
             onSelectEmail={handleSelectEmail}
@@ -1648,7 +1692,11 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
             hasMore={hasMoreMessages}
             loadingMore={loadingMoreMessages}
             onLoadMore={loadMoreEmails}
-            totalCount={folders.find((f) => f.path.toLowerCase() === activeFolder.toLowerCase())?.totalCount || messages.length}
+            totalCount={
+              isInboxFolder(activeFolder) && settings.showCategoryTabs
+                ? (serverRunRef.current?.total ?? messages.length)
+                : (folders.find((f) => f.path.toLowerCase() === activeFolder.toLowerCase())?.totalCount || messages.length)
+            }
             showCategoryTabs={settings.showCategoryTabs}
             unreadWindowMs={unreadWindowMs(settings.unreadWindowHours)}
             pageSize={EMAIL_PAGE_SIZE}

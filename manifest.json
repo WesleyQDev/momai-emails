@@ -176,7 +176,7 @@
   ],
   "sdkVersion": 1,
   "momai_compat": ">=1.16.0",
-  "version": "1.5.2",
+  "version": "1.6.0",
   "ui": {
     "page": "dist/page.js",
     "pageType": "momai-emails-page",
@@ -880,6 +880,10 @@
           "name": {
             "type": "string",
             "description": "Nome de exibicao da conta"
+          },
+          "rememberPassword": {
+            "type": "boolean",
+            "description": "Salvar a senha para preenchimento automatico na tela de conexao (uso da interface)"
           },
           "imap": {
             "type": "object",

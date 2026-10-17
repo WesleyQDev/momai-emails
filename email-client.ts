@@ -12,6 +12,7 @@ const { execFile } = require('node:child_process')
 const { ImapFlow } = require('imapflow')
 const nodemailer = require('nodemailer')
 const { simpleParser } = require('mailparser')
+const { classifyEmailCategory } = require('./email-categories.ts')
 
 // Base folder for parsed-message and attachment disk cache. Prefers the
 // unified <userData>/cache/extensions/momai-emails/attachments folder and
@@ -801,6 +802,73 @@ async function listCategoryMessages(
 }
 
 /**
+ * Lists messages for standard IMAP accounts (Yahoo, Outlook, custom IMAP)
+ * where Gmail X-GM-RAW category search is unavailable. Uses RFC-standard
+ * IMAP search criteria (List-Unsubscribe headers, known social sender domains).
+ */
+async function listGenericCategoryMessages(
+  client: any,
+  account: any,
+  folder: string,
+  category: string,
+  limit: number,
+  offset: number
+) {
+  try {
+    const uiCat = mapGmailCategoryToUi(category) || category
+    let uids: number[] = []
+
+    if (uiCat === 'promotions') {
+      // 1. Marketing & newsletter emails always contain the RFC-standard List-Unsubscribe header
+      const promoUids = await client.search({ header: ['List-Unsubscribe', ''] }, { uid: true }).catch(() => [])
+      if (Array.isArray(promoUids) && promoUids.length > 0) {
+        uids = promoUids.map(Number)
+      }
+    } else if (uiCat === 'social') {
+      // 2. Search social domains via IMAP
+      const socialDomains = ['linkedin.com', 'facebookmail.com', 'instagram.com', 'twitter.com', 'x.com', 'tiktok.com', 'pinterest.com', 'redditmail.com', 'discord.com']
+      const collected = new Set<number>()
+      for (const domain of socialDomains) {
+        const found = await client.search({ from: domain }, { uid: true }).catch(() => [])
+        if (Array.isArray(found)) {
+          for (const uid of found) collected.add(Number(uid))
+        }
+      }
+      uids = Array.from(collected)
+    }
+
+    if (uids.length > 0) {
+      uids.sort((a: number, b: number) => b - a)
+      const targetUids = uids.slice(offset, offset + limit)
+      const hasMore = (offset + limit) < uids.length
+      const messages: any[] = []
+      for await (const msg of client.fetch(
+        targetUids.join(','),
+        { uid: true, envelope: true, flags: true, bodyStructure: true, size: true, labels: true },
+        { uid: true }
+      )) {
+        const mapped = toFetchedMessage(msg, account, folder)
+        mapped.category = uiCat
+        messages.push(mapped)
+      }
+      messages.sort((a, b) => b.timestamp - a.timestamp)
+      return { messages, hasMore, total: uids.length }
+    }
+
+    if (uiCat === 'promotions' || uiCat === 'social') {
+      // When category has zero messages on server, return empty result with hasMore: false
+      // so the UI promptly shows the empty state without getting stuck in a loading loop.
+      return { messages: [], hasMore: false, total: 0 }
+    }
+
+    return null
+  } catch (err: any) {
+    console.warn('[momai-emails] Generic IMAP category listing failed:', err?.message || err)
+    return null
+  }
+}
+
+/**
  * Fetch messages list from a mailbox using warm connection.
  * Supports offset-based pagination for infinite scroll.
  */
@@ -845,7 +913,9 @@ async function fetchMessages(
       if (normalized) {
         const listed = await listCategoryMessages(client, account, folder, normalized, limit, offset)
         if (listed) return listed
-        return { messages: [], hasMore: false, total: 0, categoryUnsupported: true }
+        // Standard IMAP fallback (Yahoo, Outlook, custom IMAP)
+        const genericListed = await listGenericCategoryMessages(client, account, folder, normalized, limit, offset)
+        if (genericListed) return genericListed
       }
     }
 
@@ -880,6 +950,13 @@ async function fetchMessages(
         messages.push(toFetchedMessage(msg, account, folder))
       }
       await applyGmailCategories(client, messages, Boolean(options.categorize))
+      if (options.categorize && (!client.capabilities || !client.capabilities.has('X-GM-EXT-1'))) {
+        for (const message of messages) {
+          if (!message.category) {
+            message.category = classifyEmailCategory(message)
+          }
+        }
+      }
       const hasMore = startSeq > 1
       messages.sort((a, b) => b.timestamp - a.timestamp)
       return { messages, hasMore, total: count }

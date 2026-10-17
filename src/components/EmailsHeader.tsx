@@ -22,6 +22,7 @@ import {
   saveAvatar,
 } from '../services/avatar-storage'
 import { emailApi } from '../services/api'
+import { ConfirmDialog } from './ConfirmDialog'
 
 // Authentic Gmail Material color palette per letter
 const GMAIL_PALETTE: Record<string, string> = {
@@ -75,6 +76,10 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
   onOpenSettings
 }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false)
+  // Account removal asks for confirmation in an in-app dialog instead of
+  // window.confirm(): the native dialog breaks window focus on Windows,
+  // leaving every input/click unresponsive until the window is refocused.
+  const [pendingRemoval, setPendingRemoval] = useState<{ id: string; email: string; active: boolean } | null>(null)
   const { t } = useExtensionLocale()
   const dropdownRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -365,9 +370,8 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation()
-                              if (confirm(t('header.accounts.removeConfirm', { email: acc.email }))) {
-                                onRemoveAccount(acc.id)
-                              }
+                              setDropdownOpen(false)
+                              setPendingRemoval({ id: acc.id, email: acc.email, active: false })
                             }}
                             className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-card text-text-muted hover:text-text transition-all"
                             title={t('header.accounts.remove')}
@@ -401,9 +405,7 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
                   type="button"
                   onClick={() => {
                     setDropdownOpen(false)
-                    if (confirm(t('header.accounts.removeActiveConfirm', { email: activeAccount.email }))) {
-                      onRemoveAccount(activeAccount.id)
-                    }
+                    setPendingRemoval({ id: activeAccount.id, email: activeAccount.email, active: true })
                   }}
                   className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[11px] text-text-muted hover:text-text transition-colors"
                 >
@@ -424,6 +426,25 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
         accept="image/*"
         className="hidden"
       />
+
+      {pendingRemoval && (
+        <ConfirmDialog
+          message={t(
+            pendingRemoval.active
+              ? 'header.accounts.removeActiveConfirm'
+              : 'header.accounts.removeConfirm',
+            { email: pendingRemoval.email }
+          )}
+          cancelLabel={t('header.accounts.cancel')}
+          confirmLabel={t('header.accounts.confirmRemove')}
+          onCancel={() => setPendingRemoval(null)}
+          onConfirm={() => {
+            const accountId = pendingRemoval.id
+            setPendingRemoval(null)
+            onRemoveAccount(accountId)
+          }}
+        />
+      )}
     </header>
   )
 }

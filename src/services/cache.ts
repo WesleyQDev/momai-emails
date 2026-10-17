@@ -94,17 +94,19 @@ export const emailStorageCache = {
       writeEntry(`${PREFIX}folders_${accId}`, JSON.stringify(folders))
     } catch {}
   },
-  getFolderEmails(accId: string, folder: string): EmailMessage[] | null {
-    return readEntry(`${PREFIX}emails_${accId}_${folder}`, (data) => {
+  getFolderEmails(accId: string, folder: string, category?: string): EmailMessage[] | null {
+    const key = `${PREFIX}emails_${accId}_${folder}${category ? `_${category}` : ''}`
+    return readEntry(key, (data) => {
       const parsed = JSON.parse(data)
       if (!Array.isArray(parsed)) throw new Error('invalid folder cache entry')
       return parsed.filter((m: EmailMessage) => !m.accountId || m.accountId === accId)
     })
   },
-  setFolderEmails(accId: string, folder: string, messages: EmailMessage[]) {
+  setFolderEmails(accId: string, folder: string, messages: EmailMessage[], category?: string) {
     try {
+      const key = `${PREFIX}emails_${accId}_${folder}${category ? `_${category}` : ''}`
       writeEntry(
-        `${PREFIX}emails_${accId}_${folder}`,
+        key,
         JSON.stringify(messages.slice(0, MAX_STORED_FOLDER_MESSAGES))
       )
     } catch {}
