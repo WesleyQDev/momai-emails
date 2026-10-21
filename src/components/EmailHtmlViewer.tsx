@@ -507,9 +507,12 @@ export const EmailHtmlViewer: React.FC<EmailHtmlViewerProps> = ({ html, classNam
                 x: screenX,
                 y: screenY,
                 selectedText: sel,
-                anchorHref: anchorHref && !anchorHref.startsWith('javascript:') ? anchor.href || anchorHref : '',
+                anchorHref:
+                  anchorHref && !anchorHref.startsWith('javascript:')
+                    ? anchor?.href || anchorHref
+                    : '',
                 anchorText,
-                imgSrc: imgSrc ? img.src || imgSrc : '',
+                imgSrc: imgSrc ? img?.src || imgSrc : '',
                 copyableText,
                 onSelectAll: () => {
                   try {
