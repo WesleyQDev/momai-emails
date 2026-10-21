@@ -1,31 +1,33 @@
 # MomAI E-mail
 
-Gestisci le tue caselle di posta e invia e-mail direttamente tramite MomAI usando comandi vocali o di testo. Compatibile con i principali servizi come Gmail, Outlook, Yahoo, iCloud e server personalizzati.
+Leggi, invia e organizza le tue e-mail da MomAI, con la voce o con il testo. L'estensione funziona con Gmail, Outlook, Yahoo, iCloud e server IMAP personalizzati.
 
-## La tua casella di posta organizzata e a portata di mano
+## Cosa puoi fare
 
-Con MomAI E-mail, non devi interrompere quello che stai facendo al computer per controllare messaggi importanti o rispondere a contatti urgenti. Tutto può essere fatto in modo rapido e conversazionale con la tua assistente.
+- Collegare più account e passare da uno all'altro.
+- Ricevere avvisi di nuovi messaggi sul desktop e nel menu laterale.
+- Vedere le e-mail divise in Principale, Promozioni, Aggiornamenti e Social quando il provider lo supporta.
+- Chiedere a MomAI di leggere un messaggio o riassumere una conversazione lunga.
+- Rispondere senza aprire il browser.
+- Tenere le credenziali sul tuo computer, protette dalla cassaforte di sistema.
 
-### Funzionalità Principali
+## Esempi
 
-- **Più Account Collegati**: Aggiungi e passa da un account all'altro tra Gmail, Outlook, Hotmail, Yahoo, iCloud o account professionali in un unico posto.
-- **Avvisi in Tempo Reale**: Ricevi notifiche sul desktop e nel menu laterale non appena arrivano nuovi messaggi, senza perdere nulla di importante.
-- **Suddivisione Automatica**: Le tue e-mail vengono organizzate in modo chiaro in categorie come Principale, Promozioni, Aggiornamenti e Social per evitare il sovraccarico.
-- **Lettura e Riepilogo Vocale**: MomAI legge il contenuto dei messaggi per te e riassume lunghe conversazioni in pochi secondi.
-- **Risposte Rapide**: Detta o digita le tue risposte e inviale subito senza aprire il browser.
-- **Sicurezza e Crittografia Locale**: Le tue credenziali vengono salvate con la crittografia all'avanguardia di Windows stesso sul tuo computer. Nessuna password viene inviata a server di terze parti.
+- "Ho nuove e-mail?"
+- "Leggi l'ultima e-mail del team."
+- "Invia un'e-mail a contatto@azienda.com dicendo che il report è stato approvato."
+- "Rispondi confermando la riunione di domani alle 14."
+- "Segna le e-mail promozionali come lette."
 
-## Cosa puoi chiedere a MomAI
+## Come configurare
 
-- "MomAI, ho qualche nuova e-mail nella mia casella di posta?"
-- "Leggi l'ultima e-mail che ho ricevuto dal team di lavoro."
-- "Invia un'e-mail a contatto@azienda.com avvisando che il report è già stato approvato."
-- "Rispondi all'ultima e-mail confermando la riunione per domani alle 14."
-- "Segna tutte le e-mail promozionali come lette."
+1. Apri MomAI e fai clic sull'icona E-mail.
+2. Scegli di collegare un account e seleziona il provider.
+3. Inserisci l'indirizzo e la password per le app dell'account.
+4. Attendi la sincronizzazione. Dopo, usa il pannello o chiedi direttamente a MomAI.
 
-## Come Configurare
+## Permessi
 
-1. Apri MomAI e fai clic sull'icona E-mail nella barra laterale.
-2. Fai clic sul pulsante per collegare un account e seleziona il tuo provider (come Gmail o Outlook).
-3. Inserisci il tuo indirizzo e-mail e la password per le app generata nel tuo account.
-4. Fatto! I tuoi messaggi verranno sincronizzati e potrai già usarli dal pannello o chiederli direttamente all'assistente.
+- **Rete:** per ricevere e inviare messaggi.
+- **File (lettura e scrittura):** per aprire e salvare gli allegati.
+- **Sistema:** per aprire gli allegati nell'app predefinita del computer.

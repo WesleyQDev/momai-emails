@@ -1,31 +1,33 @@
 # MomAI Correos
 
-Gestiona tus bandejas de entrada y envía correos electrónicos directamente a través de MomAI usando comandos de voz o texto. Compatible con los principales servicios como Gmail, Outlook, Yahoo, iCloud y servidores personalizados.
+Lee, envía y organiza tus correos desde MomAI, por voz o texto. La extensión funciona con Gmail, Outlook, Yahoo, iCloud y servidores IMAP personalizados.
 
-## Tu bandeja de entrada organizada y a tu alcance
+## Qué puedes hacer
 
-Con MomAI Correos, no necesitas interrumpir lo que estás haciendo en el ordenador para revisar mensajes importantes o responder contactos urgentes. Todo puede hacerse de forma rápida y conversacional con tu asistente.
+- Conectar varias cuentas y cambiar entre ellas.
+- Recibir avisos de mensajes nuevos en el escritorio y en el menú lateral.
+- Ver los correos separados en Principal, Promociones, Actualizaciones y Social cuando el proveedor lo permita.
+- Pedir a MomAI que lea un mensaje o resuma una conversación larga.
+- Responder sin abrir el navegador.
+- Guardar las credenciales en tu computador, protegidas por el cofre del sistema.
 
-### Principales Recursos
+## Ejemplos
 
-- **Múltiples Cuentas Conectadas**: Añade y alterna entre cuentas de Gmail, Outlook, Hotmail, Yahoo, iCloud o cuentas profesionales en un solo lugar.
-- **Avisos en Tiempo Real**: Recibe notificaciones en el escritorio y en el menú lateral en cuanto lleguen nuevos mensajes, sin perderte nada importante.
-- **Separación Automática**: Tus correos se organizan de forma clara en categorías como Principal, Promociones, Actualizaciones y Social para evitar la sobrecarga.
-- **Lectura y Resumen por Voz**: MomAI lee el contenido de los mensajes por ti y resume conversaciones largas en pocos segundos.
-- **Respuestas Rápidas**: Dicta o escribe tus respuestas y envíalas al momento sin abrir el navegador.
-- **Seguridad y Cifrado Local**: Tus credenciales se guardan con cifrado de punta del propio Windows en tu ordenador. Ninguna contraseña se envía a servidores de terceros.
+- "¿Tengo algún correo nuevo?"
+- "Lee el último correo del equipo."
+- "Envía un correo a contacto@empresa.com diciendo que el informe fue aprobado."
+- "Responde confirmando la reunión de mañana a las 14:00."
+- "Marca los correos promocionales como leídos."
 
-## Lo que puedes pedir a MomAI
+## Cómo configurar
 
-- "MomAI, ¿tengo algún correo nuevo en mi bandeja de entrada?"
-- "Lee el último correo que recibí del equipo de trabajo."
-- "Envía un correo a contacto@empresa.com avisando que el informe ya fue aprobado."
-- "Responde al último correo confirmando la reunión para mañana a las 14h."
-- "Marca todos los correos promocionales como leídos."
+1. Abre MomAI y haz clic en el icono de Correos.
+2. Elige conectar una cuenta y selecciona el proveedor.
+3. Escribe la dirección y la contraseña de aplicación de la cuenta.
+4. Espera la sincronización. Después, usa el panel o pídeselo directo a MomAI.
 
-## Cómo Configurar
+## Permisos
 
-1. Abre MomAI y haz clic en el icono de Correos en la barra lateral.
-2. Haz clic en el botón de conectar cuenta y selecciona tu proveedor (como Gmail o Outlook).
-3. Introduce tu dirección de correo y la contraseña de aplicación generada en tu cuenta.
-4. ¡Listo! Tus mensajes se sincronizarán y ya puedes usarlos desde el panel o pedirlos directamente al asistente.
+- **Red:** para recibir y enviar mensajes.
+- **Archivos (lectura y escritura):** para abrir y guardar adjuntos.
+- **Sistema:** para abrir adjuntos en la aplicación predeterminada del computador.

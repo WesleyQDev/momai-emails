@@ -1,31 +1,33 @@
 # MomAI E-mails
 
-Gérez vos boîtes de réception et envoyez des e-mails directement via MomAI en utilisant des commandes vocales ou textuelles. Compatible avec les principaux services comme Gmail, Outlook, Yahoo, iCloud et les serveurs personnalisés.
+Lisez, envoyez et organisez vos e-mails depuis MomAI, à la voix ou par texte. L'extension fonctionne avec Gmail, Outlook, Yahoo, iCloud et des serveurs IMAP personnalisés.
 
-## Votre boîte de réception organisée et à portée de main
+## Ce que vous pouvez faire
 
-Avec MomAI E-mails, vous n'avez pas besoin d'interrompre ce que vous faites sur votre ordinateur pour vérifier des messages importants ou répondre à des contacts urgents. Tout peut se faire rapidement et de façon conversationnelle avec votre assistante.
+- Connecter plusieurs comptes et passer de l'un à l'autre.
+- Recevoir des alertes de nouveaux messages sur le bureau et dans le menu latéral.
+- Voir les e-mails séparés en Principal, Promotions, Mises à jour et Social lorsque votre fournisseur le permet.
+- Demander à MomAI de lire un message ou de résumer une longue conversation.
+- Répondre sans ouvrir le navigateur.
+- Garder vos identifiants sur votre ordinateur, protégés par le coffre du système.
 
-### Principales Fonctionnalités
+## Exemples
 
-- **Plusieurs Comptes Connectés**: Ajoutez et basculez entre des comptes Gmail, Outlook, Hotmail, Yahoo, iCloud ou professionnels au même endroit.
-- **Alertes en Temps Réel**: Recevez des notifications sur le bureau et dans le menu latéral dès l'arrivée de nouveaux messages, sans rien manquer d'important.
-- **Tri Automatique**: Vos e-mails sont organisés clairement en catégories comme Principal, Promotions, Mises à jour et Social pour éviter la surcharge.
-- **Lecture et Résumé Vocal**: MomAI lit le contenu des messages pour vous et résume les longues conversations en quelques secondes.
-- **Réponses Rapides**: Dictez ou saisissez vos réponses et envoyez-les aussitôt sans ouvrir le navigateur.
-- **Sécurité et Chiffrement Local**: Vos identifiants sont enregistrés avec le chiffrement de pointe de Windows lui-même sur votre ordinateur. Aucun mot de passe n'est envoyé à des serveurs tiers.
+- « Ai-je de nouveaux e-mails ? »
+- « Lis le dernier e-mail de l'équipe. »
+- « Envoie un e-mail à contact@entreprise.com pour dire que le rapport a été approuvé. »
+- « Réponds en confirmant la réunion de demain à 14 h. »
+- « Marque les e-mails promotionnels comme lus. »
 
-## Ce que vous pouvez demander à MomAI
+## Configuration
 
-- "MomAI, ai-je un nouvel e-mail dans ma boîte de réception ?"
-- "Lis le dernier e-mail que j'ai reçu de l'équipe de travail."
-- "Envoie un e-mail à contato@empresa.com pour dire que le rapport est déjà approuvé."
-- "Réponds au dernier e-mail en confirmant la réunion pour demain à 14h."
-- "Marque tous les e-mails promotionnels comme lus."
+1. Ouvrez MomAI et cliquez sur l'icône E-mails.
+2. Choisissez de connecter un compte et sélectionnez votre fournisseur.
+3. Saisissez l'adresse et le mot de passe d'application du compte.
+4. Attendez la synchronisation. Ensuite, utilisez le panneau ou demandez directement à MomAI.
 
-## Comment Configurer
+## Autorisations
 
-1. Ouvrez MomAI et cliquez sur l'icône E-mails dans la barre latérale.
-2. Cliquez sur le bouton de connexion de compte et sélectionnez votre fournisseur (comme Gmail ou Outlook).
-3. Saisissez votre adresse e-mail et le mot de passe d'application généré dans votre compte.
-4. C'est prêt ! Vos messages seront synchronisés et vous pouvez déjà les utiliser via le panneau ou les demander directement à l'assistante.
+- **Réseau :** pour récupérer et envoyer des messages.
+- **Fichiers (lecture et écriture) :** pour ouvrir et enregistrer les pièces jointes.
+- **Système :** pour ouvrir les pièces jointes dans l'application par défaut de l'ordinateur.
