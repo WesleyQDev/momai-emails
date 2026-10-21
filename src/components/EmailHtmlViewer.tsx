@@ -479,7 +479,63 @@ export const EmailHtmlViewer: React.FC<EmailHtmlViewerProps> = ({ html, classNam
           }
         }
 
+        // Context menu interceptor: forward iframe right-clicks to the host context menu
+        const handleContextMenu = (e: MouseEvent) => {
+          e.preventDefault()
+          e.stopPropagation()
+
+          const iframeRect = iframe.getBoundingClientRect()
+          const screenX = iframeRect.left + e.clientX
+          const screenY = iframeRect.top + e.clientY
+
+          const target = e.target as HTMLElement | null
+          const sel = doc.getSelection()?.toString()?.trim() || ''
+
+          const anchor = target?.closest?.('a[href]') as HTMLAnchorElement | null
+          const anchorHref = anchor?.getAttribute('href') || ''
+          const anchorText = anchor ? (anchor.innerText || anchor.textContent || '').trim() : ''
+
+          const img = target?.closest?.('img') as HTMLImageElement | null
+          const imgSrc = img?.getAttribute('src') || ''
+
+          const rawText = target ? (target.innerText || target.textContent || '').trim() : ''
+          const copyableText = !sel && !anchorHref && !imgSrc ? rawText : ''
+
+          window.dispatchEvent(
+            new CustomEvent('momai:show-context-menu', {
+              detail: {
+                x: screenX,
+                y: screenY,
+                selectedText: sel,
+                anchorHref: anchorHref && !anchorHref.startsWith('javascript:') ? anchor.href || anchorHref : '',
+                anchorText,
+                imgSrc: imgSrc ? img.src || imgSrc : '',
+                copyableText,
+                onSelectAll: () => {
+                  try {
+                    const selection = doc.getSelection()
+                    if (!selection) return
+                    const range = doc.createRange()
+                    range.selectNodeContents(doc.body || doc.documentElement)
+                    selection.removeAllRanges()
+                    selection.addRange(range)
+                  } catch {}
+                }
+              }
+            })
+          )
+        }
+
+        // Notify parent window on click inside iframe so active outside menus/popovers close
+        const handleMouseDown = () => {
+          try {
+            document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+          } catch {}
+        }
+
         doc.addEventListener('click', handleClick, true)
+        doc.addEventListener('contextmenu', handleContextMenu, true)
+        doc.addEventListener('mousedown', handleMouseDown, true)
 
         recalculateHeight()
 

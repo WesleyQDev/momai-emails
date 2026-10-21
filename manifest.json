@@ -2,6 +2,12 @@
   "id": "momai-emails",
   "name": "MomAI E-mails",
   "is_official": true,
+  "icon_bg": "#2563EB",
+  "app_icon": "app.png",
+  "icon": "icon.svg",
+  "sidebar_icon": "icon.svg",
+  "sidebar_icon_essential": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect width=\"20\" height=\"16\" x=\"2\" y=\"4\" rx=\"2\"/><path d=\"m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7\"/></svg>",
+  "sidebar": true,
   "description": "Leia, envie e organize seus e-mails por voz ou texto, sem abrir o navegador.",
   "category": "communication",
   "tags": [
@@ -180,6 +186,11 @@
   "ui": {
     "page": "dist/page.js",
     "pageType": "momai-emails-page",
+    "share": {
+      "entry": "dist/share.js",
+      "type": "momai-emails-share",
+      "name": "E-mail"
+    },
     "widgets": [
       {
         "id": "unread",

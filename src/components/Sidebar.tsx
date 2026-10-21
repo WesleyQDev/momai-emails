@@ -66,7 +66,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   }
 
   return (
-    <aside className="w-48 shrink-0 bg-sidebar/40 px-2.5 py-3 flex flex-col justify-between select-none">
+    <aside className="w-48 shrink-0 bg-sidebar/40 px-2.5 py-3 flex flex-col select-none">
       <div className="space-y-4">
         {/* Compose Button */}
         <button
@@ -138,12 +138,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
               )
             })}
         </div>
-      </div>
-
-      {/* Storage and status footer */}
-      <div className="pt-3 border-t border-border/60 text-[11px] text-text-muted px-2 flex items-center justify-between">
-        <span>MomAI E-mails</span>
-        <span className="font-mono opacity-70">v1.0</span>
       </div>
     </aside>
   )
