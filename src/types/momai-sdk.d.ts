@@ -57,6 +57,10 @@ declare module 'momai:sdk' {
   export function useWarmup(onWarmup: () => Promise<void> | void, deps?: unknown[]): void
   export function useCachedState<T>(key: string, initialValue: T | (() => T)): [T, (value: T | ((prev: T) => T)) => void]
   export function useShare(): { open: (payload: any) => Promise<any>; close: () => void; providers: any[] }
+  export function useAutocomplete(options: any): any
+  export const AutocompleteInput: any
+  export const AutocompleteTextarea: any
+  export const ScopedHistoryStore: any
 }
 
 declare module 'momai:events' {

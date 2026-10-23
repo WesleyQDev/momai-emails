@@ -4,7 +4,7 @@
 // - Right click -> Colar (or Ctrl+V) -> inserts image INLINE into message content
 // - Select inline image + Delete / Backspace -> removes the selected image
 
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import {
   XMarkIcon,
   MinusIcon,
@@ -18,6 +18,35 @@ import {
 } from '@heroicons/react/24/outline'
 import type { PublicEmailAccount, SendEmailPayload, OutgoingAttachment } from '../services/types'
 import sdk from 'momai:sdk'
+const FallbackInput = (props: any) => {
+  const { autocompleteOptions, containerClassName, ghostClassName, onSuggestionAccept, enableHistoryNav, recordOnEnter, ...rest } = props
+  return <input {...rest} />
+}
+const AutocompleteInput = (sdk as any)?.AutocompleteInput || FallbackInput
+class LocalFallbackStore {
+  readonly storageKey: string
+  constructor(public namespace: string, public maxEntries = 300) {
+    this.storageKey = `momai:ext:${namespace}:history`
+  }
+  load(): Array<{ text: string; count?: number; lastUsed?: number }> {
+    try {
+      const raw = localStorage.getItem(this.storageKey)
+      return raw ? JSON.parse(raw) : []
+    } catch {
+      return []
+    }
+  }
+  save(textOrItem: string | { text: string }) {
+    try {
+      const text = (typeof textOrItem === 'string' ? textOrItem : textOrItem.text).trim()
+      if (!text) return
+      const list = this.load().filter((x: any) => x.text.toLowerCase() !== text.toLowerCase())
+      list.unshift({ text, count: 1, lastUsed: Date.now() })
+      localStorage.setItem(this.storageKey, JSON.stringify(list.slice(0, this.maxEntries)))
+    } catch {}
+  }
+}
+const ScopedHistoryStore = (sdk as any)?.ScopedHistoryStore || (typeof window !== 'undefined' && (window as any).MomAISDK?.ScopedHistoryStore) || LocalFallbackStore
 import ContextMenu from './ContextMenu'
 import { useExtensionLocale } from '../services/i18n'
 import { closeAndSaveDraftInBackground } from '../services/draft'
@@ -143,6 +172,44 @@ function extractImageUrlsFromDataTransfer(dataTransfer: DataTransfer): string[] 
   return urls
 }
 
+function extractNodeTextWithLineBreaks(node: Node): string {
+  let text = ''
+  const children = Array.from(node.childNodes)
+  for (const child of children) {
+    if (child.nodeType === Node.TEXT_NODE) {
+      text += child.textContent || ''
+    } else if (child.nodeType === Node.ELEMENT_NODE) {
+      const el = child as HTMLElement
+      if (el.id === 'momai-body-ghost') continue
+      const tag = el.tagName.toLowerCase()
+      if (tag === 'br') {
+        text += '\n'
+      } else if (tag === 'div' || tag === 'p') {
+        if (text && !text.endsWith('\n')) text += '\n'
+        text += extractNodeTextWithLineBreaks(el)
+        if (!text.endsWith('\n')) text += '\n'
+      } else {
+        text += extractNodeTextWithLineBreaks(el)
+      }
+    }
+  }
+  return text
+}
+
+const DEFAULT_EMAIL_PHRASES = [
+  'Olá, tudo bem?',
+  'Bom dia, tudo bem?',
+  'Boa tarde, tudo bem?',
+  'Seguem em anexo os documentos solicitados.',
+  'Seguem os arquivos para conferência.',
+  'Fico no aguardo do seu retorno.',
+  'Fico à disposição para qualquer dúvida.',
+  'Muito obrigado pela atenção e pelo retorno.',
+  'Atenciosamente,',
+  'Qualquer dúvida estou à disposição.',
+  'Não está com auto complete'
+]
+
 export const EmailComposer: React.FC<EmailComposerProps> = ({
   isOpen,
   accounts,
@@ -159,6 +226,78 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
   const [showCc, setShowCc] = useState(false)
   const [showBcc, setShowBcc] = useState(false)
   const [subject, setSubject] = useState('')
+  const subjectHistoryStore = useMemo(() => new ScopedHistoryStore('emails:subject', 100), [])
+  const bodyHistoryStore = useMemo(() => new ScopedHistoryStore('emails:body', 300), [])
+
+  const removeGhostSuggestion = useCallback(() => {
+    try {
+      const ghost = editorRef.current?.querySelector('#momai-body-ghost')
+      if (ghost) {
+        ghost.remove()
+      }
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    try {
+      const existing = bodyHistoryStore.load()
+      if (existing.length === 0) {
+        DEFAULT_EMAIL_PHRASES.forEach((p) => bodyHistoryStore.save(p))
+      }
+    } catch {}
+  }, [bodyHistoryStore])
+
+  const updateBodySuggestion = useCallback(() => {
+    try {
+      if (!editorRef.current) return
+      removeGhostSuggestion()
+
+      const sel = window.getSelection()
+      if (!sel || sel.rangeCount === 0) return
+      const range = sel.getRangeAt(0)
+      if (!editorRef.current.contains(range.commonAncestorContainer)) return
+
+      const preCaretRange = range.cloneRange()
+      preCaretRange.selectNodeContents(editorRef.current)
+      preCaretRange.setEnd(range.endContainer, range.endOffset)
+
+      const fragment = preCaretRange.cloneContents()
+      fragment.querySelector?.('#momai-body-ghost')?.remove()
+      const textBefore = extractNodeTextWithLineBreaks(fragment)
+
+      const lines = textBefore.split('\n')
+      const lastLine = lines[lines.length - 1] || ''
+      const trimmedQuery = lastLine.trimStart()
+
+      if (!trimmedQuery || trimmedQuery.length < 2) return
+
+      const queryLower = trimmedQuery.toLowerCase()
+      const entries = bodyHistoryStore.load()
+      const match = entries.find((e: any) => {
+        const el = e.text.toLowerCase()
+        return el.startsWith(queryLower) && el !== queryLower
+      })
+
+      if (!match) return
+
+      const completion = match.text.slice(trimmedQuery.length)
+      if (!completion) return
+
+      const ghostSpan = document.createElement('span')
+      ghostSpan.id = 'momai-body-ghost'
+      ghostSpan.setAttribute('contenteditable', 'false')
+      ghostSpan.className = 'text-text-muted/40 select-none pointer-events-none'
+      ghostSpan.style.opacity = '0.35'
+      ghostSpan.style.userSelect = 'none'
+      ghostSpan.textContent = completion
+
+      range.insertNode(ghostSpan)
+      range.setStartBefore(ghostSpan)
+      range.setEndBefore(ghostSpan)
+      sel.removeAllRanges()
+      sel.addRange(range)
+    } catch {}
+  }, [bodyHistoryStore, removeGhostSuggestion])
   const [body, setBody] = useState('')
   const [isHtml, setIsHtml] = useState(false)
   const [attachments, setAttachments] = useState<OutgoingAttachment[]>([])
@@ -557,6 +696,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
 
   // 4. INLINE IMAGE CLICK SELECTION & DELETE / BACKSPACE HANDLING
   const handleEditorClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    removeGhostSuggestion()
     const target = e.target as HTMLElement
     if (target && target.tagName === 'IMG') {
       // Highlight selected image
@@ -580,6 +720,27 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
   }
 
   const handleEditorKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Tab' || e.key === 'ArrowRight') {
+      const ghost = editorRef.current?.querySelector('#momai-body-ghost')
+      if (ghost && ghost.textContent) {
+        e.preventDefault()
+        const textToInsert = ghost.textContent
+        ghost.remove()
+        document.execCommand('insertText', false, textToInsert)
+        if (editorRef.current) {
+          setBody(editorRef.current.innerHTML)
+        }
+        return
+      }
+    }
+
+    if (e.key === 'Escape') {
+      removeGhostSuggestion()
+      return
+    }
+
+    removeGhostSuggestion()
+
     if (e.key === 'Delete' || e.key === 'Backspace') {
       // If an inline image is explicitly selected
       if (selectedInlineImg && selectedInlineImg.parentNode) {
@@ -657,7 +818,10 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
     })
   }
 
-  const getCurrentBody = () => (editorRef.current ? editorRef.current.innerHTML : body)
+  const getCurrentBody = () => {
+    removeGhostSuggestion()
+    return editorRef.current ? editorRef.current.innerHTML : body
+  }
 
   const handleCloseSaveDraft = () => {
     const currentContent = getCurrentBody()
@@ -753,6 +917,17 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
       draftUid
     }
     saveRecipient(to.trim())
+    if (subject.trim()) {
+      subjectHistoryStore.save(subject.trim())
+    }
+    const cleanBodyLines = currentContent
+      .replace(/<[^>]+>/g, '\n')
+      .split('\n')
+      .map((s) => s.trim())
+      .filter((s) => s.length >= 4 && s.length <= 150)
+    cleanBodyLines.forEach((line) => {
+      bodyHistoryStore.save(line)
+    })
     setError(null)
     closeAndSendInBackground(onClose, () => onSend(payload))
   }
@@ -1011,11 +1186,17 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
           {/* Subject Field */}
           <div className="flex items-center px-4 py-2 border-b border-border/40 gap-2">
             <span className="text-text-muted font-medium w-12 shrink-0">{t('composer.subject')}</span>
-            <input
+            <AutocompleteInput
               type="text"
               value={subject}
-              onChange={(e) => setSubject(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSubject(e.target.value)}
               placeholder={t('composer.subjectPlaceholder')}
+              autocompleteOptions={{
+                namespace: 'emails:subject',
+                maxEntries: 100
+              }}
+              containerClassName="flex-1 min-w-0"
+              ghostClassName="text-text-muted/30 select-none text-xs font-medium"
               className="flex-1 bg-transparent border-none text-text placeholder:text-text-muted outline-none focus:outline-none text-xs font-medium"
             />
           </div>
@@ -1038,9 +1219,11 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
               suppressContentEditableWarning
               onClick={handleEditorClick}
               onKeyDown={handleEditorKeyDown}
+              onBlur={removeGhostSuggestion}
               onInput={() => {
                 if (editorRef.current) {
                   setBody(editorRef.current.innerHTML)
+                  updateBodySuggestion()
                 }
               }}
               onKeyUp={saveSelection}
