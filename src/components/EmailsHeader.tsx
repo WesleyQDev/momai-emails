@@ -263,6 +263,8 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
               src={activeAvatar}
               alt={t('header.profile.alt')}
               className="w-8 h-8 rounded-full object-cover shadow-xs"
+              loading="eager"
+              decoding="async"
             />
           ) : (
             <div
@@ -294,6 +296,8 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
                       src={activeAvatar}
                       alt={t('header.profile.alt')}
                       className="w-12 h-12 rounded-full object-cover shadow-xs"
+                      loading="eager"
+                      decoding="async"
                     />
                   ) : (
                     <div
@@ -347,6 +351,8 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
                                 src={accAvatar}
                                 alt={acc.email}
                                 className="w-8 h-8 rounded-full object-cover shrink-0 shadow-xs"
+                                loading="eager"
+                                decoding="async"
                               />
                             ) : (
                               <div

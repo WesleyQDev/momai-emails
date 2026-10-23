@@ -9,7 +9,6 @@ interface EmailAvatarProps {
   size?: 'sm' | 'md' | 'lg'
   className?: string
 }
-
 // Authentic Gmail Material color palette per letter (exact match with Gmail mobile & web)
 const GMAIL_PALETTE: Record<string, string> = {
   A: '#1A73E8', // Blue
@@ -98,17 +97,24 @@ function detectCompanyDomain(name?: string, address?: string): string | null {
   return null
 }
 
+// Session cache of domains to prevent pop-in / re-flicker on rerenders and tab switches
+const loadedDomains = new Set<string>()
+const failedDomains = new Set<string>()
+
 export const EmailAvatar: React.FC<EmailAvatarProps> = ({
   name,
   address,
   size = 'md',
   className = ''
 }) => {
-  const [imageError, setImageError] = useState(false)
-
   const displayName = name?.trim() || address?.trim() || '?'
   const initial = displayName.charAt(0).toUpperCase()
   const companyDomain = detectCompanyDomain(name, address)
+
+  const isFailed = companyDomain ? failedDomains.has(companyDomain) : false
+  const [imageError, setImageError] = useState(isFailed)
+  const isAlreadyLoaded = Boolean(companyDomain && loadedDomains.has(companyDomain))
+  const [imageLoaded, setImageLoaded] = useState(isAlreadyLoaded)
 
   const sizeClasses = {
     sm: 'w-7 h-7 text-xs',
@@ -116,27 +122,42 @@ export const EmailAvatar: React.FC<EmailAvatarProps> = ({
     lg: 'w-10 h-10 text-sm'
   }[size]
 
-  // If company logo is available and hasn't failed to load
+  // Exact Gmail Material solid color circle with white bold letter
+  const bgColor = GMAIL_PALETTE[initial] || '#1A73E8'
+
+  // If company logo is detected and hasn't failed to load
   if (companyDomain && !imageError) {
     const faviconUrl = `https://www.google.com/s2/favicons?domain=${companyDomain}&sz=128`
     return (
       <div
-        className={`${sizeClasses} rounded-full overflow-hidden shrink-0 flex items-center justify-center bg-card border border-border shadow-xs ${className}`}
+        className={`${sizeClasses} relative rounded-full overflow-hidden shrink-0 flex items-center justify-center shadow-xs select-none ${className}`}
+        style={{ backgroundColor: imageLoaded ? undefined : bgColor }}
         title={`${displayName} (${address || ''})`}
       >
+        {/* Instant fallback letter visible immediately while image is downloading/decoding */}
+        {!imageLoaded && (
+          <span className="font-bold text-white leading-none">{initial}</span>
+        )}
         <img
           src={faviconUrl}
           alt={displayName}
-          className="w-full h-full object-contain p-0.5 rounded-full"
-          onError={() => setImageError(true)}
-          loading="lazy"
+          className={`absolute inset-0 w-full h-full object-contain p-0.5 rounded-full bg-card border border-border transition-opacity duration-200 ${
+            imageLoaded ? 'opacity-100' : 'opacity-0'
+          }`}
+          loading="eager"
+          decoding="async"
+          onLoad={() => {
+            loadedDomains.add(companyDomain)
+            setImageLoaded(true)
+          }}
+          onError={() => {
+            failedDomains.add(companyDomain)
+            setImageError(true)
+          }}
         />
       </div>
     )
   }
-
-  // Exact Gmail Material solid color circle with white bold letter
-  const bgColor = GMAIL_PALETTE[initial] || '#1A73E8'
 
   return (
     <div
