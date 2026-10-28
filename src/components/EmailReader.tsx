@@ -41,7 +41,7 @@ const renderPlainTextWithLinks = (text: string) => {
             e.stopPropagation()
             window.open(part, '_blank', 'noopener,noreferrer')
           }}
-          className="text-accent underline hover:opacity-80 break-all cursor-pointer font-medium"
+          className="text-info underline hover:opacity-80 break-all cursor-pointer font-medium"
         >
           {part}
         </a>
@@ -101,7 +101,7 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
     if (loading) {
       return (
         <div className="flex-1 flex flex-col items-center justify-center bg-card text-text-muted p-8 space-y-3">
-          <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+          <div className="w-6 h-6 border-2 border-error border-t-transparent rounded-full animate-spin" />
           <span className="text-xs">{t('reader.loading')}</span>
         </div>
       )
@@ -302,7 +302,7 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
           ) : loading && !hasReadableBody(email) ? (
             <div className="w-full max-w-[720px] mx-auto p-4 rounded-xl bg-card border border-border/60 space-y-2">
               <div className="flex items-center gap-2 text-text-muted">
-                <div className="w-3.5 h-3.5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                <div className="w-3.5 h-3.5 border-2 border-error border-t-transparent rounded-full animate-spin" />
                 <span className="text-[11px]">{t('reader.loading')}</span>
               </div>
               <div className="h-3 rounded bg-input w-11/12" />
@@ -338,7 +338,7 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
                       onOpenAttachment(email, email.attachments[0])
                     }
                   }}
-                  className="text-xs text-text-muted hover:text-accent font-medium transition-colors"
+                  className="text-xs text-text-muted hover:text-info font-medium transition-colors"
                 >
                   {t('reader.attachments.openDocument')}
                 </button>
@@ -367,7 +367,7 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
           <button
             type="button"
             onClick={() => onReply(email, false)}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-border/80 hover:border-accent/60 bg-input/40 hover:bg-input text-xs font-semibold text-text transition-all cursor-pointer shadow-xs"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-border/80 hover:border-info/60 bg-input/40 hover:bg-input text-xs font-semibold text-text transition-all cursor-pointer shadow-xs"
           >
             <ArrowUturnLeftIcon className="w-3.5 h-3.5" />
             <span>{t('reader.reply')}</span>
@@ -375,7 +375,7 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
           <button
             type="button"
             onClick={() => onForward(email)}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-border/80 hover:border-accent/60 bg-input/40 hover:bg-input text-xs font-semibold text-text transition-all cursor-pointer shadow-xs"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-border/80 hover:border-info/60 bg-input/40 hover:bg-input text-xs font-semibold text-text transition-all cursor-pointer shadow-xs"
           >
             <ArrowUturnRightIcon className="w-3.5 h-3.5" />
             <span>{t('reader.forward')}</span>
@@ -384,7 +384,7 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
             <button
               type="button"
               onClick={() => onToggleStarred(email.id, email.starred)}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-border/80 hover:border-accent/60 bg-input/40 hover:bg-input text-xs font-semibold text-text transition-all cursor-pointer shadow-xs"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-border/80 hover:border-highlight/60 bg-input/40 hover:bg-input text-xs font-semibold text-text transition-all cursor-pointer shadow-xs"
               title={favoriteLabel}
             >
               {email.starred ? (
@@ -401,7 +401,7 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
                 type="button"
                 onClick={() => setShowMoveMenu((prev) => !prev)}
                 disabled={isMoving}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-border/80 hover:border-accent/60 bg-input/40 hover:bg-input text-xs font-semibold text-text transition-all cursor-pointer shadow-xs disabled:opacity-50"
+                className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-border/80 hover:border-border bg-input/40 hover:bg-input text-xs font-semibold text-text transition-all cursor-pointer shadow-xs disabled:opacity-50"
                 title={t('reader.move')}
               >
                 <FolderIcon className="w-3.5 h-3.5" />
@@ -431,7 +431,7 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
               type="button"
               onClick={handleNotSpam}
               disabled={isMoving}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-accent/50 bg-accent/10 hover:bg-accent/20 text-xs font-semibold text-accent transition-all cursor-pointer shadow-xs disabled:opacity-50"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-success/50 bg-success/10 hover:bg-success/20 text-xs font-semibold text-success transition-all cursor-pointer shadow-xs disabled:opacity-50"
               title={t('reader.notSpam')}
             >
               <CheckCircleIcon className="w-3.5 h-3.5" />
@@ -443,7 +443,7 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
         {/* Quick Reply Box */}
         <div className="pt-4 border-t border-border space-y-3">
           <div className="flex items-center gap-2 text-xs font-semibold text-text">
-            <ArrowUturnLeftIcon className="w-4 h-4 text-accent" />
+            <ArrowUturnLeftIcon className="w-4 h-4 text-info" />
             <span>{t('reader.quickReply')}</span>
           </div>
 
@@ -452,7 +452,7 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
             value={quickReplyText}
             onChange={(e) => setQuickReplyText(e.target.value)}
             placeholder={t('reader.quickReply.placeholder', { name: email.from.name || email.from.address })}
-            className="w-full p-3 rounded-lg bg-input border border-border text-xs text-text placeholder:text-text-muted outline-none focus:outline-none focus:border-accent resize-y"
+            className="w-full p-3 rounded-lg bg-input border border-border text-xs text-text placeholder:text-text-muted outline-none focus:outline-none focus:border-info resize-y"
           />
 
           <div className="flex justify-end gap-2">
@@ -460,7 +460,7 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
               type="button"
               onClick={handleQuickReply}
               disabled={!quickReplyText.trim()}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-bg font-semibold text-xs hover:opacity-90 transition-opacity disabled:opacity-50 shadow-sm"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-info text-white font-semibold text-xs hover:opacity-90 transition-opacity disabled:opacity-50 shadow-sm"
             >
               <PaperAirplaneIcon className="w-3.5 h-3.5" />
               <span>{t('reader.quickReply.send')}</span>

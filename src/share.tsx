@@ -148,7 +148,7 @@ export default function EmailShareCard({
       {/* Anexos */}
       {payload.files && payload.files.length > 0 && (
         <div className="p-2 bg-sidebar border border-border rounded-lg flex items-center gap-2">
-          <DocumentDuplicateIcon className="w-3.5 h-3.5 text-accent shrink-0" />
+          <DocumentDuplicateIcon className="w-3.5 h-3.5 text-info shrink-0" />
           <span className="text-xs text-text truncate">
             {payload.files.length === 1
               ? payload.files[0].name
@@ -179,7 +179,7 @@ export default function EmailShareCard({
           type="button"
           onClick={handleSend}
           disabled={sending || !to.trim() || !subject.trim()}
-          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-accent text-white font-medium text-xs rounded-lg hover:opacity-95 active:scale-[0.98] transition-all cursor-pointer disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-info text-white font-medium text-xs rounded-lg hover:opacity-95 active:scale-[0.98] transition-all cursor-pointer disabled:opacity-50"
         >
           {sending ? (
             <>

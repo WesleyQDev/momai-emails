@@ -25,7 +25,7 @@ export default function EmailsUnreadWidget({ config, isEditing = false }: Widget
     <div className="w-full h-full flex flex-col min-h-0 overflow-hidden p-3 gap-2">
       <div className="flex items-center justify-between shrink-0">
         <span className="text-xs font-bold text-text">{t('widget.unread.title')}</span>
-        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-accent/15 text-accent border border-accent/20">
+        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-error/15 text-error border border-error/20">
           {total}
         </span>
       </div>

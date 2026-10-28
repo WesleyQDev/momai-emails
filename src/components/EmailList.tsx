@@ -48,6 +48,16 @@ const ReplyAllIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' 
 
 const ALL_CATEGORY_IDS = ['primary', 'promotions', 'social', 'updates'] as const
 
+const CATEGORY_BADGE_STYLE: Record<
+  EmailCategory,
+  { badgeBg: string; badgeText: string }
+> = {
+  primary: { badgeBg: 'bg-info', badgeText: 'text-white' },
+  promotions: { badgeBg: 'bg-success', badgeText: 'text-white' },
+  social: { badgeBg: 'bg-info', badgeText: 'text-white' },
+  updates: { badgeBg: 'bg-warning', badgeText: 'text-white' }
+}
+
 interface EmailListProps {
   messages: EmailMessage[]
   loading: boolean
@@ -196,6 +206,15 @@ export const EmailList: React.FC<EmailListProps> = ({
     return msgs
   }, [messages, unreadOnly, useCategories, activeCategory, classifyEmail])
   const categoryTotals = React.useMemo(() => countByCategory(messages), [messages])
+  const categoryUnreadCounts = React.useMemo(() => {
+    const counts: Record<EmailCategory, number> = { primary: 0, promotions: 0, social: 0, updates: 0 }
+    for (const m of messages) {
+      if (!m.read) {
+        counts[classifyEmail(m)] += 1
+      }
+    }
+    return counts
+  }, [messages, classifyEmail])
   const pageWindow = getPageWindow(filteredMessages.length, page, pageSize)
   const pageMessages = React.useMemo(
     () => filteredMessages.slice(pageWindow.start, pageWindow.end),
@@ -249,7 +268,7 @@ export const EmailList: React.FC<EmailListProps> = ({
             type="checkbox"
             checked={pageMessages.length > 0 && selectedIds.size === pageMessages.length}
             onChange={toggleSelectAll}
-            className="rounded border-border cursor-pointer accent-accent"
+            className="rounded border-border cursor-pointer accent-info"
             title={t('list.selectAll')}
           />
 
@@ -263,7 +282,7 @@ export const EmailList: React.FC<EmailListProps> = ({
             className="p-1.5 rounded-lg hover:bg-input text-text-muted hover:text-text active:scale-90 active:translate-y-0.5 active:bg-input/80 transition-all duration-150 cursor-pointer"
             title={t('list.refresh')}
           >
-            <ArrowPathIcon className={`w-4 h-4 ${manualRefresh ? 'animate-spin text-accent' : ''}`} />
+            <ArrowPathIcon className={`w-4 h-4 ${manualRefresh ? 'animate-spin text-info' : ''}`} />
           </button>
 
           {selectedIds.size > 0 ? (
@@ -315,7 +334,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                 }}
                 className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-colors ${
                   unreadOnly
-                    ? 'bg-accent/10 border-accent text-accent font-semibold'
+                    ? 'bg-info/15 border-info/40 text-info font-semibold'
                     : 'bg-input/40 border-border text-text-muted hover:text-text'
                 }`}
               >
@@ -380,6 +399,8 @@ export const EmailList: React.FC<EmailListProps> = ({
           ]).map(({ id, Icon }) => {
             const isActive = activeCategory === id
             const info = getCategoryInfo(id, locale)
+            const badge = CATEGORY_BADGE_STYLE[id]
+            const unread = categoryUnreadCounts[id]
             return (
               <button
                 key={id}
@@ -392,14 +413,19 @@ export const EmailList: React.FC<EmailListProps> = ({
                 title={info.description}
                 className={`flex-1 min-w-fit max-w-[240px] h-11 sm:h-12 flex items-center justify-center sm:justify-start gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 text-xs font-semibold cursor-pointer relative transition-colors whitespace-nowrap shrink-0 sm:shrink ${
                   isActive
-                    ? 'text-accent'
+                    ? 'text-info font-bold'
                     : 'text-text-muted hover:text-text hover:bg-input/20'
                 }`}
               >
-                <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-accent stroke-2' : 'text-text-muted'}`} />
+                <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-info stroke-2' : 'text-text-muted'}`} />
                 <span className="truncate">{info.label}</span>
+                {unread > 0 && id !== 'primary' && (
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${badge.badgeBg} ${badge.badgeText}`}>
+                    {unread} {unread === 1 ? (locale.startsWith('pt') ? 'novo' : 'new') : (locale.startsWith('pt') ? 'novos' : 'new')}
+                  </span>
+                )}
                 {isActive && (
-                  <span className="absolute bottom-0 left-0 right-0 h-[3px] bg-accent rounded-t-sm" />
+                  <span className="absolute bottom-0 left-0 right-0 h-[3px] bg-info rounded-t-sm" />
                 )}
               </button>
             )
@@ -411,7 +437,7 @@ export const EmailList: React.FC<EmailListProps> = ({
       {error && (
         <div className="p-3 bg-input/40 border-b border-border text-xs text-text flex items-center justify-between">
             <span>{error}</span>
-          <button type="button" onClick={onRefresh} className="text-accent underline font-medium">
+          <button type="button" onClick={onRefresh} className="text-error underline font-medium">
             {t('list.retry')}
           </button>
         </div>
@@ -421,12 +447,12 @@ export const EmailList: React.FC<EmailListProps> = ({
       <div ref={scrollRef} className="flex-1 overflow-y-auto divide-y divide-border/40">
         {loading && messages.length === 0 ? (
           <div className="p-8 flex flex-col items-center justify-center text-text-muted space-y-3">
-            <ArrowPathIcon className="w-6 h-6 animate-spin text-accent" />
+            <ArrowPathIcon className="w-6 h-6 animate-spin text-error" />
             <span className="text-xs">{t('list.loading')}</span>
           </div>
         ) : filteredMessages.length === 0 ? (
           <div className="p-12 flex flex-col items-center justify-center text-text-muted space-y-2">
-            <CheckCircleIcon className="w-10 h-10 opacity-30 text-accent" />
+            <CheckCircleIcon className="w-10 h-10 opacity-30 text-error" />
             <span className="text-sm font-medium text-text">
               {showingStarred ? t('list.emptyStarredTitle') : t('list.emptyTitle')}
             </span>
@@ -452,7 +478,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                 }}
                 className={`group flex items-start gap-2 sm:gap-3 px-3 sm:px-4 py-2 cursor-pointer text-xs transition-colors relative flex-nowrap min-w-0 overflow-hidden ${
                   isSelected
-                    ? 'bg-accent/10 border-l-2 border-l-accent'
+                    ? 'bg-info/10 border-l-2 border-l-info'
                     : isChecked
                       ? 'bg-input/60'
                       : msg.read
@@ -467,7 +493,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                     checked={isChecked}
                     onClick={(e) => toggleSelectOne(msg.id, e)}
                     onChange={() => {}}
-                    className="rounded border-border cursor-pointer accent-accent"
+                    className="rounded border-border cursor-pointer accent-info"
                   />
                   <button
                     type="button"
@@ -475,7 +501,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                       e.stopPropagation()
                       onToggleStarred(msg.id, msg.starred)
                     }}
-                    className="p-0.5 rounded hover:bg-input text-text-muted hover:text-accent transition-colors"
+                    className="p-0.5 rounded hover:bg-input text-text-muted hover:text-highlight transition-colors"
                   >
                     {msg.starred ? (
                       <StarSolid className={`w-4 h-4 ${starredToneClass(msg.starred)}`} />
@@ -574,7 +600,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                         e.stopPropagation()
                         onToggleStarred(msg.id, msg.starred)
                       }}
-                      className="p-1 rounded hover:bg-input text-text-muted hover:text-accent"
+                      className="p-1 rounded hover:bg-input text-text-muted hover:text-highlight"
                       title={msg.starred ? t('list.unfavorite') : t('list.favorite')}
                     >
                       {msg.starred ? (
@@ -603,7 +629,7 @@ export const EmailList: React.FC<EmailListProps> = ({
                           e.stopPropagation()
                           onNotSpam(msg.id)
                         }}
-                        className="p-1 rounded hover:bg-input text-text-muted hover:text-accent"
+                        className="p-1 rounded hover:bg-input text-text-muted hover:text-success"
                         title={t('list.notSpam')}
                       >
                         <CheckCircleIcon className="w-3.5 h-3.5" />

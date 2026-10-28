@@ -1540,7 +1540,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
   if (accountsLoading && accounts.length === 0 && !isAddingAccount) {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-bg text-text select-none">
-        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        <div className="w-6 h-6 border-2 border-error border-t-transparent rounded-full animate-spin" />
         <p className="mt-4 text-xs text-text-muted">{t('page.loadingAccounts')}</p>
       </div>
     )
@@ -1721,7 +1721,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
       {draftNotice && (
         <div className="fixed bottom-4 left-4 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-card border border-border shadow-glass-lg text-xs text-text animate-fade-in">
           {draftNotice === 'saving' && (
-            <div className="w-3.5 h-3.5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+            <div className="w-3.5 h-3.5 border-2 border-error border-t-transparent rounded-full animate-spin" />
           )}
           <span>
             {draftNotice === 'saving'
@@ -1737,7 +1737,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
       {sendNotice && (
         <div className="fixed bottom-16 left-4 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-card border border-border shadow-glass-lg text-xs text-text animate-fade-in">
           {sendNotice === 'sending' && (
-            <div className="w-3.5 h-3.5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+            <div className="w-3.5 h-3.5 border-2 border-info border-t-transparent rounded-full animate-spin" />
           )}
           <span>
             {sendNotice === 'sending'

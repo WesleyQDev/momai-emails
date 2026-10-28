@@ -68,14 +68,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <aside className="w-48 shrink-0 bg-sidebar/40 px-2.5 py-3 flex flex-col select-none">
       <div className="space-y-4">
-        {/* Compose Button */}
+        {/* Compose Button (Gmail Material 3 style) */}
         <button
           type="button"
           onClick={onOpenCompose}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl font-semibold text-xs bg-accent text-bg shadow-glass-sm hover:opacity-90 active:scale-95 transition-all"
+          style={{ backgroundColor: '#C2E7FF', color: '#001d35' }}
+          className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-2xl font-semibold text-xs hover:opacity-90 active:scale-95 transition-all shadow-xs"
         >
-          <PencilSquareIcon className="w-4 h-4 stroke-2" />
-          <span>{t('sidebar.compose')}</span>
+          <PencilSquareIcon className="w-4 h-4 stroke-2 shrink-0" style={{ color: '#001d35' }} />
+          <span style={{ color: '#001d35' }}>{t('sidebar.compose')}</span>
         </button>
 
         {/* Folders List */}
@@ -114,24 +115,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   key={f.path}
                   type="button"
                   onClick={() => onSelectFolder(f.path)}
-                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  style={isActive ? { backgroundColor: '#D3E3FD', color: '#001d35' } : undefined}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-full text-xs font-medium transition-colors ${
                     isActive
-                      ? 'bg-accent/10 text-accent font-semibold'
+                      ? 'font-bold'
                       : 'text-text-muted hover:text-text hover:bg-input/60'
                   }`}
                 >
-                  <div className="flex items-center gap-2 truncate">
-                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-accent' : 'text-text-muted'}`} />
-                    <span className="truncate">{displayName}</span>
+                  <div className="flex items-center gap-2.5 truncate">
+                    <Icon
+                      className={`w-4 h-4 shrink-0 ${isActive ? 'stroke-2' : 'text-text-muted'}`}
+                      style={isActive ? { color: '#0b57d0' } : undefined}
+                    />
+                    <span
+                      className={`truncate ${isActive ? 'font-bold' : ''}`}
+                      style={isActive ? { color: '#001d35' } : undefined}
+                    >
+                      {displayName}
+                    </span>
                   </div>
 
                   {displayUnread > 0 && (
                     <span
-                      className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0 ${
-                        isActive ? 'bg-accent text-bg' : 'bg-input text-text-muted'
+                      className={`text-xs font-bold shrink-0 ${
+                        isActive ? '' : 'text-text-muted'
                       }`}
+                      style={isActive ? { color: '#001d35' } : undefined}
                     >
-                      {displayUnread}
+                      {displayUnread.toLocaleString(locale)}
                     </span>
                   )}
                 </button>

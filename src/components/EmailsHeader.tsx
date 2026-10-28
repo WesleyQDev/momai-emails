@@ -217,7 +217,7 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
       {/* 2. Center: Search Bar (Gmail style) */}
       {onSearchChange && (
         <div className="flex-1 max-w-xl mx-2 sm:mx-4 flex items-center justify-center">
-          <div className="w-full flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-input/70 hover:bg-input border border-border/80 focus-within:border-accent focus-within:bg-input focus-within:shadow-xs transition-all">
+          <div className="w-full flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-input/70 hover:bg-input border border-border/80 focus-within:border-border focus-within:ring-1 focus-within:ring-border focus-within:bg-input focus-within:shadow-xs transition-all">
             <MagnifyingGlassIcon className="w-4 h-4 text-text-muted shrink-0 pointer-events-none" />
             <input
               type="text"
@@ -401,7 +401,7 @@ export const EmailsHeader: React.FC<EmailsHeaderProps> = ({
                 }}
                 className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-input/50 hover:bg-input border border-dashed border-border text-text font-medium transition-colors cursor-pointer"
               >
-                <PlusIcon className="w-4 h-4 text-accent" />
+                <PlusIcon className="w-4 h-4 text-error" />
                 <span>{t('header.accounts.add')}</span>
               </button>
 

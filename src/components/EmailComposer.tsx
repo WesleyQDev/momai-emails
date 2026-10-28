@@ -706,8 +706,8 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
         img.style.outline = 'none'
         img.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)'
       })
-      target.style.outline = '2px solid var(--accent, #6366f1)'
-      target.style.boxShadow = '0 0 0 4px rgba(99,102,241,0.3)'
+      target.style.outline = '2px solid rgb(var(--info, 59 130 246))'
+      target.style.boxShadow = '0 0 0 4px rgba(59, 130, 246, 0.3)'
       target.focus()
     } else {
       // Clear image selection
@@ -1007,8 +1007,8 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
 
       {/* Visual Drop Overlay (Drag to attach) */}
       {isDraggingOver && (
-        <div className="absolute inset-0 z-50 bg-bg/90 backdrop-blur-xs border-2 border-dashed border-accent flex flex-col items-center justify-center gap-3 p-6 text-center animate-fade-in pointer-events-none">
-          <div className="w-14 h-14 rounded-2xl bg-accent/15 border border-accent/30 flex items-center justify-center text-accent animate-pulse shadow-glass-sm">
+        <div className="absolute inset-0 z-50 bg-bg/90 backdrop-blur-xs border-2 border-dashed border-info flex flex-col items-center justify-center gap-3 p-6 text-center animate-fade-in pointer-events-none">
+          <div className="w-14 h-14 rounded-2xl bg-info/15 border border-info/30 flex items-center justify-center text-info animate-pulse shadow-glass-sm">
             <ArrowUpTrayIcon className="w-7 h-7" />
           </div>
           <div>
@@ -1019,8 +1019,11 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
       )}
 
       {/* Header Bar */}
-      <div className="flex items-center justify-between px-4 py-2.5 bg-sidebar/90 border-b border-border select-none">
-        <span className="text-xs font-semibold text-text truncate">
+      <div
+        style={{ backgroundColor: '#F2F6FC', color: '#041e49' }}
+        className="flex items-center justify-between px-4 py-2.5 border-b border-border select-none"
+      >
+        <span className="text-xs font-semibold truncate" style={{ color: '#041e49' }}>
           {subject.trim() ? subject : t('composer.newMessage')}
         </span>
 
@@ -1028,7 +1031,8 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
           <button
             type="button"
             onClick={() => setIsMinimized(!isMinimized)}
-            className="p-1 rounded hover:bg-input text-text-muted hover:text-text transition-colors"
+            className="p-1 rounded hover:bg-black/5 transition-colors"
+            style={{ color: '#041e49' }}
             title={isMinimized ? t('composer.restore') : t('composer.minimize')}
           >
             <MinusIcon className="w-3.5 h-3.5" />
@@ -1037,7 +1041,8 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
           <button
             type="button"
             onClick={handleCloseSaveDraft}
-            className="p-1 rounded hover:bg-input text-text-muted hover:text-text transition-colors"
+            className="p-1 rounded hover:bg-black/5 transition-colors"
+            style={{ color: '#041e49' }}
             title={t('composer.close')}
           >
             <XMarkIcon className="w-3.5 h-3.5" />
@@ -1145,7 +1150,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
                         setRecentRecipients(updated)
                       }}
                       title={t('composer.autofill.delete')}
-                      className="p-1 rounded text-text-muted hover:text-accent opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="p-1 rounded text-text-muted hover:text-error opacity-0 group-hover:opacity-100 transition-opacity"
                     >
                       <TrashIcon className="w-3.5 h-3.5" />
                     </button>
@@ -1230,6 +1235,19 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
               onMouseUp={saveSelection}
               onPaste={handlePaste}
               onContextMenu={(e) => {
+                const isDesktop =
+                  typeof window !== 'undefined' &&
+                  Boolean((window as any).momaiAPI && !(window as any).momaiAPI?.isWeb?.())
+                if (isDesktop) {
+                  saveSelection()
+                  return
+                }
+                const selection = window.getSelection()
+                const selectedText = selection?.toString() || ''
+                if (!selectedText.trim()) {
+                  saveSelection()
+                  return
+                }
                 e.preventDefault()
                 saveSelection()
                 setBodyContextMenu({ visible: true, x: e.clientX, y: e.clientY })
@@ -1277,7 +1295,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
                   return (
                     <div
                       key={att.id}
-                      className="group relative flex items-center gap-2.5 p-2 rounded-xl bg-card border border-border/80 shadow-xs hover:border-accent/50 transition-all overflow-hidden"
+                      className="group relative flex items-center gap-2.5 p-2 rounded-xl bg-card border border-border/80 shadow-xs hover:border-info/50 transition-all overflow-hidden"
                     >
                       {/* Image Thumbnail or File Icon */}
                       {isImage && att.previewUrl ? (
@@ -1318,7 +1336,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
                           e.stopPropagation()
                           removeAttachment(att.id)
                         }}
-                        className="absolute top-1 right-1 w-5 h-5 rounded-full bg-input/80 hover:bg-accent text-text-muted hover:text-bg flex items-center justify-center transition-all z-10 cursor-pointer shadow-xs border border-border/60 hover:border-transparent"
+                        className="absolute top-1 right-1 w-5 h-5 rounded-full bg-input/80 hover:bg-error text-text-muted hover:text-white flex items-center justify-center transition-all z-10 cursor-pointer shadow-xs border border-border/60 hover:border-transparent"
                         title={t('composer.preview.remove')}
                         aria-label={t('composer.preview.remove')}
                       >
@@ -1337,7 +1355,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
               <button
                 type="submit"
                 disabled={!to.trim()}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-semibold text-xs bg-accent text-bg shadow-glass-sm hover:opacity-90 active:scale-95 disabled:opacity-50 disabled:pointer-events-none transition-all"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-semibold text-xs bg-info text-white shadow-glass-sm hover:opacity-90 active:scale-95 disabled:opacity-50 disabled:pointer-events-none transition-all"
               >
                 <PaperAirplaneIcon className="w-3.5 h-3.5 stroke-2" />
                 <span>{t('composer.send')}</span>
@@ -1369,7 +1387,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
 
               {isProcessingAttachments && (
                 <div className="flex items-center gap-1 text-[11px] text-text-muted">
-                  <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                  <div className="w-3 h-3 border-2 border-info border-t-transparent rounded-full animate-spin" />
                 </div>
               )}
 
@@ -1380,7 +1398,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
                   type="checkbox"
                   checked={isHtml}
                   onChange={(e) => setIsHtml(e.target.checked)}
-                  className="rounded border-border accent-accent"
+                  className="rounded border-border accent-info"
                 />
                 <span>HTML</span>
               </label>

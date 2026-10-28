@@ -226,17 +226,17 @@ export const AttachmentBadge: React.FC<AttachmentBadgeProps> = ({
         onClick={handleClickOpen}
         disabled={opening}
         title={`${attachment.filename} ${attachment.size ? `(${formatFileSize(attachment.size)})` : ''} — ${t('attachment.openTitle')}`}
-        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-border/80 bg-input/50 hover:bg-input hover:border-accent/60 text-text transition-all shadow-xs group/att cursor-pointer max-w-[150px] shrink-0 select-none whitespace-nowrap overflow-hidden ${
+        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-border/80 bg-input/50 hover:bg-input hover:border-info/60 text-text transition-all shadow-xs group/att cursor-pointer max-w-[150px] shrink-0 select-none whitespace-nowrap overflow-hidden ${
           opening ? 'opacity-70 pointer-events-none' : ''
         } ${className}`}
       >
         {opening ? (
-          <ArrowPathIcon className="w-3.5 h-3.5 animate-spin text-accent shrink-0" />
+          <ArrowPathIcon className="w-3.5 h-3.5 animate-spin text-info shrink-0" />
         ) : (
           <OfficialFileIcon category={fileInfo.category} className="w-3.5 h-3.5 shrink-0 drop-shadow-xs" />
         )}
 
-        <span className="truncate text-[10px] font-medium text-text group-hover/att:text-accent transition-colors">
+        <span className="truncate text-[10px] font-medium text-text group-hover/att:text-info transition-colors">
           {attachment.filename || t('attachment.document')}
         </span>
 
@@ -254,7 +254,7 @@ export const AttachmentBadge: React.FC<AttachmentBadgeProps> = ({
       role="button"
       tabIndex={0}
       title={t('attachment.openCardTitle')}
-      className={`group/card w-52 sm:w-56 rounded-lg overflow-hidden border border-border/80 bg-card hover:border-accent/50 shadow-xs hover:shadow-md transition-all cursor-pointer select-none flex flex-col ${
+      className={`group/card w-52 sm:w-56 rounded-lg overflow-hidden border border-border/80 bg-card hover:border-info/50 shadow-xs hover:shadow-md transition-all cursor-pointer select-none flex flex-col ${
         opening ? 'opacity-70 pointer-events-none' : ''
       } ${className}`}
     >
@@ -287,7 +287,7 @@ export const AttachmentBadge: React.FC<AttachmentBadgeProps> = ({
           </div>
         ) : renderingThumb ? (
           <div className="flex flex-col items-center justify-center gap-1.5 text-slate-500">
-            <ArrowPathIcon className="w-5 h-5 animate-spin text-accent" />
+            <ArrowPathIcon className="w-5 h-5 animate-spin text-info" />
             <span className="text-[10px] font-medium">{t('attachment.loadingPreview')}</span>
           </div>
         ) : fileInfo.category === 'pdf' ? (
@@ -381,11 +381,11 @@ export const AttachmentBadge: React.FC<AttachmentBadgeProps> = ({
         <div className="absolute inset-0 bg-black/45 opacity-0 group-hover/card:opacity-100 transition-opacity flex items-center justify-center p-2 z-10">
           {opening ? (
             <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white text-slate-900 text-xs font-semibold shadow-lg">
-              <ArrowPathIcon className="w-4 h-4 animate-spin text-accent" />
+              <ArrowPathIcon className="w-4 h-4 animate-spin text-info" />
               <span>{t('attachment.openingComputer')}</span>
             </div>
           ) : savedSuccess ? (
-            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-accent text-bg text-xs font-semibold shadow-lg">
+            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-success text-white text-xs font-semibold shadow-lg">
               <CheckIcon className="w-4 h-4 stroke-2" />
               <span>{t('attachment.saved')}</span>
             </div>
@@ -425,7 +425,7 @@ export const AttachmentBadge: React.FC<AttachmentBadgeProps> = ({
           {/* Official brand icon */}
           <OfficialFileIcon category={fileInfo.category} className="w-4 h-4 shrink-0 drop-shadow-xs" />
           <span
-            className="text-xs font-medium text-text truncate block group-hover/card:text-accent transition-colors"
+            className="text-xs font-medium text-text truncate block group-hover/card:text-info transition-colors"
             title={attachment.filename}
           >
             {attachment.filename || t('attachment.document')}
@@ -446,10 +446,10 @@ export const AttachmentBadge: React.FC<AttachmentBadgeProps> = ({
               onClick={handleClickSave}
               disabled={saving}
               title={t('attachment.saveAs')}
-              className="p-1 rounded-md hover:bg-input text-text-muted hover:text-accent transition-colors cursor-pointer"
+              className="p-1 rounded-md hover:bg-input text-text-muted hover:text-info transition-colors cursor-pointer"
             >
               {savedSuccess ? (
-                <CheckIcon className="w-3.5 h-3.5 text-accent stroke-2" />
+                <CheckIcon className="w-3.5 h-3.5 text-success stroke-2" />
               ) : (
                 <ArrowDownTrayIcon className="w-3.5 h-3.5" />
               )}

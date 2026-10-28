@@ -88,7 +88,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           <button
             type="button"
             onClick={onConfirm}
-            className="px-3.5 py-2 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90 active:scale-[0.99] transition-all"
+            className="px-3.5 py-2 rounded-xl bg-error text-white text-xs font-semibold hover:opacity-90 active:scale-[0.99] transition-all"
           >
             {confirmLabel}
           </button>

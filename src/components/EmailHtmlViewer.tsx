@@ -597,7 +597,7 @@ export const EmailHtmlViewer: React.FC<EmailHtmlViewerProps> = ({ html, classNam
         className="bg-card text-text"
         style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden' }}
       >
-        <a data-canvas-link className="text-accent" />
+        <a data-canvas-link className="text-info" />
       </div>
       <iframe
         ref={iframeRef}

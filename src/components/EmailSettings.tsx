@@ -27,7 +27,7 @@ const Toggle: React.FC<{ on: boolean; onToggle: () => void; label: string }> = (
     aria-label={label}
     onClick={onToggle}
     className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border transition-colors duration-200 ease-in-out focus:outline-none ${
-      on ? 'bg-accent border-accent' : 'bg-input border-border/80'
+      on ? 'bg-error border-error' : 'bg-input border-border/80'
     }`}
   >
     <span
@@ -150,7 +150,7 @@ export const EmailSettings: React.FC<EmailSettingsProps> = ({
                     onClick={() => onChange({ unreadWindowHours: hours })}
                     aria-pressed={settings.unreadWindowHours === hours}
                     className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors cursor-pointer ${
-                      settings.unreadWindowHours === hours ? 'bg-accent text-bg' : 'text-text-muted hover:text-text'
+                      settings.unreadWindowHours === hours ? 'bg-error text-white' : 'text-text-muted hover:text-text'
                     }`}
                   >
                     {t('settings.unreadWindowHours', { hours })}
@@ -180,7 +180,7 @@ export const EmailSettings: React.FC<EmailSettingsProps> = ({
               disabled={syncing}
               className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-input/50 hover:bg-input border border-border text-text text-sm font-medium transition-colors cursor-pointer disabled:opacity-50"
             >
-              <ArrowPathIcon className={`w-4 h-4 text-accent ${syncing ? 'animate-spin' : ''}`} />
+              <ArrowPathIcon className={`w-4 h-4 text-error ${syncing ? 'animate-spin' : ''}`} />
               <span>{t('settings.syncNow')}</span>
             </button>
           </div>
