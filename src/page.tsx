@@ -45,6 +45,8 @@ import { EmailComposer } from './components/EmailComposer'
 import { EmailSettings } from './components/EmailSettings'
 import { PROVIDERS, detectProviderFromEmail } from './services/providers'
 import { shouldAcceptAccountsResponse } from './services/accounts-sync'
+import { evaluateFolderLoad } from './services/folder-load'
+import { nextAutoRetryDelay } from './services/auto-retry'
 
 export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsActive = true }) => {
   const isActive = useExtensionVisibility(propIsActive, 'momai-emails')
@@ -237,6 +239,67 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
   const activeFolderRef = useRef<string>(activeFolder)
   activeFolderRef.current = activeFolder
 
+  // Automatic recovery for a failed folder load: retried on its own with
+  // backoff, so a transient IMAP failure never waits for a manual click.
+  const [autoRetrying, setAutoRetrying] = useState(false)
+  const autoRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const autoRetryAttemptRef = useRef(0)
+  const isActiveRef = useRef(isActive)
+  isActiveRef.current = isActive
+  const loadEmailsRef = useRef<
+    | ((
+        folder?: string,
+        accId?: string | null,
+        silent?: boolean,
+        forceRefresh?: boolean,
+        category?: 'primary' | 'promotions' | 'social' | 'updates'
+      ) => Promise<void>)
+    | null
+  >(null)
+
+  const cancelAutoRetry = useCallback(() => {
+    if (autoRetryTimerRef.current) {
+      clearTimeout(autoRetryTimerRef.current)
+      autoRetryTimerRef.current = null
+    }
+    setAutoRetrying(false)
+  }, [])
+
+  const scheduleAutoRetry = useCallback(
+    (
+      folderPath: string,
+      accId: string,
+      category: 'primary' | 'promotions' | 'social' | 'updates',
+      retryable = true
+    ) => {
+      if (autoRetryTimerRef.current) {
+        clearTimeout(autoRetryTimerRef.current)
+        autoRetryTimerRef.current = null
+      }
+      if (!retryable) {
+        // Missing folder, bad credentials or server quota: retrying cannot
+        // change the answer, so the message stays without a retry loop.
+        setAutoRetrying(false)
+        return
+      }
+      const attempt = autoRetryAttemptRef.current
+      autoRetryAttemptRef.current = attempt + 1
+      setAutoRetrying(true)
+      autoRetryTimerRef.current = setTimeout(() => {
+        autoRetryTimerRef.current = null
+        if (activeAccountIdRef.current !== accId) return
+        if (activeFolderRef.current.toLowerCase() !== folderPath.toLowerCase()) return
+        if (!isActiveRef.current) {
+          // Hidden page: wait for the next visit instead of polling in the dark.
+          setAutoRetrying(false)
+          return
+        }
+        void loadEmailsRef.current?.(folderPath, accId, true, false, category)
+      }, nextAutoRetryDelay(attempt))
+    },
+    []
+  )
+
   // 2. Load folders when active account changes (immediate 0ms cached display + background sync)
   const loadFolders = useCallback(async (accId = activeAccountIdRef.current) => {
     if (!accId) return
@@ -350,6 +413,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
     return () => {
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
       if (burstReloadTimerRef.current) clearTimeout(burstReloadTimerRef.current)
+      if (autoRetryTimerRef.current) clearTimeout(autoRetryTimerRef.current)
     }
   }, [])
 
@@ -468,6 +532,8 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
         setMessagesError(null)
         setIsSearchMode(false)
         setLoadingMessages(false)
+        autoRetryAttemptRef.current = 0
+        cancelAutoRetry()
         return
       }
 
@@ -511,51 +577,79 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
         // Discard if user already switched to another folder or account
         if (reqSeq !== currentReqSeqRef.current || accId !== activeAccountIdRef.current) return
 
-        if (res && res.ok && Array.isArray(res.messages)) {
-          const stampedMessages = res.messages.map((m: EmailMessage) => ({ ...m, accountId: m.accountId || accId }))
-          const prevList = cached ?? []
-          const mergedMessages =
-            stampedMessages.length > 0
-              ? sortMessagesNewestFirst(mergeFolderMessages(prevList, stampedMessages, 500))
-              : []
-          folderCacheRef.current.set(cacheKey, mergedMessages)
-          emailStorageCache.setFolderEmails(accId, folder, mergedMessages, catKey)
-          setMessages(mergedMessages)
-
-          const runKey = cacheKey
-          const prevRun = serverRunRef.current && serverRunRef.current.key === runKey ? serverRunRef.current : null
-          const newTotal = typeof res.total === 'number' ? res.total : prevRun?.total ?? stampedMessages.length
-          serverRunRef.current = {
-            key: runKey,
-            length: nextFreshRunLength(prevRun?.length ?? null, prevRun?.total ?? null, stampedMessages.length, newTotal),
-            total: newTotal
+        const verdict = evaluateFolderLoad(res)
+        if (verdict.status === 'error') {
+          // A failed refresh must stay visible even when an empty list was
+          // cached earlier: silence here is what made folders look "clean"
+          // while the server still had messages in them.
+          const failed = res as { error?: string; retryable?: boolean } | null
+          if (failed?.error) {
+            console.warn('[momai-emails] Folder load failed:', folder, failed.error)
           }
-          setHasMoreMessages(Boolean(res.hasMore))
-
-          if (isInboxFolder(folder)) {
-            setFolders((prevFolders) => {
-              const updated = syncInboxPrimaryUnread(prevFolders, mergedMessages, settings.showCategoryTabs, unreadWindowMs(settings.unreadWindowHours))
-              if (accId) emailStorageCache.setFolders(accId, updated)
-              return updated
-            })
+          setMessagesError(
+            verdict.reason === 'folder_missing'
+              ? t('page.errors.folderMissing')
+              : t('page.errors.loadMessages')
+          )
+          if (verdict.reason === 'folder_missing') {
+            // The folder may have been renamed or removed on the server:
+            // refreshing the list moves the user to the inbox when it is gone.
+            void loadFolders(accId)
           }
-
-          // Warm the first visible bodies in the background so any open is instant
-          bodyPrefetcherRef.current.enqueue(accId, mergedMessages.slice(0, BODY_PREFETCH_PER_FOLDER), 'urgent')
-        } else if (!cached) {
-          setMessagesError(t('page.errors.loadMessages'))
+          // Permanent failures (auth, quota, missing folder) are not retried.
+          scheduleAutoRetry(folder, accId, category, failed?.retryable !== false && verdict.reason !== 'folder_missing')
+          return
         }
+
+        const stampedMessages = (res!.messages as EmailMessage[]).map((m) => ({
+          ...m,
+          accountId: m.accountId || accId
+        }))
+        const prevList = cached ?? []
+        const mergedMessages =
+          stampedMessages.length > 0
+            ? sortMessagesNewestFirst(mergeFolderMessages(prevList, stampedMessages, 500))
+            : []
+        folderCacheRef.current.set(cacheKey, mergedMessages)
+        emailStorageCache.setFolderEmails(accId, folder, mergedMessages, catKey)
+        setMessages(mergedMessages)
+
+        const runKey = cacheKey
+        const prevRun = serverRunRef.current && serverRunRef.current.key === runKey ? serverRunRef.current : null
+        const newTotal = typeof res.total === 'number' ? res.total : prevRun?.total ?? stampedMessages.length
+        serverRunRef.current = {
+          key: runKey,
+          length: nextFreshRunLength(prevRun?.length ?? null, prevRun?.total ?? null, stampedMessages.length, newTotal),
+          total: newTotal
+        }
+        setHasMoreMessages(Boolean(res.hasMore))
+
+        if (isInboxFolder(folder)) {
+          setFolders((prevFolders) => {
+            const updated = syncInboxPrimaryUnread(prevFolders, mergedMessages, settings.showCategoryTabs, unreadWindowMs(settings.unreadWindowHours))
+            if (accId) emailStorageCache.setFolders(accId, updated)
+            return updated
+          })
+        }
+
+        // Warm the first visible bodies in the background so any open is instant
+        bodyPrefetcherRef.current.enqueue(accId, mergedMessages.slice(0, BODY_PREFETCH_PER_FOLDER), 'urgent')
+
+        // The folder is healthy again: reset the automatic retry budget.
+        autoRetryAttemptRef.current = 0
+        cancelAutoRetry()
       } catch (err: any) {
         if (reqSeq !== currentReqSeqRef.current || accId !== activeAccountIdRef.current) return
-        if (!cached) {
-          setMessagesError(err?.message || t('page.errors.connection'))
-        }
+        console.error('[momai-emails] Error loading folder messages:', folder, err)
+        setMessagesError(t('page.errors.connection'))
+        scheduleAutoRetry(folder, accId, category)
       } finally {
         setLoadingMessages(false)
       }
     },
-    [readCachedStarred, settings.showCategoryTabs, settings.unreadWindowHours, t]
+    [cancelAutoRetry, loadFolders, readCachedStarred, scheduleAutoRetry, settings.showCategoryTabs, settings.unreadWindowHours, t]
   )
+  loadEmailsRef.current = loadEmails
 
   // Load more messages (next page) — appends to current list.
   const loadMoreEmails = useCallback(async () => {
@@ -692,12 +786,18 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
       setActiveCategory(cat)
       activeCategoryRef.current = cat
       setPage(0)
+      autoRetryAttemptRef.current = 0
+      cancelAutoRetry()
       loadEmails(activeFolderRef.current, activeAccountIdRef.current || undefined, false, false, cat)
     },
-    [loadEmails]
+    [cancelAutoRetry, loadEmails]
   )
 
   useEffect(() => {
+    // A different folder or account is a new intent: drop any pending retry
+    // and give the new target a fresh automatic-retry budget.
+    autoRetryAttemptRef.current = 0
+    cancelAutoRetry()
     if (activeAccountId) {
       setSearchQuery('')
       setIsSearchMode(false)
@@ -709,7 +809,17 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
       setMessages([])
       setSelectedEmail(null)
     }
-  }, [activeAccountId, activeFolder, loadFolders, loadEmails, settings.showCategoryTabs])
+  }, [activeAccountId, activeFolder, cancelAutoRetry, loadFolders, loadEmails, settings.showCategoryTabs])
+
+  // Returning to the extension restarts the automatic recovery for a folder
+  // that is still showing an error (the timer stops while the page is hidden).
+  useEffect(() => {
+    if (!isActive || !messagesError || autoRetryTimerRef.current) return
+    const accId = activeAccountIdRef.current
+    if (!accId) return
+    autoRetryAttemptRef.current = 0
+    scheduleAutoRetry(activeFolderRef.current, accId, activeCategoryRef.current)
+  }, [isActive, messagesError, scheduleAutoRetry])
 
   // 3b. Background warmup: pre-fetch secondary Gmail category tabs using the official MomAI SDK hook
   useWarmup(async () => {
@@ -1658,6 +1768,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
             messages={messages}
             loading={loadingMessages}
             error={messagesError}
+            retrying={autoRetrying}
             activeFolder={activeFolder}
             activeCategory={activeCategory}
             onCategoryChange={handleCategoryChange}
@@ -1666,6 +1777,8 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
             onSearchChange={handleSearchChange}
             onRefresh={() => {
               setPage(0)
+              autoRetryAttemptRef.current = 0
+              cancelAutoRetry()
               loadEmails(activeFolder, activeAccountId || undefined, false, true, activeCategory)
               loadFolders(activeAccountId || undefined)
             }}

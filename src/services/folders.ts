@@ -175,21 +175,19 @@ export function dedupeFoldersByRole(folders: EmailFolder[]): EmailFolder[] {
   return deduped.sort((a, b) => folders.indexOf(a) - folders.indexOf(b))
 }
 
+/**
+ * Merges the folders reported by the server with the virtual favorites entry.
+ *
+ * Folders the server does not have are deliberately NOT invented here. A
+ * placeholder such as "Archive" on Gmail has no mailbox behind it: opening it
+ * shows an empty folder and, worse, used to create that mailbox on the server
+ * as a side effect of simply reading it. `DEFAULT_STATIC_FOLDERS` still serves
+ * the initial/offline view through `getDefaultFolders`.
+ */
 export function mergeWithDefaultFolders(serverFolders: EmailFolder[]): EmailFolder[] {
   if (!serverFolders || serverFolders.length === 0) {
     return getDefaultFolders()
   }
-  const deduped = dedupeFoldersByRole(serverFolders)
-  const existingRoles = new Set(deduped.map((f) => f.role).filter(Boolean))
-  const hasRealArchive = deduped.some((f) => isArchiveFolder(f.path, f.role))
-  const merged = [...deduped]
-  for (const def of DEFAULT_STATIC_FOLDERS) {
-    if (def.role === 'archive' && hasRealArchive) continue
-    if (def.role && !existingRoles.has(def.role)) {
-      merged.push({ ...def })
-      existingRoles.add(def.role)
-    }
-  }
-  return sortFoldersByStandardOrder(ensureStarredFolder(merged))
+  return sortFoldersByStandardOrder(ensureStarredFolder(dedupeFoldersByRole(serverFolders)))
 }
 

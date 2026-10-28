@@ -265,5 +265,8 @@
   "connect.emailPlaceholder.yahoo": "tucorreo@yahoo.com",
   "connect.emailPlaceholder.custom": "tu@tudominio.com",
   "settings.notificationsEnabled": "Notificaciones del sistema",
-  "settings.notificationsEnabledHint": "Avisos del sistema al llegar correo nuevo"
+  "settings.notificationsEnabledHint": "Avisos del sistema al llegar correo nuevo",
+  "list.emptySubtitleFolder": "Los mensajes de esta carpeta aparecerán aquí.",
+  "page.errors.folderMissing": "Esta carpeta ya no existe en el servidor. Actualiza la lista de carpetas.",
+  "list.retrying": "Reintentando automáticamente…"
 }

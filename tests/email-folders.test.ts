@@ -184,14 +184,28 @@ describe('email folders (spam / inbox / move)', () => {
     const merged = mergeWithDefaultFolders(serverFolders)
     expect(merged.map((f) => f.role)).toEqual([
       'inbox',
-      'archive',
-      'junk',
-      'drafts',
       'sent',
-      'trash',
       'starred',
       'custom'
     ])
+  })
+
+  it('never invents folders the server does not expose', () => {
+    // Gmail has no \Archive mailbox: a placeholder entry would open an empty
+    // folder and create a real label on the account when read.
+    const gmailFolders = [
+      makeFolder('INBOX', 'inbox'),
+      makeFolder('[Gmail]/Spam', 'junk'),
+      makeFolder('[Gmail]/Drafts', 'drafts'),
+      makeFolder('[Gmail]/Sent Mail', 'sent'),
+      makeFolder('[Gmail]/Trash', 'trash'),
+      makeFolder('[Gmail]/Starred', 'starred'),
+      makeFolder('[Gmail]/Important', 'important')
+    ]
+    const merged = mergeWithDefaultFolders(gmailFolders)
+    expect(merged.map((f) => f.path)).not.toContain('Archive')
+    expect(merged.map((f) => f.role)).not.toContain('archive')
+    expect(merged).toHaveLength(gmailFolders.length)
   })
 
   it('detects the archive folder by path and role only', () => {

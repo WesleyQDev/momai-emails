@@ -265,5 +265,8 @@
   "connect.emailPlaceholder.yahoo": "youremail@yahoo.com",
   "connect.emailPlaceholder.custom": "you@yourdomain.com",
   "settings.notificationsEnabled": "System notifications",
-  "settings.notificationsEnabledHint": "Desktop alerts when new email arrives"
+  "settings.notificationsEnabledHint": "Desktop alerts when new email arrives",
+  "list.emptySubtitleFolder": "Messages in this folder will show up here.",
+  "page.errors.folderMissing": "This folder no longer exists on the server. Refresh the folder list.",
+  "list.retrying": "Retrying automatically…"
 }

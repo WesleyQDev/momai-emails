@@ -34,7 +34,8 @@ export const emailApi = {
     executeCommand<{ ok: boolean }>('forget_remembered_password', { email: emailOrId }),
 
   // Folders & Messages
-  listFolders: (accountId?: string) => executeCommand<{ ok: boolean; folders: any[] }>('list_folders', { accountId }),
+  listFolders: (accountId?: string) =>
+    executeCommand<{ ok: boolean; folders: any[] }>('list_folders', { accountId }, 45000),
   listEmails: (
     folder = 'INBOX',
     accountId?: string,
@@ -44,15 +45,19 @@ export const emailApi = {
     includeCategories = true,
     category?: string
   ) =>
-    executeCommand<{ ok: boolean; messages: any[]; folder: string; hasMore?: boolean; total?: number }>('list_emails', {
-      folder,
-      accountId,
-      limit,
-      unreadOnly,
-      offset,
-      includeCategories,
-      category
-    }),
+    executeCommand<{ ok: boolean; messages: any[]; folder: string; hasMore?: boolean; total?: number; error?: string; errorCode?: string; retryable?: boolean }>(
+      'list_emails',
+      {
+        folder,
+        accountId,
+        limit,
+        unreadOnly,
+        offset,
+        includeCategories,
+        category
+      },
+      45000
+    ),
   readEmail: (messageId: string, folder = 'INBOX', accountId?: string, markRead = true) =>
     executeCommand<{ ok: boolean; email: any }>('read_email', { messageId, folder, accountId, markRead }, 20000),
   openAttachment: (data: { messageId: string | number; filename?: string; part?: string; folder?: string; accountId?: string }) =>
@@ -62,7 +67,7 @@ export const emailApi = {
   getAttachmentPreview: (data: { messageId: string | number; filename?: string; folder?: string; accountId?: string }) =>
     executeCommand<{ ok: boolean; previewDataUrl?: string; filePath?: string; error?: string }>('get_attachment_preview', data, 30000),
   searchEmails: (query: string, folder = 'INBOX', accountId?: string, limit = 200) =>
-    executeCommand<{ ok: boolean; messages: any[]; query: string; total?: number }>('search_emails', { query, folder, accountId, limit }, 30000),
+    executeCommand<{ ok: boolean; messages: any[]; query: string; total?: number; error?: string; errorCode?: string }>('search_emails', { query, folder, accountId, limit }, 45000),
 
   // Actions
   sendEmail: (payload: any) => executeCommand<{ ok: boolean; messageId?: string; error?: string }>('send_email', payload, 30000),

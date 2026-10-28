@@ -55,7 +55,7 @@ describe('AccountManager quota backoff and log throttle', () => {
     const origFetch = emailClient.fetchMessages
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
 
-    emailClient.getMailboxStatus = vi.fn(async () => ({ ok: true, messages: 1, unseen: 1, uidNext: 101 }))
+    emailClient.getMailboxStatus = vi.fn(async () => ({ ok: true, messages: 1, unseen: 1, uidNext: 102 }))
     emailClient.fetchMessages = vi.fn(async () => {
       throw new Error('Too many simultaneous connections. (Failure)')
     })
@@ -85,7 +85,7 @@ describe('AccountManager quota backoff and log throttle', () => {
     const origFetch = emailClient.fetchMessages
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
 
-    emailClient.getMailboxStatus = vi.fn(async () => ({ ok: true, messages: 1, unseen: 0, uidNext: 51 }))
+    emailClient.getMailboxStatus = vi.fn(async () => ({ ok: true, messages: 1, unseen: 0, uidNext: 52 }))
     emailClient.fetchMessages = vi.fn(async () => {
       throw Object.assign(new Error('getaddrinfo EAI_AGAIN imap.gmail.com'), { code: 'EAI_AGAIN' })
     })
@@ -98,6 +98,30 @@ describe('AccountManager quota backoff and log throttle', () => {
       emailClient.getMailboxStatus = origStatus
       emailClient.fetchMessages = origFetch
       logSpy.mockRestore()
+    }
+  })
+
+  it('does not open the inbox when STATUS reports no new message', async () => {
+    const manager = new AccountManager(tmpDir)
+    const account = { id: 'acc_idle', email: 'idle@gmail.com' }
+    ;(manager as any).accounts.set(account.id, account)
+    ;(manager as any).lastSeenUids.set(account.id, 100)
+
+    const origStatus = emailClient.getMailboxStatus
+    const origFetch = emailClient.fetchMessages
+
+    // UIDNEXT - 1 === last seen UID: nothing arrived since the previous poll.
+    emailClient.getMailboxStatus = vi.fn(async () => ({ ok: true, messages: 5, unseen: 2, uidNext: 101 }))
+    emailClient.fetchMessages = vi.fn(async () => ({ messages: [], hasMore: false, total: 5 }))
+
+    try {
+      await manager.checkAllAccountsForNewEmails()
+      // An idle poll must not fetch the inbox: Gmail counts every download
+      // against its 2500 MB/day IMAP quota.
+      expect(emailClient.fetchMessages).not.toHaveBeenCalled()
+    } finally {
+      emailClient.getMailboxStatus = origStatus
+      emailClient.fetchMessages = origFetch
     }
   })
 })

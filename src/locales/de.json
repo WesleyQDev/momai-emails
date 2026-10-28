@@ -265,5 +265,8 @@
   "connect.emailPlaceholder.yahoo": "deinemail@yahoo.com",
   "connect.emailPlaceholder.custom": "du@deinedomain.com",
   "settings.notificationsEnabled": "Systembenachrichtigungen",
-  "settings.notificationsEnabledHint": "Systemhinweise bei neuen E-Mails"
+  "settings.notificationsEnabledHint": "Systemhinweise bei neuen E-Mails",
+  "list.emptySubtitleFolder": "Nachrichten in diesem Ordner erscheinen hier.",
+  "page.errors.folderMissing": "Dieser Ordner existiert auf dem Server nicht mehr. Aktualisiere die Ordnerliste.",
+  "list.retrying": "Erneuter Versuch läuft automatisch…"
 }

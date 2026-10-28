@@ -62,6 +62,7 @@ interface EmailListProps {
   messages: EmailMessage[]
   loading: boolean
   error?: string | null
+  retrying?: boolean
   activeFolder: string
   selectedEmailId: string | null
   searchQuery: string
@@ -104,6 +105,7 @@ export const EmailList: React.FC<EmailListProps> = ({
   messages,
   loading,
   error,
+  retrying = false,
   activeFolder,
   selectedEmailId,
   searchQuery,
@@ -433,13 +435,17 @@ export const EmailList: React.FC<EmailListProps> = ({
         </div>
       )}
 
-      {/* Error banner */}
+      {/* Error banner: the reload is automatic, so there is no manual retry
+          button — the toolbar refresh remains for an explicit reload. */}
       {error && (
-        <div className="p-3 bg-input/40 border-b border-border text-xs text-text flex items-center justify-between">
-            <span>{error}</span>
-          <button type="button" onClick={onRefresh} className="text-error underline font-medium">
-            {t('list.retry')}
-          </button>
+        <div className="p-3 bg-input/40 border-b border-border text-xs text-text flex items-center justify-between gap-3">
+          <span>{error}</span>
+          {retrying && (
+            <span className="flex items-center gap-1.5 text-text-muted shrink-0">
+              <ArrowPathIcon className="w-3.5 h-3.5 animate-spin" />
+              {t('list.retrying')}
+            </span>
+          )}
         </div>
       )}
 
@@ -451,15 +457,23 @@ export const EmailList: React.FC<EmailListProps> = ({
             <span className="text-xs">{t('list.loading')}</span>
           </div>
         ) : filteredMessages.length === 0 ? (
-          <div className="p-12 flex flex-col items-center justify-center text-text-muted space-y-2">
-            <CheckCircleIcon className="w-10 h-10 opacity-30 text-error" />
-            <span className="text-sm font-medium text-text">
-              {showingStarred ? t('list.emptyStarredTitle') : t('list.emptyTitle')}
-            </span>
-            <span className="text-xs text-text-muted">
-              {showingStarred ? t('list.emptyStarredSubtitle') : t('list.emptySubtitle')}
-            </span>
-          </div>
+          // When the load failed, the error banner above already explains it:
+          // claiming the folder is empty would contradict the server.
+          error ? null : (
+            <div className="p-12 flex flex-col items-center justify-center text-text-muted space-y-2">
+              <CheckCircleIcon className="w-10 h-10 opacity-30 text-error" />
+              <span className="text-sm font-medium text-text">
+                {showingStarred ? t('list.emptyStarredTitle') : t('list.emptyTitle')}
+              </span>
+              <span className="text-xs text-text-muted">
+                {showingStarred
+                  ? t('list.emptyStarredSubtitle')
+                  : isInbox
+                    ? t('list.emptySubtitle')
+                    : t('list.emptySubtitleFolder')}
+              </span>
+            </div>
+          )
         ) : (
           pageMessages.map((msg) => {
             const isSelected = selectedEmailId === msg.id

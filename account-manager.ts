@@ -929,6 +929,16 @@ class AccountManager {
 
           const prevSeen = this.lastSeenUids.get(accId)!
 
+          // Nothing new since the last poll: skip the mailbox read entirely.
+          // Gmail caps IMAP downloads at 2500 MB/day and warns that clients
+          // which keep repeating actions can reach it, so an idle poll must not
+          // open and fetch the inbox again. STATUS already refreshed the badge.
+          const uidNext = status.ok ? Number(status.uidNext || 0) : 0
+          if (uidNext > 1 && uidNext - 1 <= prevSeen) {
+            this.noteQuotaSuccess(accId)
+            continue
+          }
+
           // Fetch recent messages (fetchMessages forces client.noop() internally).
           const res = await emailClient.fetchMessages(acc, 'INBOX', 10, false)
           const messages = Array.isArray(res) ? res : (res?.messages || [])

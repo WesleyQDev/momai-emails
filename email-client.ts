@@ -12,6 +12,7 @@ const { execFile } = require('node:child_process')
 const { ImapFlow } = require('imapflow')
 const nodemailer = require('nodemailer')
 const { simpleParser } = require('mailparser')
+const { classifyImapError } = require('./imap-connection-policy.ts')
 const { classifyEmailCategory } = require('./email-categories.ts')
 
 // Base folder for parsed-message and attachment disk cache. Prefers the
@@ -59,6 +60,30 @@ function getMessageCacheDir(account: any, folder: string, uid: string | number):
   const folderKey = sanitizeCacheSegment(folder || 'inbox') || 'inbox'
   const uidKey = sanitizeCacheSegment(uid) || 'unknown'
   return path.join(getAttachmentsBaseDir(), accountKey, folderKey, uidKey)
+}
+
+/**
+ * Diagnostics go through an injected sink so the worker can route them to the
+ * host's `log` channel (written at info level). Writing them to stderr would
+ * make the host label every extension warning as `[ERROR]`, which is
+ * misleading: a slow read or an automatic retry is not a failure.
+ */
+let diagnosticSink: ((message: string) => void) | null = null
+
+/** Sets where diagnostics go; `null` falls back to stdout. */
+function setDiagnosticSink(sink: ((message: string) => void) | null): void {
+  diagnosticSink = sink
+}
+
+function logInfo(message: string): void {
+  try {
+    if (diagnosticSink) {
+      diagnosticSink(message)
+      return
+    }
+  } catch {}
+  // Standalone runs (tests, CLI) keep the message on stdout.
+  console.log(`[momai-emails] ${message}`)
 }
 
 /** How long parsed-message and attachment caches are kept on disk. */
@@ -160,6 +185,31 @@ const IMAP_LOCK_TIMEOUT_MS = 15000
 const IMAP_OPERATION_TIMEOUT_MS = 35000
 
 /**
+ * Upper bound for reading one folder page (lock + search + fetch). Kept below
+ * the renderer's command timeout so a slow server always produces a real error
+ * with a cause, instead of an opaque client-side timeout.
+ */
+const IMAP_LIST_TIMEOUT_MS = 25000
+
+/**
+ * A transient failure gets one more attempt on a fresh socket, inside the same
+ * budget. Unbounded/recursive retries are deliberately avoided: they multiply
+ * load on the single IMAP socket (which is what made every folder wait behind
+ * one stuck read), and permanent failures (missing folder, bad credentials,
+ * server quota) never fix themselves by retrying.
+ */
+const FOLDER_READ_MAX_ATTEMPTS = 2
+
+/** Pause before the retry so a momentary network blip has time to clear. */
+const FOLDER_READ_RETRY_BACKOFF_MS = 400
+
+/** A retry is only started when this much of the budget is still available. */
+const FOLDER_READ_MIN_RETRY_BUDGET_MS = 4000
+
+/** Folder reads slower than this are reported as info so slow servers show up. */
+const SLOW_FOLDER_READ_WARN_MS = 8000
+
+/**
  * Wraps a promise with a timeout. Rejects with an error if the timeout expires.
  */
 function withTimeout<T>(promise: Promise<T>, ms: number, errorMsg: string): Promise<T> {
@@ -172,6 +222,22 @@ function withTimeout<T>(promise: Promise<T>, ms: number, errorMsg: string): Prom
   return Promise.race([promise, timeoutPromise]).finally(() => {
     if (timer) clearTimeout(timer)
   })
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Whether a failed folder read is worth one more attempt on a fresh socket.
+ * Missing mailboxes, bad credentials and server quota are permanent from the
+ * caller's point of view: retrying them only burns the budget and makes the
+ * connection limit worse.
+ */
+function isRetryableFolderReadError(err: any): boolean {
+  if (!err || isMissingMailboxError(err)) return false
+  const kind = classifyImapError(err)
+  return kind === 'network' || kind === 'other'
 }
 
 /**
@@ -187,6 +253,13 @@ function buildImapClientOptions(account: any) {
     auth: {
       user: account.imap?.user || account.email,
       pass: account.password || ''
+    },
+    // Gmail's IMAP documentation recommends clients identify themselves with
+    // the IMAP ID command (RFC 2971) so the server can reach the vendor if an
+    // extension changes.
+    clientInfo: {
+      name: 'MomAI Emails',
+      vendor: 'MomAI'
     },
     logger: false,
     emitLogs: false,
@@ -331,35 +404,79 @@ if (typeof process !== 'undefined' && typeof process.on === 'function') {
 }
 
 /**
+ * Whether an IMAP error means the mailbox itself is absent (as opposed to a
+ * broken connection). Missing mailboxes must never trigger a reconnect loop:
+ * the answer will not change, and the caller has to report the real cause.
+ */
+function isMissingMailboxError(err: any): boolean {
+  if (!err) return false
+  if (err.mailboxMissing === true) return true
+  const text = `${err.responseText || ''} ${err.message || ''}`.toLowerCase()
+  return (
+    text.includes('does not exist') ||
+    text.includes('no such mailbox') ||
+    text.includes('unknown mailbox') ||
+    text.includes('nonexistent') ||
+    text.includes('non-existent')
+  )
+}
+
+/**
+ * Tags an error with the mailbox it refers to so the UI can explain it. The
+ * original error is kept as `cause` for diagnostics.
+ */
+function markFolderError(err: any, folder: string, message?: string): Error {
+  const base = new Error(message || (err instanceof Error ? err.message : String(err)))
+  const tagged = base as Error & { folder?: string; mailboxMissing?: boolean; cause?: unknown }
+  tagged.folder = folder
+  tagged.cause = err
+  if (isMissingMailboxError(err)) tagged.mailboxMissing = true
+  return tagged
+}
+
+/** Requests a mailbox lock, omitting the options argument when there is none. */
+function requestMailboxLock(client: any, folder: string, lockOptions?: { readOnly?: boolean }) {
+  return lockOptions ? client.getMailboxLock(folder, lockOptions) : client.getMailboxLock(folder)
+}
+
+/**
  * Safely acquires a mailbox lock with a timeout. If the lock times out on a
  * pooled connection (e.g. after OS sleep or a stale half-open socket), the
- * stale client is released and a fresh connection is attempted once.
+ * stale client is released and a fresh connection is attempted once. A
+ * missing mailbox fails immediately: reconnecting cannot create it, and the
+ * caller must not report an absent folder as an empty one.
  */
 async function acquireMailboxLock(
   account: any,
   client: any,
   folder: string,
   timeoutMs = IMAP_LOCK_TIMEOUT_MS,
-  getConnectedClientFn?: (acc: any) => Promise<any>
+  getConnectedClientFn?: (acc: any) => Promise<any>,
+  lockOptions?: { readOnly?: boolean }
 ): Promise<{ client: any; lock: any }> {
   try {
     const lock = await withTimeout(
-      client.getMailboxLock(folder),
+      requestMailboxLock(client, folder, lockOptions),
       timeoutMs,
       `Timeout (${timeoutMs}ms) aguardando liberação da pasta "${folder}" no IMAP`
     )
     return { client, lock }
   } catch (err: any) {
+    if (isMissingMailboxError(err)) throw markFolderError(err, folder)
     const key = account.id || account.email
     releaseImapClient(key)
     const connectFn = getConnectedClientFn || getConnectedImapClient
     const freshClient = await connectFn(account)
-    const freshLock = await withTimeout(
-      freshClient.getMailboxLock(folder),
-      timeoutMs,
-      `Timeout (${timeoutMs}ms) ao obter pasta "${folder}" após reconexão`
-    )
-    return { client: freshClient, lock: freshLock }
+    try {
+      const freshLock = await withTimeout(
+        requestMailboxLock(freshClient, folder, lockOptions),
+        timeoutMs,
+        `Timeout (${timeoutMs}ms) ao obter pasta "${folder}" após reconexão`
+      )
+      return { client: freshClient, lock: freshLock }
+    } catch (retryErr: any) {
+      throw markFolderError(retryErr, folder)
+    }
   }
 }
 
@@ -416,15 +533,41 @@ function getStartOfToday(): Date {
 }
 
 /**
+ * Attaches a cleanup to a lock request that was abandoned after a timeout: if
+ * the lock is granted later, it is released immediately so the client's lock
+ * queue is never permanently blocked by a caller that already gave up.
+ */
+function releaseLockWhenSettled(lockPromise: any): void {
+  if (!lockPromise || typeof lockPromise.then !== 'function') return
+  lockPromise
+    .then((lock: any) => {
+      try {
+        lock?.release?.()
+      } catch {}
+    })
+    .catch(() => {})
+}
+
+/**
  * Count unread messages received inside the badge window in a single folder.
- * Returns null when the search fails so callers can fall back to STATUS.
+ * Returns null when the search fails or times out so callers can fall back to
+ * STATUS; the badge recount must never wedge the shared IMAP client.
  */
 async function countUnreadInWindowInFolder(client: any, folderPath: string, windowHours?: number): Promise<number | null> {
   let lock: any = null
+  const lockRequest = client.getMailboxLock(folderPath, { readOnly: true })
   try {
-    lock = await client.getMailboxLock(folderPath)
+    lock = await withTimeout(
+      lockRequest,
+      IMAP_LOCK_TIMEOUT_MS,
+      `Timeout (${IMAP_LOCK_TIMEOUT_MS}ms) aguardando liberação da pasta "${folderPath}" no IMAP`
+    )
     try {
-      const uids = await client.search({ seen: false, since: getUnreadWindowStart(windowHours) }, { uid: true })
+      const uids = await withTimeout(
+        client.search({ seen: false, since: getUnreadWindowStart(windowHours) }, { uid: true }),
+        IMAP_OPERATION_TIMEOUT_MS,
+        `Timeout (${IMAP_OPERATION_TIMEOUT_MS}ms) ao contar não lidos em "${folderPath}"`
+      )
       return Array.isArray(uids) ? uids.length : 0
     } finally {
       if (lock && typeof lock.release === 'function') {
@@ -432,6 +575,7 @@ async function countUnreadInWindowInFolder(client: any, folderPath: string, wind
       }
     }
   } catch {
+    releaseLockWhenSettled(lockRequest)
     return null
   }
 }
@@ -468,10 +612,22 @@ async function listMailboxes(account: any, windowHours?: number) {
       const validItems = list.filter((item: any) => !(item.flags && item.flags.has('\\Noselect')))
 
       const folders: any[] = []
+      // Gmail's "[Gmail]/All Mail" carries the \All special-use flag. It holds
+      // every message from every folder, so searching it for a badge would
+      // duplicate the whole mailbox and burn the documented IMAP bandwidth
+      // quota (2500 MB/day; Google suspends accounts that keep retrying).
+      const skipWindowRecount = new Set<string>()
       for (const item of validItems) {
         let role = 'custom'
         const special = item.specialUse || ''
         const pathLower = item.path.toLowerCase()
+        const normalizedPath = pathLower.replace(/^\[gmail\]\/?/i, '').trim()
+        const isAllMail =
+          special === '\\All' ||
+          normalizedPath === 'all' ||
+          normalizedPath === 'all mail' ||
+          normalizedPath === 'todos os e-mails' ||
+          normalizedPath === 'todos os emails'
         if (special === '\\Inbox' || pathLower === 'inbox') role = 'inbox'
         else if (special === '\\Important' || pathLower.includes('important') || pathLower.includes('importante')) role = 'important'
         else if (special === '\\Flagged' || pathLower.includes('starred') || pathLower.includes('estrela') || pathLower.includes('favorit')) role = 'starred'
@@ -480,6 +636,7 @@ async function listMailboxes(account: any, windowHours?: number) {
         else if (special === '\\Trash' || pathLower.includes('trash') || pathLower.includes('lixeir')) role = 'trash'
         else if (special === '\\Junk' || pathLower.includes('junk') || pathLower.includes('spam')) role = 'junk'
         else if (special === '\\Archive' || pathLower.includes('archiv') || pathLower.includes('arquivo')) role = 'archive'
+        if (isAllMail) skipWindowRecount.add(item.path)
 
         let status = { unseen: 0, messages: 0 }
         try {
@@ -497,10 +654,10 @@ async function listMailboxes(account: any, windowHours?: number) {
 
       // Sequential window recount: only for folders that actually have unread items
       for (const folder of folders) {
-        if (!folder.unreadCount || folder.unreadCount <= 0) {
-          ;(folder as any).totalUnread = 0
-          ;(folder as any).unreadToday = 0
-          ;(folder as any).unreadWindow = 0
+        if (!folder.unreadCount || folder.unreadCount <= 0 || skipWindowRecount.has(folder.path)) {
+          ;(folder as any).totalUnread = folder.unreadCount || 0
+          ;(folder as any).unreadToday = folder.unreadCount || 0
+          ;(folder as any).unreadWindow = folder.unreadCount || 0
           continue
         }
         try {
@@ -675,7 +832,7 @@ async function resolveGmailCategories(client: any, uids: number[]): Promise<Map<
     }
     return resolved
   } catch (err: any) {
-    console.warn('[momai-emails] Gmail category lookup failed (falling back to local heuristic):', err?.message || err)
+    logInfo(`Gmail category lookup failed (falling back to local heuristic): ${err?.message || err}`)
     return null
   }
 }
@@ -796,7 +953,7 @@ async function listCategoryMessages(
     messages.sort((a, b) => b.timestamp - a.timestamp)
     return { messages, hasMore, total: uids.length }
   } catch (err: any) {
-    console.warn('[momai-emails] Gmail category listing failed (falling back to normal listing):', err?.message || err)
+    logInfo(`Gmail category listing failed (falling back to normal listing): ${err?.message || err}`)
     return null
   }
 }
@@ -863,7 +1020,7 @@ async function listGenericCategoryMessages(
 
     return null
   } catch (err: any) {
-    console.warn('[momai-emails] Generic IMAP category listing failed:', err?.message || err)
+    logInfo(`Generic IMAP category listing failed: ${err?.message || err}`)
     return null
   }
 }
@@ -871,6 +1028,11 @@ async function listGenericCategoryMessages(
 /**
  * Fetch messages list from a mailbox using warm connection.
  * Supports offset-based pagination for infinite scroll.
+ *
+ * The mailbox is opened through `acquireMailboxLock`, which self-heals a stale
+ * pooled socket and fails fast on a missing folder. A failed read is always
+ * thrown: reporting it as an empty folder would hide real mail and poison the
+ * renderer cache with a false "no messages" state.
  */
 async function fetchMessages(
   account: any,
@@ -880,97 +1042,156 @@ async function fetchMessages(
   offset = 0,
   options: { categorize?: boolean; gmailCategory?: string | null } = {}
 ) {
-  let client: any
-  try {
-    client = await getConnectedImapClient(account)
-  } catch (err: any) {
-    releaseImapClient(account.id || account.email)
-    throw new Error(formatImapError(err))
-  }
-  const messages: any[] = []
-  let lock: any = null
-  try {
-    lock = await client.getMailboxLock(folder)
-  } catch {
-    await ensureMailboxExists(account, folder)
+  const deadline = Date.now() + IMAP_LIST_TIMEOUT_MS
+  let lastError: any = null
+
+  for (let attempt = 1; attempt <= FOLDER_READ_MAX_ATTEMPTS; attempt += 1) {
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) break
+    if (attempt > 1 && remaining < FOLDER_READ_MIN_RETRY_BUDGET_MS) break
+
+    let lock: any = null
+    const startedAt = Date.now()
+    let lockAcquiredAt = 0
     try {
-      lock = await client.getMailboxLock(folder)
-    } catch {
-      return { messages: [], hasMore: false, total: 0 }
+      // One budget covers connecting, opening the mailbox and reading the page,
+      // so a stuck lock or a stalled fetch can never outlive the caller's own
+      // timeout.
+      const result = await withTimeout(
+        (async () => {
+          const client = await getConnectedImapClient(account)
+          // EXAMINE instead of SELECT: listing is read-only, so the folder is
+          // not marked as selected for writing and no flags are touched.
+          const acquired = await acquireMailboxLock(
+            account,
+            client,
+            folder,
+            IMAP_LOCK_TIMEOUT_MS,
+            undefined,
+            { readOnly: true }
+          )
+          lock = acquired.lock
+          lockAcquiredAt = Date.now()
+          return readMailboxPage(account, acquired.client, folder, limit, unreadOnly, offset, options)
+        })(),
+        remaining,
+        `Timeout (${IMAP_LIST_TIMEOUT_MS}ms) ao ler a pasta "${folder}" no IMAP`
+      )
+      // Measure the read itself, not the time spent waiting behind another
+      // operation on the shared socket: a long queue is not a slow server.
+      const readMs = lockAcquiredAt ? Date.now() - lockAcquiredAt : 0
+      if (readMs > SLOW_FOLDER_READ_WARN_MS) {
+        logInfo(
+          `Slow folder read: "${folder}" took ${readMs}ms after waiting ${lockAcquiredAt - startedAt}ms for the connection (limit ${limit}, offset ${offset}, unreadOnly ${unreadOnly})`
+        )
+      }
+      return result
+    } catch (err: any) {
+      lastError = err
+      // A failed or timed-out command leaves the socket in an unknown state:
+      // drop the pooled client so the next attempt gets a fresh connection. A
+      // missing folder is a valid answer, not a broken connection.
+      if (!isMissingMailboxError(err)) {
+        releaseImapClient(account.id || account.email)
+      }
+      const canRetry =
+        attempt < FOLDER_READ_MAX_ATTEMPTS &&
+        isRetryableFolderReadError(err) &&
+        deadline - Date.now() >= FOLDER_READ_MIN_RETRY_BUDGET_MS
+      if (!canRetry) break
+      logInfo(
+        `Retrying folder read: "${folder}" (attempt ${attempt + 1}/${FOLDER_READ_MAX_ATTEMPTS}) after: ${formatImapError(err)}`
+      )
+      await delay(FOLDER_READ_RETRY_BACKOFF_MS)
+    } finally {
+      if (lock && typeof lock.release === 'function') {
+        try {
+          lock.release()
+        } catch {}
+      }
     }
   }
-  try {
-    // Sincroniza com o servidor IMAP para garantir que client.mailbox.exists reflita mensagens recém-chegadas
-    await client.noop().catch(() => {})
-    const mailbox = client.mailbox
-    const count = mailbox?.exists || 0
-    if (count === 0) return { messages: [], hasMore: false, total: 0 }
 
-    // Gmail category listing goes straight to the server: one X-GM-RAW search
-    // plus one small fetch, instead of scanning the inbox window by window.
-    if (options.gmailCategory) {
-      const normalized = normalizeGmailCategory(options.gmailCategory)
-      if (normalized) {
-        const listed = await listCategoryMessages(client, account, folder, normalized, limit, offset)
-        if (listed) return listed
-        // Standard IMAP fallback (Yahoo, Outlook, custom IMAP)
-        const genericListed = await listGenericCategoryMessages(client, account, folder, normalized, limit, offset)
-        if (genericListed) return genericListed
-      }
-    }
+  throw markFolderError(
+    lastError,
+    folder,
+    lastError ? formatImapError(lastError) : `Timeout (${IMAP_LIST_TIMEOUT_MS}ms) ao ler a pasta "${folder}" no IMAP`
+  )
+}
 
-    if (unreadOnly) {
-      const uids = await client.search({ seen: false }, { uid: true })
-      if (!uids || uids.length === 0) return { messages: [], hasMore: false, total: 0 }
-      uids.sort((a: number, b: number) => b - a)
-      const targetUids = uids.slice(offset, offset + limit)
-      const hasMore = (offset + limit) < uids.length
-      for await (const msg of client.fetch(
-        targetUids.join(','),
-        { uid: true, envelope: true, flags: true, bodyStructure: true, size: true, labels: true },
-        { uid: true }
-      )) {
-        messages.push(toFetchedMessage(msg, account, folder))
-      }
-      await applyGmailCategories(client, messages, Boolean(options.categorize))
-      messages.sort((a, b) => b.timestamp - a.timestamp)
-      return { messages, hasMore, total: uids.length }
-    } else {
-      // Calculate range accounting for offset (newest messages first)
-      const endSeq = count - offset
-      const startSeq = Math.max(1, endSeq - limit + 1)
-      if (endSeq < 1) return { messages: [], hasMore: false, total: count }
+/** Reads one page of a mailbox that is already locked by the caller. */
+async function readMailboxPage(
+  account: any,
+  client: any,
+  folder: string,
+  limit: number,
+  unreadOnly: boolean,
+  offset: number,
+  options: { categorize?: boolean; gmailCategory?: string | null }
+) {
+  const messages: any[] = []
 
-      const range = `${startSeq}:${endSeq}`
-      for await (const msg of client.fetch(
-        range,
-        { uid: true, envelope: true, flags: true, bodyStructure: true, size: true, labels: true },
-        { uid: false }
-      )) {
-        messages.push(toFetchedMessage(msg, account, folder))
-      }
-      await applyGmailCategories(client, messages, Boolean(options.categorize))
-      if (options.categorize && (!client.capabilities || !client.capabilities.has('X-GM-EXT-1'))) {
-        for (const message of messages) {
-          if (!message.category) {
-            message.category = classifyEmailCategory(message)
-          }
-        }
-      }
-      const hasMore = startSeq > 1
-      messages.sort((a, b) => b.timestamp - a.timestamp)
-      return { messages, hasMore, total: count }
-    }
-  } catch (err: any) {
-    releaseImapClient(account.id || account.email)
-    throw new Error(formatImapError(err))
-  } finally {
-    if (lock && typeof lock.release === 'function') {
-      try {
-        lock.release()
-      } catch {}
+  // Sincroniza com o servidor IMAP para garantir que client.mailbox.exists reflita mensagens recém-chegadas
+  await client.noop().catch(() => {})
+  const mailbox = client.mailbox
+  const count = mailbox?.exists || 0
+  if (count === 0) return { messages: [], hasMore: false, total: 0 }
+
+  // Gmail category listing goes straight to the server: one X-GM-RAW search
+  // plus one small fetch, instead of scanning the inbox window by window.
+  if (options.gmailCategory) {
+    const normalized = normalizeGmailCategory(options.gmailCategory)
+    if (normalized) {
+      const listed = await listCategoryMessages(client, account, folder, normalized, limit, offset)
+      if (listed) return listed
+      // Standard IMAP fallback (Yahoo, Outlook, custom IMAP)
+      const genericListed = await listGenericCategoryMessages(client, account, folder, normalized, limit, offset)
+      if (genericListed) return genericListed
     }
   }
+
+  if (unreadOnly) {
+    const uids = await client.search({ seen: false }, { uid: true })
+    if (!uids || uids.length === 0) return { messages: [], hasMore: false, total: 0 }
+    uids.sort((a: number, b: number) => b - a)
+    const targetUids = uids.slice(offset, offset + limit)
+    const hasMore = (offset + limit) < uids.length
+    for await (const msg of client.fetch(
+      targetUids.join(','),
+      { uid: true, envelope: true, flags: true, bodyStructure: true, size: true, labels: true },
+      { uid: true }
+    )) {
+      messages.push(toFetchedMessage(msg, account, folder))
+    }
+    await applyGmailCategories(client, messages, Boolean(options.categorize))
+    messages.sort((a, b) => b.timestamp - a.timestamp)
+    return { messages, hasMore, total: uids.length }
+  }
+
+  // Calculate range accounting for offset (newest messages first)
+  const endSeq = count - offset
+  const startSeq = Math.max(1, endSeq - limit + 1)
+  if (endSeq < 1) return { messages: [], hasMore: false, total: count }
+
+  const range = `${startSeq}:${endSeq}`
+  for await (const msg of client.fetch(
+    range,
+    { uid: true, envelope: true, flags: true, bodyStructure: true, size: true, labels: true },
+    { uid: false }
+  )) {
+    messages.push(toFetchedMessage(msg, account, folder))
+  }
+  await applyGmailCategories(client, messages, Boolean(options.categorize))
+  if (options.categorize && (!client.capabilities || !client.capabilities.has('X-GM-EXT-1'))) {
+    for (const message of messages) {
+      if (!message.category) {
+        message.category = classifyEmailCategory(message)
+      }
+    }
+  }
+  const hasMore = startSeq > 1
+  messages.sort((a, b) => b.timestamp - a.timestamp)
+  return { messages, hasMore, total: count }
 }
 
 /**
@@ -1333,63 +1554,81 @@ async function searchMessages(
   let totalMatches = 0
   let lock: any = null
   try {
-    lock = await client.getMailboxLock(folder)
-  } catch {
-    return { messages: [], total: 0 }
+    const acquired = await acquireMailboxLock(account, client, folder, IMAP_LOCK_TIMEOUT_MS, undefined, {
+      readOnly: true
+    })
+    client = acquired.client
+    lock = acquired.lock
+  } catch (err: any) {
+    // A search inside a folder that cannot be opened must be reported as a
+    // failure, never as "no results".
+    throw markFolderError(err, folder, formatImapError(err))
   }
   try {
-    const q = query.trim()
-    const searchCriteria: any = {
-      or: [{ subject: q }, { from: q }, { to: q }, { body: q }]
-    }
-    const uids = await client.search(searchCriteria, { uid: true })
-    if (!uids || uids.length === 0) return { messages: [], total: 0 }
-    totalMatches = uids.length
+    const result = await withTimeout(
+      (async () => {
+        const q = query.trim()
+        const searchCriteria: any = {
+          or: [{ subject: q }, { from: q }, { to: q }, { body: q }]
+        }
+        const uids = await client.search(searchCriteria, { uid: true })
+        if (!uids || uids.length === 0) return { messages: [], total: 0 }
+        totalMatches = uids.length
 
-    uids.sort((a: number, b: number) => b - a)
-    const targetUids = uids.slice(0, limit)
+        uids.sort((a: number, b: number) => b - a)
+        const targetUids = uids.slice(0, limit)
 
-    for await (const msg of client.fetch(
-      targetUids.join(','),
-      { uid: true, envelope: true, flags: true, bodyStructure: true, labels: true },
-      { uid: true }
-    )) {
-      const env = msg.envelope || {}
-      const fromAddr = env.from?.[0] || { name: '', address: '' }
-      const toAddrs = (env.to || []).map((t: any) => ({ name: t.name || '', address: t.address || '' }))
-      const atts = extractAttachmentsFromBodyStructure(msg.bodyStructure)
-      const labels = msg.labels ? Array.from(msg.labels) : []
-      messages.push({
-        id: String(msg.uid),
-        uid: msg.uid,
-        messageId: env.messageId || String(msg.uid),
-        accountId: account.id || account.email,
-        folder,
-        subject: env.subject || '(Sem assunto)',
-        from: { name: fromAddr.name || fromAddr.address, address: fromAddr.address },
-        to: toAddrs,
-        date: env.date ? new Date(env.date).toISOString() : new Date().toISOString(),
-        timestamp: env.date ? new Date(env.date).getTime() : Date.now(),
-        read: msg.flags ? msg.flags.has('\\Seen') : false,
-        starred: msg.flags ? msg.flags.has('\\Flagged') : false,
-        draft: msg.flags ? msg.flags.has('\\Draft') : false,
-        labels,
-        snippet: '',
-        hasAttachments: atts.length > 0,
-        attachments: atts
-      })
-    }
+        for await (const msg of client.fetch(
+          targetUids.join(','),
+          { uid: true, envelope: true, flags: true, bodyStructure: true, labels: true },
+          { uid: true }
+        )) {
+          const env = msg.envelope || {}
+          const fromAddr = env.from?.[0] || { name: '', address: '' }
+          const toAddrs = (env.to || []).map((t: any) => ({ name: t.name || '', address: t.address || '' }))
+          const atts = extractAttachmentsFromBodyStructure(msg.bodyStructure)
+          const labels = msg.labels ? Array.from(msg.labels) : []
+          messages.push({
+            id: String(msg.uid),
+            uid: msg.uid,
+            messageId: env.messageId || String(msg.uid),
+            accountId: account.id || account.email,
+            folder,
+            subject: env.subject || '(Sem assunto)',
+            from: { name: fromAddr.name || fromAddr.address, address: fromAddr.address },
+            to: toAddrs,
+            date: env.date ? new Date(env.date).toISOString() : new Date().toISOString(),
+            timestamp: env.date ? new Date(env.date).getTime() : Date.now(),
+            read: msg.flags ? msg.flags.has('\\Seen') : false,
+            starred: msg.flags ? msg.flags.has('\\Flagged') : false,
+            draft: msg.flags ? msg.flags.has('\\Draft') : false,
+            labels,
+            snippet: '',
+            hasAttachments: atts.length > 0,
+            attachments: atts
+          })
+        }
+
+        // Categories are resolved against the mailbox that is still locked:
+        // releasing first would let another request select a different folder.
+        await applyGmailCategories(client, messages, Boolean(options.categorize))
+        messages.sort((a, b) => b.timestamp - a.timestamp)
+        return { messages, total: totalMatches }
+      })(),
+      IMAP_LIST_TIMEOUT_MS,
+      `Timeout (${IMAP_LIST_TIMEOUT_MS}ms) ao buscar na pasta "${folder}" no IMAP`
+    )
+    return result
   } catch (err: any) {
     releaseImapClient(account.id || account.email)
     throw new Error(formatImapError(err))
   } finally {
     if (lock && typeof lock.release === 'function') {
-      try { lock.release() } catch {}
+      try {
+        lock.release()
+      } catch {}
     }
   }
-  await applyGmailCategories(client, messages, Boolean(options.categorize))
-  messages.sort((a, b) => b.timestamp - a.timestamp)
-  return { messages, total: totalMatches }
 }
 
 /**
@@ -2021,6 +2260,7 @@ module.exports = {
   generateDocumentThumbnail,
   getAttachmentsBaseDir,
   setAttachmentsBaseDir,
+  setDiagnosticSink,
   getMessageCacheDir,
   invalidateMessageCache,
   pruneMessageCache,
@@ -2037,6 +2277,8 @@ module.exports = {
   countUnreadInWindowInFolder,
   withTimeout,
   acquireMailboxLock,
+  isMissingMailboxError,
+  isRetryableFolderReadError,
   IMAP_LOCK_TIMEOUT_MS,
   IMAP_OPERATION_TIMEOUT_MS
 }

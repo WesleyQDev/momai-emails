@@ -97,8 +97,14 @@ const {
   openFileWithDefaultApp,
   saveAttachmentWithDialog,
   generatePdfThumbnail,
-  generateDocumentThumbnail
+  generateDocumentThumbnail,
+  isRetryableFolderReadError,
+  setDiagnosticSink
 } = require('./email-client.ts')
+
+// Extension diagnostics belong in the host log at info level, not on stderr
+// (which the host reports as an error).
+setDiagnosticSink((message: string) => safeSend({ type: 'log', message }))
 
 let storageResponseListener: ((msg: any) => void) | null = null
 let ipcEmailsStorage: any = null
@@ -212,6 +218,25 @@ accountManager.initialize().catch((err: any) => {
 })
 
 /**
+ * Folder listings are read-only and can be requested concurrently by the UI,
+ * the folder pre-warmer and the category warm-up. Sharing the in-flight
+ * promise keeps duplicate reads of the same page from queueing behind each
+ * other on the single IMAP socket.
+ */
+const inFlightEmailListings = new Map<string, Promise<any>>()
+
+/** Joins an identical in-flight listing instead of starting a duplicate read. */
+function listEmailsSingleFlight(key: string, run: () => Promise<any>): Promise<any> {
+  const existing = inFlightEmailListings.get(key)
+  if (existing) return existing
+  const task = run().finally(() => {
+    inFlightEmailListings.delete(key)
+  })
+  inFlightEmailListings.set(key, task)
+  return task
+}
+
+/**
  * Tool & Command Dispatcher
  */
 async function executeTool(toolName: string, args: any = {}): Promise<any> {
@@ -316,10 +341,15 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
         const offset = clampToolOffset(args.offset)
         const unreadOnly = Boolean(args.unreadOnly)
         const categorize = args.includeCategories !== false
-        const result = await fetchMessages(account, folder, limit, unreadOnly, offset, {
-          categorize,
-          gmailCategory: args.category
-        })
+        const category = args.category
+        const accountKey = account.id || account.email
+        const listingKey = `${accountKey}:${folder}:${limit}:${offset}:${unreadOnly}:${categorize}:${category || ''}`
+        const result = await listEmailsSingleFlight(listingKey, () =>
+          fetchMessages(account, folder, limit, unreadOnly, offset, {
+            categorize,
+            gmailCategory: category
+          })
+        )
         return {
           ok: true,
           folder,
@@ -333,7 +363,14 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
               result.messages.slice(0, 5).map((m: any) => `- ${_wtr('reply_from')}: ${m.from?.name || m.from?.address} | ${_wtr('forward_subject')}: "${m.subject}"`).join('\n')
         }
       } catch (err: any) {
-        return { ok: false, error: err?.message || String(err) }
+        // A folder that cannot be read must surface as an error: returning an
+        // empty list would look like "no messages" and hide real mail.
+        return {
+          ok: false,
+          error: err?.message || String(err),
+          errorCode: err?.mailboxMissing ? 'folder_missing' : 'list_failed',
+          retryable: isRetryableFolderReadError(err)
+        }
       }
     }
 

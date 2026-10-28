@@ -265,5 +265,8 @@
   "connect.emailPlaceholder.yahoo": "seuemail@yahoo.com",
   "connect.emailPlaceholder.custom": "voce@seudominio.com",
   "settings.notificationsEnabled": "Receber notificações no sistema",
-  "settings.notificationsEnabledHint": "Avisos do sistema quando chegar novo e-mail"
+  "settings.notificationsEnabledHint": "Avisos do sistema quando chegar novo e-mail",
+  "list.emptySubtitleFolder": "As mensagens desta pasta aparecerão aqui.",
+  "page.errors.folderMissing": "Esta pasta não existe mais no servidor. Atualize a lista de pastas.",
+  "list.retrying": "Tentando novamente automaticamente…"
 }

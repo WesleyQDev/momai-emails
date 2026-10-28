@@ -265,5 +265,8 @@
   "connect.emailPlaceholder.yahoo": "votreemail@yahoo.com",
   "connect.emailPlaceholder.custom": "vous@votredomaine.com",
   "settings.notificationsEnabled": "Notifications système",
-  "settings.notificationsEnabledHint": "Alertes système à l'arrivée d'un nouvel e-mail"
+  "settings.notificationsEnabledHint": "Alertes système à l'arrivée d'un nouvel e-mail",
+  "list.emptySubtitleFolder": "Les messages de ce dossier apparaîtront ici.",
+  "page.errors.folderMissing": "Ce dossier n'existe plus sur le serveur. Actualisez la liste des dossiers.",
+  "list.retrying": "Nouvelle tentative automatique…"
 }
