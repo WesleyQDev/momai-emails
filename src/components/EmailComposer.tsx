@@ -675,8 +675,36 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
               return
             }
             // Otherwise insert as plain text
-            document.execCommand('insertText', false, result.text)
-            if (editorRef.current) setBody(editorRef.current.innerHTML)
+            let inserted = false
+            try {
+              inserted = document.execCommand('insertText', false, result.text)
+            } catch {}
+
+            if (!inserted) {
+              try {
+                const sel = window.getSelection()
+                if (sel && sel.rangeCount > 0) {
+                  const range = sel.getRangeAt(0)
+                  range.deleteContents()
+                  const textNode = document.createTextNode(result.text)
+                  range.insertNode(textNode)
+                  range.setStartAfter(textNode)
+                  range.setEndAfter(textNode)
+                  sel.removeAllRanges()
+                  sel.addRange(range)
+                  inserted = true
+                } else if (editorRef.current) {
+                  editorRef.current.appendChild(document.createTextNode(result.text))
+                  inserted = true
+                }
+              } catch {}
+            }
+
+            if (editorRef.current) {
+              setBody(editorRef.current.innerHTML)
+              updateBodySuggestion()
+              editorRef.current.dispatchEvent(new Event('input', { bubbles: true }))
+            }
             return
           }
         }
@@ -685,10 +713,51 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
       console.warn('[EmailComposer] sdk.clipboard.read error:', err)
     }
 
-    // Last resort fallback (only triggers outside Electron, e.g. pure browser dev)
+    // Fallback via navigator.clipboard or document.execCommand
+    try {
+      const text = await navigator.clipboard?.readText?.()
+      if (text) {
+        let inserted = false
+        try {
+          inserted = document.execCommand('insertText', false, text)
+        } catch {}
+
+        if (!inserted) {
+          try {
+            const sel = window.getSelection()
+            if (sel && sel.rangeCount > 0) {
+              const range = sel.getRangeAt(0)
+              range.deleteContents()
+              const textNode = document.createTextNode(text)
+              range.insertNode(textNode)
+              range.setStartAfter(textNode)
+              range.setEndAfter(textNode)
+              sel.removeAllRanges()
+              sel.addRange(range)
+              inserted = true
+            } else if (editorRef.current) {
+              editorRef.current.appendChild(document.createTextNode(text))
+              inserted = true
+            }
+          } catch {}
+        }
+
+        if (editorRef.current) {
+          setBody(editorRef.current.innerHTML)
+          updateBodySuggestion()
+          editorRef.current.dispatchEvent(new Event('input', { bubbles: true }))
+        }
+        return
+      }
+    } catch {}
+
+    // Last resort fallback
     try {
       document.execCommand('paste')
-      if (editorRef.current) setBody(editorRef.current.innerHTML)
+      if (editorRef.current) {
+        setBody(editorRef.current.innerHTML)
+        editorRef.current.dispatchEvent(new Event('input', { bubbles: true }))
+      }
     } catch {
       // nothing more we can do
     }
@@ -1235,19 +1304,6 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
               onMouseUp={saveSelection}
               onPaste={handlePaste}
               onContextMenu={(e) => {
-                const isDesktop =
-                  typeof window !== 'undefined' &&
-                  Boolean((window as any).momaiAPI && !(window as any).momaiAPI?.isWeb?.())
-                if (isDesktop) {
-                  saveSelection()
-                  return
-                }
-                const selection = window.getSelection()
-                const selectedText = selection?.toString() || ''
-                if (!selectedText.trim()) {
-                  saveSelection()
-                  return
-                }
                 e.preventDefault()
                 saveSelection()
                 setBodyContextMenu({ visible: true, x: e.clientX, y: e.clientY })
@@ -1464,8 +1520,10 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
               id: 'copy',
               label: t('composer.menu.copy'),
               shortcut: 'Ctrl+C',
+              disabled: !(savedSelectionRef.current && !savedSelectionRef.current.collapsed),
               onClick: () => {
                 if (editorRef.current) editorRef.current.focus()
+                restoreSelection()
                 document.execCommand('copy')
               }
             },
@@ -1473,10 +1531,15 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
               id: 'cut',
               label: t('composer.menu.cut'),
               shortcut: 'Ctrl+X',
+              disabled: !(savedSelectionRef.current && !savedSelectionRef.current.collapsed),
               onClick: () => {
                 if (editorRef.current) editorRef.current.focus()
+                restoreSelection()
                 document.execCommand('cut')
-                if (editorRef.current) setBody(editorRef.current.innerHTML)
+                if (editorRef.current) {
+                  setBody(editorRef.current.innerHTML)
+                  editorRef.current.dispatchEvent(new Event('input', { bubbles: true }))
+                }
               }
             },
             {

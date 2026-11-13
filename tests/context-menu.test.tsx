@@ -48,4 +48,25 @@ describe('ContextMenu component', () => {
 
     expect(markup).toContain('Mover para guia')
   })
+
+  it('renders paste and copy options correctly with shortcuts', () => {
+    const items: ContextMenuOption[] = [
+      { id: 'paste', label: 'Colar', shortcut: 'Ctrl+V', onClick: vi.fn() },
+      { id: 'copy', label: 'Copiar', shortcut: 'Ctrl+C', onClick: vi.fn() }
+    ]
+
+    const markup = renderToStaticMarkup(
+      createElement(ContextMenu, {
+        x: 50,
+        y: 60,
+        items,
+        onClose: vi.fn()
+      })
+    )
+
+    expect(markup).toContain('Colar')
+    expect(markup).toContain('Ctrl+V')
+    expect(markup).toContain('Copiar')
+    expect(markup).toContain('Ctrl+C')
+  })
 })
