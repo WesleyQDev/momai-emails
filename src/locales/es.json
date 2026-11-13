@@ -95,6 +95,7 @@
   "reader.viewText": "Ver texto",
   "reader.viewFormatted": "Ver con formato",
   "reader.toggleView": "Cambiar formato de vista",
+  "reader.threadMessages": "Conversación ({count})",
   "reader.noSubject": "(Sin asunto)",
   "reader.to": "para",
   "reader.emptyBody": "(Mensaje vacío)",
@@ -266,6 +267,8 @@
   "connect.emailPlaceholder.custom": "tu@tudominio.com",
   "settings.notificationsEnabled": "Notificaciones del sistema",
   "settings.notificationsEnabledHint": "Avisos del sistema al llegar correo nuevo",
+  "settings.notificationsAudioEnabled": "Recibir notificación con audio",
+  "settings.notificationsAudioEnabledHint": "Leer en voz alta el remitente y el asunto cuando llegue un correo nuevo",
   "list.emptySubtitleFolder": "Los mensajes de esta carpeta aparecerán aquí.",
   "page.errors.folderMissing": "Esta carpeta ya no existe en el servidor. Actualiza la lista de carpetas.",
   "list.retrying": "Reintentando automáticamente…"

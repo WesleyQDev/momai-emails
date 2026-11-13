@@ -24,6 +24,7 @@ export interface EmailMessage {
   id: string // UID or internal id
   uid: number
   messageId: string
+  inReplyTo?: string
   accountId?: string
   folder: string
   subject: string

@@ -95,6 +95,7 @@
   "reader.viewText": "Vedi testo",
   "reader.viewFormatted": "Vedi formattato",
   "reader.toggleView": "Cambia formato di visualizzazione",
+  "reader.threadMessages": "Conversazione ({count})",
   "reader.noSubject": "(Nessun oggetto)",
   "reader.to": "a",
   "reader.emptyBody": "(Messaggio vuoto)",
@@ -266,6 +267,8 @@
   "connect.emailPlaceholder.custom": "tu@tuodominio.com",
   "settings.notificationsEnabled": "Notifiche di sistema",
   "settings.notificationsEnabledHint": "Avvisi di sistema all arrivo di nuove email",
+  "settings.notificationsAudioEnabled": "Ricevi notifica audio",
+  "settings.notificationsAudioEnabledHint": "Leggi ad alta voce mittente e oggetto all'arrivo di una nuova email",
   "list.emptySubtitleFolder": "I messaggi di questa cartella appariranno qui.",
   "page.errors.folderMissing": "Questa cartella non esiste più sul server. Aggiorna l'elenco delle cartelle.",
   "list.retrying": "Nuovo tentativo automatico…"

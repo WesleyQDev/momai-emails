@@ -33,6 +33,7 @@ import {
   clearArchiveOrigin
 } from './services/archive-origins'
 import { FolderPrewarmer, mergeFolderMessages, sortMessagesNewestFirst, PREWARM_THROTTLE_MS } from './services/prewarm'
+import { getThreadMessagesForEmail } from './services/threads'
 import { BodyPrefetcher, BODY_PREFETCH_PER_FOLDER } from './services/body-prefetch'
 import type { PublicEmailAccount, EmailFolder, EmailMessage, EmailAttachment, SendEmailPayload } from './services/types'
 import { useExtensionLocale } from './services/i18n'
@@ -141,6 +142,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
         .setNotificationPrefs({
           primaryOnly: next.notifyPrimaryOnly,
           notificationsEnabled: next.notificationsEnabled,
+          notificationsAudioEnabled: next.notificationsAudioEnabled,
           unreadWindowHours: next.unreadWindowHours
         })
         .catch(() => {})
@@ -178,6 +180,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
       .setNotificationPrefs({
         primaryOnly: initial.notifyPrimaryOnly,
         notificationsEnabled: initial.notificationsEnabled,
+        notificationsAudioEnabled: initial.notificationsAudioEnabled,
         unreadWindowHours: initial.unreadWindowHours
       })
       .catch(() => {})
@@ -204,9 +207,11 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
             emptyRetryRef.current += 1
             setTimeout(() => {
               loadAccountsRef.current?.()
-            }, 2500)
+            }, 1500)
+            return
           }
-          return
+          // After exhausting the startup grace retries, accept the empty
+          // response so the UI never stays trapped on a stale cached account.
         }
         emptyRetryRef.current = 0
         settled = true
@@ -320,6 +325,10 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
     try {
       const res = await emailApi.listFolders(accId)
       if (reqSeq !== currentFoldersSeqRef.current || accId !== activeAccountIdRef.current) return
+      if (res && !res.ok && (res as any).errorCode === 'no_account') {
+        void loadAccountsRef.current?.({ allowEmpty: true })
+        return
+      }
       if (res && res.ok && Array.isArray(res.folders)) {
         let folders = mergeWithDefaultFolders(res.folders)
         const inboxCached = emailStorageCache.getFolderEmails(accId, resolveInboxPath(folders))
@@ -350,8 +359,8 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
             const merged = mergeFolderMessages(existing, msgs)
             folderCacheRef.current.set(key, merged)
             emailStorageCache.setFolderEmails(aId, folderPath, merged)
-            bodyPrefetcherRef.current.enqueue(aId, merged.slice(0, BODY_PREFETCH_PER_FOLDER))
             if (isInboxFolder(folderPath)) {
+              bodyPrefetcherRef.current.enqueue(aId, merged.slice(0, Math.min(3, BODY_PREFETCH_PER_FOLDER)))
               setFolders((prevFolders) => {
                 const updated = syncInboxPrimaryUnread(prevFolders, merged, settings.showCategoryTabs, windowMs)
                 emailStorageCache.setFolders(aId, updated)
@@ -582,7 +591,13 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
           // A failed refresh must stay visible even when an empty list was
           // cached earlier: silence here is what made folders look "clean"
           // while the server still had messages in them.
-          const failed = res as { error?: string; retryable?: boolean } | null
+          const failed = res as { error?: string; errorCode?: string; retryable?: boolean } | null
+          if (failed?.errorCode === 'no_account') {
+            cancelAutoRetry()
+            setMessagesError(null)
+            void loadAccountsRef.current?.({ allowEmpty: true })
+            return
+          }
           if (failed?.error) {
             console.warn('[momai-emails] Folder load failed:', folder, failed.error)
           }
@@ -794,6 +809,14 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
   )
 
   useEffect(() => {
+    if (activeAccountId) {
+      loadFolders(activeAccountId)
+    } else {
+      setFolders([])
+    }
+  }, [activeAccountId, loadFolders])
+
+  useEffect(() => {
     // A different folder or account is a new intent: drop any pending retry
     // and give the new target a fresh automatic-retry budget.
     autoRetryAttemptRef.current = 0
@@ -801,15 +824,13 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
     if (activeAccountId) {
       setSearchQuery('')
       setIsSearchMode(false)
-      loadFolders(activeAccountId)
       const initialCat = isInboxFolder(activeFolder) && settings.showCategoryTabs ? activeCategoryRef.current : undefined
       loadEmails(activeFolder, activeAccountId, false, false, initialCat)
     } else {
-      setFolders([])
       setMessages([])
       setSelectedEmail(null)
     }
-  }, [activeAccountId, activeFolder, cancelAutoRetry, loadFolders, loadEmails, settings.showCategoryTabs])
+  }, [activeAccountId, activeFolder, cancelAutoRetry, loadEmails, settings.showCategoryTabs])
 
   // Returning to the extension restarts the automatic recovery for a folder
   // that is still showing an error (the timer stops while the page is hidden).
@@ -875,16 +896,68 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
         }
       }
 
-      // If the incoming email belongs to the active account, refresh inbox and folders with debouncing
+      // If the incoming email belongs to the active account, merge it immediately
+      // into the inbox view and then refresh inbox + folders sequentially.
       if (accountId === activeAccountId) {
-        if (burstReloadTimerRef.current) clearTimeout(burstReloadTimerRef.current)
-        burstReloadTimerRef.current = setTimeout(() => {
-          burstReloadTimerRef.current = null
-          if (activeFolder.toUpperCase() === 'INBOX') {
-            loadEmails(activeFolder, activeAccountId, true)
+        const incoming = event.data?.email as EmailMessage | undefined
+        if (incoming && (incoming.id || incoming.uid)) {
+          const normalizedMsg: EmailMessage = {
+            ...incoming,
+            id: String(incoming.id || incoming.uid),
+            accountId: incoming.accountId || accountId,
+            folder: incoming.folder || 'INBOX'
           }
-          loadFolders(activeAccountId || undefined)
-        }, 600)
+          const inboxPath = resolveInboxPath(foldersRef.current) || 'INBOX'
+          const msgCat = classifyEmailCategory(normalizedMsg)
+          const baseKey = `${accountId}:${inboxPath}`
+          const prevBase =
+            folderCacheRef.current.get(baseKey) ||
+            emailStorageCache.getFolderEmails(accountId, inboxPath) ||
+            []
+          const mergedBase = sortMessagesNewestFirst(mergeFolderMessages(prevBase, [normalizedMsg], 500))
+          folderCacheRef.current.set(baseKey, mergedBase)
+          emailStorageCache.setFolderEmails(accountId, inboxPath, mergedBase)
+
+          const catKey = `${accountId}:${inboxPath}:${msgCat}`
+          const prevCat =
+            folderCacheRef.current.get(catKey) ||
+            emailStorageCache.getFolderEmails(accountId, inboxPath, msgCat) ||
+            []
+          const mergedCat = sortMessagesNewestFirst(mergeFolderMessages(prevCat, [normalizedMsg], 500))
+          folderCacheRef.current.set(catKey, mergedCat)
+          emailStorageCache.setFolderEmails(accountId, inboxPath, mergedCat, msgCat)
+
+          if (
+            isInboxFolder(activeFolderRef.current) &&
+            !isSearchMode &&
+            (!settings.showCategoryTabs || activeCategoryRef.current === msgCat)
+          ) {
+            setMessages((prev) => sortMessagesNewestFirst(mergeFolderMessages(prev, [normalizedMsg], 500)))
+          }
+
+          setFolders((prevFolders) => {
+            const updated = syncInboxPrimaryUnread(
+              prevFolders,
+              mergedBase,
+              settings.showCategoryTabs,
+              unreadWindowMs(settings.unreadWindowHours)
+            )
+            emailStorageCache.setFolders(accountId, updated)
+            return updated
+          })
+        }
+
+        if (burstReloadTimerRef.current) clearTimeout(burstReloadTimerRef.current)
+        burstReloadTimerRef.current = setTimeout(async () => {
+          burstReloadTimerRef.current = null
+          const currentAcc = activeAccountIdRef.current
+          if (!currentAcc) return
+          if (isInboxFolder(activeFolderRef.current)) {
+            const currentCat = settings.showCategoryTabs ? activeCategoryRef.current : undefined
+            await loadEmails(activeFolderRef.current, currentAcc, true, false, currentCat)
+          }
+          await loadFolders(currentAcc)
+        }, 400)
       }
 
       // Sidebar dot only for wanted categories (Primary-only by default)
@@ -1746,6 +1819,11 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
         ) : selectedEmail ? (
           <EmailReader
             email={selectedEmail}
+            threadMessages={getThreadMessagesForEmail(messages, selectedEmail, {
+              groupBySender: !/sent|enviad|draft|rascunh/i.test(activeFolder),
+              selfAddress: accounts.find((a) => a.id === activeAccountId)?.email
+            })}
+            onSelectThreadEmail={handleSelectEmail}
             loading={loadingEmailContent}
             onBack={() => setSelectedEmail(null)}
             onReply={handleReply}
@@ -1770,6 +1848,7 @@ export const EmailsPage: React.FC<{ isActive?: boolean }> = ({ isActive: propIsA
             error={messagesError}
             retrying={autoRetrying}
             activeFolder={activeFolder}
+            accountEmail={accounts.find((a) => a.id === activeAccountId)?.email}
             activeCategory={activeCategory}
             onCategoryChange={handleCategoryChange}
             selectedEmailId={selectedEmail ? (selectedEmail as EmailMessage).id : null}

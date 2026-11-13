@@ -95,6 +95,7 @@
   "reader.viewText": "View Text",
   "reader.viewFormatted": "View Formatted",
   "reader.toggleView": "Toggle view format",
+  "reader.threadMessages": "Thread ({count})",
   "reader.noSubject": "(No subject)",
   "reader.to": "to",
   "reader.emptyBody": "(Empty message)",
@@ -266,6 +267,8 @@
   "connect.emailPlaceholder.custom": "you@yourdomain.com",
   "settings.notificationsEnabled": "System notifications",
   "settings.notificationsEnabledHint": "Desktop alerts when new email arrives",
+  "settings.notificationsAudioEnabled": "Receive audio notification",
+  "settings.notificationsAudioEnabledHint": "Read sender and subject aloud when a new email arrives",
   "list.emptySubtitleFolder": "Messages in this folder will show up here.",
   "page.errors.folderMissing": "This folder no longer exists on the server. Refresh the folder list.",
   "list.retrying": "Retrying automatically…"

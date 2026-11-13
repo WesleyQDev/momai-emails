@@ -1,7 +1,7 @@
 // src/components/EmailReader.tsx
 // Reading pane with sanitized HTML (DOMPurify), attachments, action toolbar, and quick reply
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   ArrowLeftIcon,
   ArrowUturnLeftIcon,
@@ -19,7 +19,7 @@ import { StarIcon as StarSolid } from '@heroicons/react/24/solid'
 import { EmailAvatar } from './EmailAvatar'
 import { AttachmentBadge } from './AttachmentBadge'
 import { EmailHtmlViewer } from './EmailHtmlViewer'
-import { useExtensionLocale, formatFullDate, formatFolderName } from '../services/i18n'
+import { useExtensionLocale, formatFullDate, formatFolderName, formatListDate } from '../services/i18n'
 import { hasReadableBody } from '../services/email-content'
 import { isArchiveFolder, isSpamFolder, getMoveTargets } from '../services/folders'
 import { starredToneClass } from '../services/starred-tone'
@@ -53,6 +53,8 @@ const renderPlainTextWithLinks = (text: string) => {
 
 interface EmailReaderProps {
   email: EmailMessage | null
+  threadMessages?: EmailMessage[]
+  onSelectThreadEmail?: (email: EmailMessage) => void
   loading: boolean
   onBack: () => void
   onReply: (email: EmailMessage, replyAll?: boolean) => void
@@ -72,6 +74,8 @@ interface EmailReaderProps {
 
 export const EmailReader: React.FC<EmailReaderProps> = ({
   email,
+  threadMessages,
+  onSelectThreadEmail,
   loading,
   onBack,
   onReply,
@@ -92,7 +96,29 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
   const [quickReplyText, setQuickReplyText] = useState('')
   const [showMoveMenu, setShowMoveMenu] = useState(false)
   const [isMoving, setIsMoving] = useState(false)
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set())
+  const [loadedById, setLoadedById] = useState<Record<string, EmailMessage>>({})
   const { locale, t } = useExtensionLocale()
+
+  const threadKey =
+    threadMessages && threadMessages.length > 1
+      ? threadMessages.map((m) => m.id).join(',')
+      : email?.id || ''
+
+  useEffect(() => {
+    if (threadMessages && threadMessages.length > 1) {
+      const latestId = threadMessages[threadMessages.length - 1].id
+      setExpandedIds(new Set(email ? [latestId, email.id] : [latestId]))
+    } else if (email) {
+      setExpandedIds(new Set([email.id]))
+    }
+  }, [threadKey])
+
+  useEffect(() => {
+    if (email && hasReadableBody(email)) {
+      setLoadedById((prev) => ({ ...prev, [email.id]: email }))
+    }
+  }, [email])
 
   // Instant open: with a message in hand (even header-only) the pane renders
   // immediately and only the body shows an inline loader. The full-screen
@@ -150,7 +176,89 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
     onMove(email.id, toFolder)
   }
 
-  const initial = (email.from.name || email.from.address || '?').charAt(0).toUpperCase()
+  const isThread = Boolean(threadMessages && threadMessages.length > 1)
+  const itemsToRender = isThread ? threadMessages! : [email]
+
+  const toggleThreadItem = (item: EmailMessage) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(item.id)) {
+        next.delete(item.id)
+      } else {
+        next.add(item.id)
+        if (!loadedById[item.id] && item.id !== email.id) {
+          onSelectThreadEmail?.(item)
+        }
+      }
+      return next
+    })
+  }
+
+  const renderMessageContent = (msg: EmailMessage) => (
+    <div className="text-xs text-text leading-relaxed">
+      {viewHtml && msg.html ? (
+        <EmailHtmlViewer html={msg.html} />
+      ) : loading && msg.id === email.id && !hasReadableBody(msg) ? (
+        <div className="w-full max-w-[720px] mx-auto p-4 rounded-xl bg-card border border-border/60 space-y-2">
+          <div className="flex items-center gap-2 text-text-muted">
+            <div className="w-3.5 h-3.5 border-2 border-error border-t-transparent rounded-full animate-spin" />
+            <span className="text-[11px]">{t('reader.loading')}</span>
+          </div>
+          <div className="h-3 rounded bg-input w-11/12" />
+          <div className="h-3 rounded bg-input w-full" />
+          <div className="h-3 rounded bg-input w-4/5" />
+          <div className="h-3 rounded bg-input w-3/5" />
+        </div>
+      ) : (
+        <div className="w-full max-w-[720px] mx-auto p-4 rounded-xl bg-card border border-border/60 font-sans whitespace-pre-wrap leading-relaxed text-text/90 break-words">
+          {renderPlainTextWithLinks(msg.text || msg.snippet || t('reader.emptyBody'))}
+        </div>
+      )}
+    </div>
+  )
+
+  const renderMessageAttachments = (msg: EmailMessage) =>
+    msg.attachments && msg.attachments.length > 0 ? (
+      <div className="space-y-3.5 pt-6 border-t border-border/80">
+        <div className="flex items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2 text-text">
+            <span className="font-semibold text-sm">
+              {msg.attachments.length === 1
+                ? t('reader.attachments.one')
+                : t('reader.attachments.many', { count: msg.attachments.length })}
+            </span>
+          </div>
+
+          {msg.attachments.length > 1 && onOpenAttachment && (
+            <button
+              type="button"
+              onClick={() => {
+                if (msg.attachments && msg.attachments.length > 0) {
+                  onOpenAttachment(msg, msg.attachments[0])
+                }
+              }}
+              className="text-xs text-text-muted hover:text-info font-medium transition-colors"
+            >
+              {t('reader.attachments.openDocument')}
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-start gap-4 flex-wrap">
+          {msg.attachments.map((att, idx) => (
+            <AttachmentBadge
+              key={idx}
+              attachment={att}
+              variant="card"
+              messageId={msg.id}
+              folder={msg.folder}
+              onOpen={onOpenAttachment ? () => onOpenAttachment(msg, att) : undefined}
+              onSave={onSaveAttachment ? () => onSaveAttachment(msg, att) : undefined}
+            />
+          ))}
+        </div>
+      </div>
+    ) : null
 
   return (
     <div className="flex-1 flex flex-col bg-card overflow-hidden">
@@ -257,109 +365,112 @@ export const EmailReader: React.FC<EmailReaderProps> = ({
       {/* Main Email View */}
       <div className="flex-1 overflow-y-auto py-4 sm:py-6 px-6 sm:px-10 space-y-6 border-l border-border min-w-0 max-w-full">
         {/* Subject Header */}
-        <div className="space-y-3">
-          <h1 className="text-xl font-bold text-text leading-tight">{email.subject || t('reader.noSubject')}</h1>
+        <h1 className="text-xl font-bold text-text leading-tight">{email.subject || t('reader.noSubject')}</h1>
 
-          {/* Sender & Recipient Card */}
-          <div className="flex items-start justify-between gap-4 pt-1">
-            <div className="flex items-start gap-3">
-              {/* Avatar */}
-              <EmailAvatar
-                name={email.from.name}
-                address={email.from.address}
-                size="lg"
-                className="w-10 h-10 shadow-xs"
-              />
+        {isThread ? (
+          <div className="divide-y divide-border/60 border-y border-border/60">
+            {itemsToRender.map((item) => {
+              const resolved = (item.id === email.id ? email : loadedById[item.id]) || item
+              const expanded = expandedIds.has(item.id)
+              if (!expanded) {
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => toggleThreadItem(item)}
+                    className="w-full flex items-center gap-3 py-3 px-2 text-left hover:bg-input/40 transition-colors cursor-pointer"
+                  >
+                    <EmailAvatar name={resolved.from.name} address={resolved.from.address} size="md" className="w-9 h-9 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-semibold text-text truncate">
+                        {resolved.from.name || resolved.from.address}
+                      </div>
+                      {resolved.snippet && (
+                        <div className="text-xs text-text-muted truncate">
+                          {resolved.snippet}
+                        </div>
+                      )}
+                    </div>
+                    <span className="text-[11px] text-text-muted font-mono whitespace-nowrap shrink-0">
+                      {formatListDate(resolved.timestamp, locale)}
+                    </span>
+                  </button>
+                )
+              }
 
-              {/* Names & Addresses */}
-              <div className="space-y-0.5 text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-text text-sm">{email.from.name || email.from.address}</span>
-                  <span className="text-text-muted text-[11px]">&lt;{email.from.address}&gt;</span>
+              return (
+                <div key={item.id} className="py-4 space-y-4">
+                  <div
+                    onClick={() => toggleThreadItem(item)}
+                    className="flex items-start justify-between gap-4 cursor-pointer rounded-lg px-1 py-1 hover:bg-input/20 transition-colors"
+                  >
+                    <div className="flex items-start gap-3">
+                      <EmailAvatar
+                        name={resolved.from.name}
+                        address={resolved.from.address}
+                        size="lg"
+                        className="w-10 h-10 shadow-xs"
+                      />
+                      <div className="space-y-0.5 text-xs">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-text text-sm">{resolved.from.name || resolved.from.address}</span>
+                          <span className="text-text-muted text-[11px]">&lt;{resolved.from.address}&gt;</span>
+                        </div>
+                        <div className="text-text-muted text-[11px]">
+                          <span>{t('reader.to')}: {resolved.to.map((r) => r.name || r.address).join(', ')}</span>
+                          {resolved.cc && resolved.cc.length > 0 && (
+                            <span className="ml-2">cc: {resolved.cc.map((c) => c.name || c.address).join(', ')}</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <span className="text-[11px] text-text-muted font-mono whitespace-nowrap shrink-0">
+                      {formatFullDate(resolved.timestamp, locale)}
+                    </span>
+                  </div>
+
+                  {renderMessageContent(resolved)}
+                  {renderMessageAttachments(resolved)}
                 </div>
-                <div className="text-text-muted text-[11px]">
-                  <span>{t('reader.to')}: {email.to.map((r) => r.name || r.address).join(', ')}</span>
-                  {email.cc && email.cc.length > 0 && (
-                    <span className="ml-2">cc: {email.cc.map((c) => c.name || c.address).join(', ')}</span>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Date */}
-            <span className="text-[11px] text-text-muted font-mono whitespace-nowrap shrink-0">
-              {formatFullDate(email.timestamp, locale)}
-            </span>
+              )
+            })}
           </div>
-        </div>
-
-        <div className="border-t border-border/50" />
-
-        {/* Email Body Content */}
-        <div className="text-xs text-text leading-relaxed">
-          {viewHtml && email.html ? (
-            <EmailHtmlViewer html={email.html} />
-          ) : loading && !hasReadableBody(email) ? (
-            <div className="w-full max-w-[720px] mx-auto p-4 rounded-xl bg-card border border-border/60 space-y-2">
-              <div className="flex items-center gap-2 text-text-muted">
-                <div className="w-3.5 h-3.5 border-2 border-error border-t-transparent rounded-full animate-spin" />
-                <span className="text-[11px]">{t('reader.loading')}</span>
-              </div>
-              <div className="h-3 rounded bg-input w-11/12" />
-              <div className="h-3 rounded bg-input w-full" />
-              <div className="h-3 rounded bg-input w-4/5" />
-              <div className="h-3 rounded bg-input w-3/5" />
-            </div>
-          ) : (
-            <div className="w-full max-w-[720px] mx-auto p-4 rounded-xl bg-card border border-border/60 font-sans whitespace-pre-wrap leading-relaxed text-text/90 break-words">
-              {renderPlainTextWithLinks(email.text || email.snippet || t('reader.emptyBody'))}
-            </div>
-          )}
-        </div>
-
-        {/* Attachments Section (Gmail style) */}
-        {email.attachments && email.attachments.length > 0 && (
-          <div className="space-y-3.5 pt-6 border-t border-border/80">
-            {/* Header: attachment count */}
-            <div className="flex items-center justify-between gap-2 text-xs">
-              <div className="flex items-center gap-2 text-text">
-                <span className="font-semibold text-sm">
-                  {email.attachments.length === 1
-                    ? t('reader.attachments.one')
-                    : t('reader.attachments.many', { count: email.attachments.length })}
-                </span>
-              </div>
-
-              {email.attachments.length > 1 && onOpenAttachment && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (email.attachments && email.attachments.length > 0) {
-                      onOpenAttachment(email, email.attachments[0])
-                    }
-                  }}
-                  className="text-xs text-text-muted hover:text-info font-medium transition-colors"
-                >
-                  {t('reader.attachments.openDocument')}
-                </button>
-              )}
-            </div>
-
-            {/* Attachments Cards Grid with Realistic Previews */}
-            <div className="flex items-start gap-4 flex-wrap">
-              {email.attachments.map((att, idx) => (
-                <AttachmentBadge
-                  key={idx}
-                  attachment={att}
-                  variant="card"
-                  messageId={email.id}
-                  folder={email.folder}
-                  onOpen={onOpenAttachment ? () => onOpenAttachment(email, att) : undefined}
-                  onSave={onSaveAttachment ? () => onSaveAttachment(email, att) : undefined}
+        ) : (
+          <>
+            {/* Sender & Recipient Card */}
+            <div className="flex items-start justify-between gap-4 pt-1">
+              <div className="flex items-start gap-3">
+                <EmailAvatar
+                  name={email.from.name}
+                  address={email.from.address}
+                  size="lg"
+                  className="w-10 h-10 shadow-xs"
                 />
-              ))}
+
+                <div className="space-y-0.5 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-text text-sm">{email.from.name || email.from.address}</span>
+                    <span className="text-text-muted text-[11px]">&lt;{email.from.address}&gt;</span>
+                  </div>
+                  <div className="text-text-muted text-[11px]">
+                    <span>{t('reader.to')}: {email.to.map((r) => r.name || r.address).join(', ')}</span>
+                    {email.cc && email.cc.length > 0 && (
+                      <span className="ml-2">cc: {email.cc.map((c) => c.name || c.address).join(', ')}</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <span className="text-[11px] text-text-muted font-mono whitespace-nowrap shrink-0">
+                {formatFullDate(email.timestamp, locale)}
+              </span>
             </div>
-          </div>
+
+            <div className="border-t border-border/50" />
+
+            {renderMessageContent(email)}
+            {renderMessageAttachments(email)}
+          </>
         )}
 
         {/* Action Pills: Responder, Favoritar, Mover e Não é spam */}

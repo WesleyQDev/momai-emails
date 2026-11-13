@@ -95,6 +95,7 @@
   "reader.viewText": "Text anzeigen",
   "reader.viewFormatted": "Formatiert anzeigen",
   "reader.toggleView": "Anzeigeformat wechseln",
+  "reader.threadMessages": "Unterhaltung ({count})",
   "reader.noSubject": "(Kein Betreff)",
   "reader.to": "an",
   "reader.emptyBody": "(Leere Nachricht)",
@@ -266,6 +267,8 @@
   "connect.emailPlaceholder.custom": "du@deinedomain.com",
   "settings.notificationsEnabled": "Systembenachrichtigungen",
   "settings.notificationsEnabledHint": "Systemhinweise bei neuen E-Mails",
+  "settings.notificationsAudioEnabled": "Audio-Benachrichtigung erhalten",
+  "settings.notificationsAudioEnabledHint": "Absender und Betreff bei neuen E-Mails laut vorlesen",
   "list.emptySubtitleFolder": "Nachrichten in diesem Ordner erscheinen hier.",
   "page.errors.folderMissing": "Dieser Ordner existiert auf dem Server nicht mehr. Aktualisiere die Ordnerliste.",
   "list.retrying": "Erneuter Versuch läuft automatisch…"

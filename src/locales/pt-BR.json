@@ -95,6 +95,7 @@
   "reader.viewText": "Ver Texto",
   "reader.viewFormatted": "Ver Formatado",
   "reader.toggleView": "Alternar formato de visualização",
+  "reader.threadMessages": "Conversa ({count})",
   "reader.noSubject": "(Sem assunto)",
   "reader.to": "para",
   "reader.emptyBody": "(Mensagem vazia)",
@@ -266,6 +267,8 @@
   "connect.emailPlaceholder.custom": "voce@seudominio.com",
   "settings.notificationsEnabled": "Receber notificações no sistema",
   "settings.notificationsEnabledHint": "Avisos do sistema quando chegar novo e-mail",
+  "settings.notificationsAudioEnabled": "Receber notificação com áudio",
+  "settings.notificationsAudioEnabledHint": "Ler em voz alta o remetente e o assunto quando chegar novo e-mail",
   "list.emptySubtitleFolder": "As mensagens desta pasta aparecerão aqui.",
   "page.errors.folderMissing": "Esta pasta não existe mais no servidor. Atualize a lista de pastas.",
   "list.retrying": "Tentando novamente automaticamente…"

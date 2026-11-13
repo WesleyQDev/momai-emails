@@ -31,6 +31,7 @@ import { isArchiveFolder, isDraftMessage, isSpamFolder, isStarredFolder, getMove
 import { formatSentRecipients, shouldShowRecipients } from '../services/recipients'
 import { isKnownDraftMessage } from '../services/draft'
 import { starredToneClass } from '../services/starred-tone'
+import { groupEmailsIntoThreads } from '../services/threads'
 
 const MoveToTabIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -94,6 +95,7 @@ interface EmailListProps {
   totalCount?: number
   showCategoryTabs?: boolean
   unreadWindowMs?: number
+  accountEmail?: string
   pageSize?: number
   page?: number
   onPageChange?: (page: number) => void
@@ -107,6 +109,7 @@ export const EmailList: React.FC<EmailListProps> = ({
   error,
   retrying = false,
   activeFolder,
+  accountEmail,
   selectedEmailId,
   searchQuery,
   onSearchChange,
@@ -217,14 +220,24 @@ export const EmailList: React.FC<EmailListProps> = ({
     }
     return counts
   }, [messages, classifyEmail])
-  const pageWindow = getPageWindow(filteredMessages.length, page, pageSize)
-  const pageMessages = React.useMemo(
-    () => filteredMessages.slice(pageWindow.start, pageWindow.end),
-    [filteredMessages, pageWindow.start, pageWindow.end]
+  const isSentOrDrafts = /sent|enviad|draft|rascunh/i.test(activeFolder)
+  const threads = React.useMemo(
+    () =>
+      groupEmailsIntoThreads(filteredMessages, {
+        groupBySender: !isSentOrDrafts,
+        selfAddress: accountEmail
+      }),
+    [filteredMessages, isSentOrDrafts, accountEmail]
   )
+  const pageWindow = getPageWindow(threads.length, page, pageSize)
+  const pageThreads = React.useMemo(
+    () => threads.slice(pageWindow.start, pageWindow.end),
+    [threads, pageWindow.start, pageWindow.end]
+  )
+  const pageMessages = React.useMemo(() => pageThreads.map((t) => t.representative), [pageThreads])
   const canPrev = page > 0
   const canNext =
-    filteredMessages.length > pageWindow.end || hasMore || loadingMore
+    threads.length > pageWindow.end || hasMore || loadingMore
 
   // Fill short pages automatically and pre-fetch the next page in background,
   // ensuring that clicking ">" advances in 0ms instantly without loading delay.
@@ -475,8 +488,9 @@ export const EmailList: React.FC<EmailListProps> = ({
             </div>
           )
         ) : (
-          pageMessages.map((msg) => {
-            const isSelected = selectedEmailId === msg.id
+          pageThreads.map((thread) => {
+            const msg = thread.representative
+            const isSelected = selectedEmailId === msg.id || thread.messages.some((m) => m.id === selectedEmailId)
             const isChecked = selectedIds.has(msg.id)
             const showRecipients = shouldShowRecipients(activeFolder, activeFolderRole, msg, folders)
 
@@ -546,6 +560,11 @@ export const EmailList: React.FC<EmailListProps> = ({
                   <span className={`truncate ${msg.read ? 'text-text-muted font-normal' : 'text-text font-bold'}`}>
                     {msg.from.name || msg.from.address}
                   </span>
+                  {thread.count > 1 && (
+                    <span className="shrink-0 text-[11px] font-medium text-text-muted">
+                      ({thread.count})
+                    </span>
+                  )}
                 </div>
                 )}
 
