@@ -182,7 +182,7 @@
   ],
   "sdkVersion": 1,
   "momai_compat": ">=1.18.0",
-  "version": "1.8.1",
+  "version": "1.9.0",
   "ui": {
     "page": "dist/page.js",
     "pageType": "momai-emails-page",
