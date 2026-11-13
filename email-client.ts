@@ -311,6 +311,11 @@ function createSmtpTransporter(account: any) {
 // Active IMAP connection pool (1 warm client per account)
 const imapPool = new Map<string, any>()
 const connectionPromises = new Map<string, Promise<any>>()
+let mailboxArrivalListener: ((accountKey: string) => void) | null = null
+
+function setMailboxArrivalListener(listener: ((accountKey: string) => void) | null): void {
+  mailboxArrivalListener = typeof listener === 'function' ? listener : null
+}
 
 /**
  * Get or create an active, authenticated IMAP connection for the account.
@@ -342,6 +347,16 @@ async function getConnectedImapClient(account: any) {
       })
       client.on('error', () => {
         imapPool.delete(key)
+      })
+      client.on('exists', (event: any) => {
+        try {
+          const count = Number(event?.count || 0)
+          const prevCount = Number(event?.prevCount || 0)
+          const pathUpper = String(event?.path || client?.mailbox?.path || 'INBOX').toUpperCase()
+          if (count > prevCount && pathUpper === 'INBOX') {
+            mailboxArrivalListener?.(key)
+          }
+        } catch {}
       })
 
       const connectPromise = client.connect()
@@ -454,27 +469,31 @@ async function acquireMailboxLock(
   getConnectedClientFn?: (acc: any) => Promise<any>,
   lockOptions?: { readOnly?: boolean }
 ): Promise<{ client: any; lock: any }> {
+  const firstAttempt = requestMailboxLock(client, folder, lockOptions)
   try {
     const lock = await withTimeout(
-      requestMailboxLock(client, folder, lockOptions),
+      firstAttempt,
       timeoutMs,
       `Timeout (${timeoutMs}ms) aguardando liberação da pasta "${folder}" no IMAP`
     )
     return { client, lock }
   } catch (err: any) {
+    releaseLockWhenSettled(firstAttempt)
     if (isMissingMailboxError(err)) throw markFolderError(err, folder)
     const key = account.id || account.email
     releaseImapClient(key)
     const connectFn = getConnectedClientFn || getConnectedImapClient
     const freshClient = await connectFn(account)
+    const retryAttempt = requestMailboxLock(freshClient, folder, lockOptions)
     try {
       const freshLock = await withTimeout(
-        requestMailboxLock(freshClient, folder, lockOptions),
+        retryAttempt,
         timeoutMs,
         `Timeout (${timeoutMs}ms) ao obter pasta "${folder}" após reconexão`
       )
       return { client: freshClient, lock: freshLock }
     } catch (retryErr: any) {
+      releaseLockWhenSettled(retryAttempt)
       throw markFolderError(retryErr, folder)
     }
   }
@@ -703,7 +722,11 @@ async function getMailboxStatus(account: any, folder = 'INBOX') {
     return { ok: false, error: formatImapError(err), messages: 0, unseen: 0, uidNext: 0 }
   }
   try {
-    const status = await client.status(folder, { messages: true, unseen: true, uidNext: true })
+    const status: any = await withTimeout(
+      client.status(folder, { messages: true, unseen: true, uidNext: true }),
+      IMAP_OPERATION_TIMEOUT_MS,
+      `Timeout (${IMAP_OPERATION_TIMEOUT_MS}ms) ao verificar status da pasta "${folder}" no IMAP`
+    )
     return {
       ok: true,
       messages: status.messages || 0,
@@ -899,6 +922,7 @@ function toFetchedMessage(msg: any, account: any, folder: string): any {
     id: String(msg.uid || msg.seq),
     uid: msg.uid || msg.seq,
     messageId: env.messageId || String(msg.uid || msg.seq),
+    inReplyTo: env.inReplyTo || undefined,
     accountId: account.id || account.email,
     folder,
     subject: env.subject || '(Sem assunto)',
@@ -2261,6 +2285,7 @@ module.exports = {
   getAttachmentsBaseDir,
   setAttachmentsBaseDir,
   setDiagnosticSink,
+  setMailboxArrivalListener,
   getMessageCacheDir,
   invalidateMessageCache,
   pruneMessageCache,

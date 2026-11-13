@@ -114,6 +114,17 @@ export const EmailSettings: React.FC<EmailSettingsProps> = ({
             }
           />
           <Row
+            label={t('settings.notificationsAudioEnabled')}
+            hint={t('settings.notificationsAudioEnabledHint')}
+            control={
+              <Toggle
+                on={settings.notificationsAudioEnabled}
+                onToggle={() => onChange({ notificationsAudioEnabled: !settings.notificationsAudioEnabled })}
+                label={t('settings.notificationsAudioEnabled')}
+              />
+            }
+          />
+          <Row
             label={t('settings.notifyPrimaryOnly')}
             hint={t('settings.notifyPrimaryOnlyHint')}
             control={

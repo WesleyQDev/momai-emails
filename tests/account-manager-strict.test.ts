@@ -59,11 +59,14 @@ describe('AccountManager account resolution and notification prefs', () => {
   it('round-trips the native notifications switch', async () => {
     const manager = makeManager()
     expect((await manager.getNotificationPrefs()).notificationsEnabled).toBe(true)
+    expect((await manager.getNotificationPrefs()).notificationsAudioEnabled).toBe(true)
 
-    await manager.setNotificationPrefs({ notificationsEnabled: false })
+    await manager.setNotificationPrefs({ notificationsEnabled: false, notificationsAudioEnabled: false })
     expect((await manager.getNotificationPrefs()).notificationsEnabled).toBe(false)
+    expect((await manager.getNotificationPrefs()).notificationsAudioEnabled).toBe(false)
 
-    await manager.setNotificationPrefs({ notificationsEnabled: true })
+    await manager.setNotificationPrefs({ notificationsEnabled: true, notificationsAudioEnabled: true })
     expect((await manager.getNotificationPrefs()).notificationsEnabled).toBe(true)
+    expect((await manager.getNotificationPrefs()).notificationsAudioEnabled).toBe(true)
   })
 })

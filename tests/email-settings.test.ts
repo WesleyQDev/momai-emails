@@ -30,6 +30,7 @@ describe('email settings (concise gear menu)', () => {
     expect(DEFAULT_EMAIL_SETTINGS).toEqual({
       notifyPrimaryOnly: true,
       notificationsEnabled: true,
+      notificationsAudioEnabled: true,
       showCategoryTabs: true,
       unreadWindowHours: 48,
       autoMarkRead: true
@@ -45,6 +46,7 @@ describe('email settings (concise gear menu)', () => {
       {
         notifyPrimaryOnly: false,
         notificationsEnabled: false,
+        notificationsAudioEnabled: false,
         showCategoryTabs: false,
         unreadWindowHours: 24,
         autoMarkRead: false
@@ -54,6 +56,7 @@ describe('email settings (concise gear menu)', () => {
     expect(loadEmailSettings(store)).toEqual({
       notifyPrimaryOnly: false,
       notificationsEnabled: false,
+      notificationsAudioEnabled: false,
       showCategoryTabs: false,
       unreadWindowHours: 24,
       autoMarkRead: false

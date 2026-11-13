@@ -72,4 +72,56 @@ describe('AccountManager primeAccount resilience', () => {
       emailClient.fetchMessages = origFetchMessages
     }
   })
+
+  it('skips redundant 50-message fetch during primeAccount when STATUS already provides uidNext', async () => {
+    const manager = new AccountManager(tmpDir)
+    const fakeAccount = { id: 'acc_fast_prime', email: 'fast@example.com' }
+
+    const origGetMailboxStatus = emailClient.getMailboxStatus
+    const origFetchMessages = emailClient.fetchMessages
+
+    emailClient.getMailboxStatus = vi.fn(async () => ({
+      ok: true,
+      messages: 42,
+      unseen: 3,
+      uidNext: 201
+    }))
+    const fetchSpy = vi.fn(async () => ({ messages: [], total: 0, hasMore: false }))
+    emailClient.fetchMessages = fetchSpy
+
+    try {
+      await manager.primeAccount(fakeAccount.id, fakeAccount)
+      expect(manager.lastSeenUids.get(fakeAccount.id)).toBe(200)
+      expect(manager.unreadCounts.get(fakeAccount.id)).toBe(3)
+      expect(fetchSpy).not.toHaveBeenCalled()
+    } finally {
+      emailClient.getMailboxStatus = origGetMailboxStatus
+      emailClient.fetchMessages = origFetchMessages
+    }
+  })
+
+  it('emits onNewEmail immediately when foreground INBOX listing observes a newer UID', async () => {
+    const manager = new AccountManager(tmpDir)
+    const fakeAccount = { id: 'acc_fg', email: 'fg@example.com' }
+    manager.accounts.set(fakeAccount.id, fakeAccount)
+    manager.lastSeenUids.set(fakeAccount.id, 100)
+
+    const events: any[] = []
+    manager.setOnNewEmail((evt: any) => events.push(evt))
+
+    await manager.observeFetchedInboxMessages(fakeAccount.id, [
+      { id: '102', uid: 102, subject: 'Newest arrival', from: { name: 'Alice', address: 'alice@example.com' } },
+      { id: '101', uid: 101, subject: 'First arrival', from: { name: 'Bob', address: 'bob@example.com' } },
+      { id: '100', uid: 100, subject: 'Already seen', from: { name: 'Old', address: 'old@example.com' } }
+    ])
+
+    expect(manager.lastSeenUids.get(fakeAccount.id)).toBe(102)
+    expect(events.map((e) => e.email.uid)).toEqual([101, 102])
+
+    // Calling again with the same messages does not emit duplicate notifications
+    await manager.observeFetchedInboxMessages(fakeAccount.id, [
+      { id: '102', uid: 102, subject: 'Newest arrival', from: { name: 'Alice', address: 'alice@example.com' } }
+    ])
+    expect(events).toHaveLength(2)
+  })
 })

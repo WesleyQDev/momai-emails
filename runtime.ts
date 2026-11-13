@@ -15,6 +15,7 @@ const _WORKER_LOCALE = (() => {
 const _WORKER_STRINGS = {
   'pt-BR': {
     notifications_newEmail: 'Novo e-mail',
+    notifications_ttsPrefix: 'Novo e-mail de',
     notifications_unknownSender: 'Desconhecido',
     notifications_noSubject: '(Sem assunto)',
     reply_originalHeader: '--- Mensagem Original ---',
@@ -28,6 +29,7 @@ const _WORKER_STRINGS = {
   },
   'en-US': {
     notifications_newEmail: 'New email',
+    notifications_ttsPrefix: 'New email from',
     notifications_unknownSender: 'Unknown',
     notifications_noSubject: '(No subject)',
     reply_originalHeader: '--- Original Message ---',
@@ -146,13 +148,19 @@ accountManager.setOnNewEmail(async ({ accountId, email, totalUnread }: any) => {
       eventType: 'new_email',
       data: {
         accountId,
+        uid: email.uid,
         from: fromStr,
         to: toStr,
         subject: email.subject || _wtr('notifications_noSubject'),
         snippet: email.snippet || '',
         date: email.date,
         messageId: email.messageId || email.id,
-        category
+        category,
+        email: {
+          ...email,
+          accountId,
+          category
+        }
       }
     })
 
@@ -190,13 +198,20 @@ accountManager.setOnNewEmail(async ({ accountId, email, totalUnread }: any) => {
         ? email.from.name || email.from.address || _wtr('notifications_newEmail')
         : email.from || _wtr('notifications_newEmail')
 
+    const subjectText = email.subject || _wtr('notifications_noSubject')
+    const ttsText =
+      prefs.notificationsAudioEnabled !== false
+        ? `${_wtr('notifications_ttsPrefix')} ${senderName}: ${subjectText}`
+        : undefined
+
     safeSend({
       type: 'event',
       eventType: 'notification',
       data: {
         title: senderName,
-        body: email.subject || _wtr('notifications_noSubject'),
-        action: 'momai-emails:open'
+        body: subjectText,
+        action: 'momai-emails:open',
+        ...(ttsText ? { tts: ttsText } : {})
       }
     })
   } catch (err: any) {
@@ -236,6 +251,17 @@ function listEmailsSingleFlight(key: string, run: () => Promise<any>): Promise<a
   return task
 }
 
+async function resolveAccountForTool(accountId?: string): Promise<any | null> {
+  let account = accountManager.getAccountForTool(accountId)
+  if (!account && !accountManager.isAccountsLoaded()) {
+    try {
+      await accountManager.ensureAccountsLoaded()
+    } catch {}
+    account = accountManager.getAccountForTool(accountId)
+  }
+  return account
+}
+
 /**
  * Tool & Command Dispatcher
  */
@@ -252,6 +278,11 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
 
     // ── Account Management ──
     case 'list_accounts': {
+      if (!accountManager.isAccountsLoaded()) {
+        try {
+          await accountManager.ensureAccountsLoaded()
+        } catch {}
+      }
       let accounts = accountManager.getPublicAccounts()
       if (accounts.length === 0) {
         try {
@@ -285,6 +316,11 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'remove_account': {
+      if (!accountManager.isAccountsLoaded()) {
+        try {
+          await accountManager.ensureAccountsLoaded()
+        } catch {}
+      }
       const ok = await accountManager.removeAccount(args.id || args.accountId)
       return { ok }
     }
@@ -293,16 +329,31 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     // intentionally not declared as manifest tools: the Assistant never reads
     // credentials, only the extension UI filling its own form.
     case 'get_remembered_password': {
+      if (!accountManager.isAccountsLoaded()) {
+        try {
+          await accountManager.ensureAccountsLoaded()
+        } catch {}
+      }
       const password = accountManager.getRememberedPassword(args.email || args.accountId)
       return password ? { ok: true, password } : { ok: false }
     }
 
     case 'forget_remembered_password': {
+      if (!accountManager.isAccountsLoaded()) {
+        try {
+          await accountManager.ensureAccountsLoaded()
+        } catch {}
+      }
       const ok = await accountManager.forgetRememberedPassword(args.email || args.accountId)
       return { ok }
     }
 
     case 'set_active_account': {
+      if (!accountManager.isAccountsLoaded()) {
+        try {
+          await accountManager.ensureAccountsLoaded()
+        } catch {}
+      }
       const ok = accountManager.setActiveAccount(args.id || args.accountId)
       return { ok }
     }
@@ -320,8 +371,16 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
 
     // ── Folders & Mailboxes ──
     case 'list_folders': {
-      const account = accountManager.getAccountForTool(args.accountId)
-      if (!account) return { ok: false, error: 'Nenhuma conta de e-mail configurada.' }
+      const account = await resolveAccountForTool(args.accountId)
+      if (!account) {
+        return {
+          ok: false,
+          error: 'Nenhuma conta de e-mail configurada.',
+          errorCode: 'no_account',
+          retryable: false,
+          folders: []
+        }
+      }
       try {
         const prefs = await accountManager.getNotificationPrefs()
         const folders = await listMailboxes(account, prefs.unreadWindowHours)
@@ -333,8 +392,16 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
 
     // ── Emails ──
     case 'list_emails': {
-      const account = accountManager.getAccountForTool(args.accountId)
-      if (!account) return { ok: false, error: 'Nenhuma conta de e-mail encontrada.' }
+      const account = await resolveAccountForTool(args.accountId)
+      if (!account) {
+        return {
+          ok: false,
+          error: 'Nenhuma conta de e-mail encontrada.',
+          errorCode: 'no_account',
+          retryable: false,
+          messages: []
+        }
+      }
       try {
         const folder = args.folder || 'INBOX'
         const limit = clampToolLimit(args.limit, 50)
@@ -350,6 +417,14 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
             gmailCategory: category
           })
         )
+        if (
+          String(folder).toUpperCase() === 'INBOX' &&
+          offset === 0 &&
+          Array.isArray(result?.messages) &&
+          result.messages.length > 0
+        ) {
+          void accountManager.observeFetchedInboxMessages(account.id, result.messages).catch(() => {})
+        }
         return {
           ok: true,
           folder,
@@ -375,7 +450,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'read_email': {
-      const account = accountManager.getAccountForTool(args.accountId)
+      const account = await resolveAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail encontrada.' }
       try {
         const messageId = args.messageId || args.id || args.uid
@@ -400,7 +475,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'open_attachment': {
-      const account = accountManager.getAccountForTool(args.accountId)
+      const account = await resolveAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail encontrada.' }
       try {
         const messageId = args.messageId || args.id || args.uid
@@ -432,7 +507,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'save_attachment': {
-      const account = accountManager.getAccountForTool(args.accountId)
+      const account = await resolveAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail encontrada.' }
       try {
         const messageId = args.messageId || args.id || args.uid
@@ -468,7 +543,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'get_attachment_preview': {
-      const account = accountManager.getAccountForTool(args.accountId)
+      const account = await resolveAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Conta não encontrada.' }
       try {
         const messageId = args.messageId || args.id || args.uid
@@ -493,7 +568,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'search_emails': {
-      const account = accountManager.getAccountForTool(args.accountId)
+      const account = await resolveAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail encontrada.' }
       try {
         const query = args.query || ''
@@ -517,7 +592,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'send_email': {
-      const account = accountManager.getAccountForTool(args.accountId)
+      const account = await resolveAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail configurada para envio.' }
       try {
         const result = await sendEmail(account, {
@@ -556,7 +631,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'save_draft': {
-      const account = accountManager.getAccountForTool(args.accountId)
+      const account = await resolveAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail configurada para rascunho.' }
       try {
         const result = await saveDraft(account, {
@@ -588,7 +663,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'reply_email': {
-      const account = accountManager.getAccountForTool(args.accountId)
+      const account = await resolveAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail configurada.' }
       try {
         const origEmail = await fetchFullMessage(account, args.messageId, args.folder || 'INBOX')
@@ -629,7 +704,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'forward_email': {
-      const account = accountManager.getAccountForTool(args.accountId)
+      const account = await resolveAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Nenhuma conta de e-mail configurada.' }
       try {
         const origEmail = await fetchFullMessage(account, args.messageId, args.folder || 'INBOX')
@@ -664,7 +739,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'mark_as_read': {
-      const account = accountManager.getAccountForTool(args.accountId)
+      const account = await resolveAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Conta não encontrada.' }
       const uid = parseInt(args.messageId || args.uid, 10)
       const ok = await setMessageReadStatus(account, uid, true, args.folder || 'INBOX')
@@ -682,7 +757,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'mark_as_unread': {
-      const account = accountManager.getAccountForTool(args.accountId)
+      const account = await resolveAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Conta não encontrada.' }
       const uid = parseInt(args.messageId || args.uid, 10)
       const ok = await setMessageReadStatus(account, uid, false, args.folder || 'INBOX')
@@ -698,7 +773,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'toggle_starred': {
-      const account = accountManager.getAccountForTool(args.accountId)
+      const account = await resolveAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Conta não encontrada.' }
       const uid = parseInt(args.messageId || args.uid, 10)
       const ok = await setMessageStarredStatus(account, uid, Boolean(args.starred), args.folder || 'INBOX')
@@ -706,7 +781,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'delete_email': {
-      const account = accountManager.getAccountForTool(args.accountId)
+      const account = await resolveAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Conta não encontrada.' }
       const uid = parseInt(args.messageId || args.uid, 10)
       const ok = await deleteMessage(account, uid, args.folder || 'INBOX')
@@ -714,7 +789,7 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
     }
 
     case 'move_email': {
-      const account = accountManager.getAccountForTool(args.accountId)
+      const account = await resolveAccountForTool(args.accountId)
       if (!account) return { ok: false, error: 'Conta não encontrada.' }
       const uid = parseInt(args.messageId || args.uid, 10)
       const ok = await moveMessage(account, uid, args.fromFolder || 'INBOX', args.toFolder)
@@ -730,6 +805,8 @@ async function executeTool(toolName: string, args: any = {}): Promise<any> {
       const prefs = await accountManager.setNotificationPrefs({
         primaryOnly: typeof args.primaryOnly === 'boolean' ? args.primaryOnly : undefined,
         notificationsEnabled: typeof args.notificationsEnabled === 'boolean' ? args.notificationsEnabled : undefined,
+        notificationsAudioEnabled:
+          typeof args.notificationsAudioEnabled === 'boolean' ? args.notificationsAudioEnabled : undefined,
         unreadWindowHours: typeof args.unreadWindowHours === 'number' ? args.unreadWindowHours : undefined
       })
       return { ok: true, ...prefs }

@@ -162,6 +162,9 @@ class AccountManager {
   private removedAvatars: Set<string> = new Set()
   private activeAccountId: string | null = null
   private pollInterval: any = null
+  private immediateCheckTimer: any = null
+  private initialLoadPromise: Promise<void> | null = null
+  private accountsLoaded = false
   private lastSeenUids: Map<string, number> = new Map()
   private seenUids: Map<string, Set<number>> = new Map()
   private unreadCounts: Map<string, number> = new Map()
@@ -197,6 +200,11 @@ class AccountManager {
       this.avatarFetcher = deps.avatarFetcher ?? null
     } else if (!process.env.VITEST) {
       this.avatarFetcher = (email: string) => fetchAccountAvatar(email)
+    }
+    if (typeof emailClient.setMailboxArrivalListener === 'function') {
+      emailClient.setMailboxArrivalListener(() => {
+        this.scheduleImmediateCheck()
+      })
     }
     fs.mkdirSync(this.storageDir, { recursive: true })
   }
@@ -282,7 +290,12 @@ class AccountManager {
     return total
   }
 
-  public async getNotificationPrefs(): Promise<{ primaryOnly: boolean; notificationsEnabled: boolean; unreadWindowHours: 24 | 48 }> {
+  public async getNotificationPrefs(): Promise<{
+    primaryOnly: boolean
+    notificationsEnabled: boolean
+    notificationsAudioEnabled: boolean
+    unreadWindowHours: 24 | 48
+  }> {
     if (this.useHostStorage()) {
       try {
         const stored = await this.readStoredJson('notify-prefs', this.notifyPrefsFile)
@@ -291,11 +304,13 @@ class AccountManager {
             primaryOnly: typeof stored.primaryOnly === 'boolean' ? stored.primaryOnly : true,
             notificationsEnabled:
               typeof stored.notificationsEnabled === 'boolean' ? stored.notificationsEnabled : true,
+            notificationsAudioEnabled:
+              typeof stored.notificationsAudioEnabled === 'boolean' ? stored.notificationsAudioEnabled : true,
             unreadWindowHours: stored.unreadWindowHours === 24 ? 24 : 48
           }
         }
       } catch {}
-      return { primaryOnly: true, notificationsEnabled: true, unreadWindowHours: 48 }
+      return { primaryOnly: true, notificationsEnabled: true, notificationsAudioEnabled: true, unreadWindowHours: 48 }
     }
     try {
       if (fs.existsSync(this.notifyPrefsFile)) {
@@ -304,16 +319,24 @@ class AccountManager {
           primaryOnly: typeof parsed.primaryOnly === 'boolean' ? parsed.primaryOnly : true,
           notificationsEnabled:
             typeof parsed.notificationsEnabled === 'boolean' ? parsed.notificationsEnabled : true,
+          notificationsAudioEnabled:
+            typeof parsed.notificationsAudioEnabled === 'boolean' ? parsed.notificationsAudioEnabled : true,
           unreadWindowHours: parsed.unreadWindowHours === 24 ? 24 : 48
         }
       }
     } catch {}
-    return { primaryOnly: true, notificationsEnabled: true, unreadWindowHours: 48 }
+    return { primaryOnly: true, notificationsEnabled: true, notificationsAudioEnabled: true, unreadWindowHours: 48 }
   }
 
-  public async setNotificationPrefs(prefs: { primaryOnly?: boolean; notificationsEnabled?: boolean; unreadWindowHours?: number }): Promise<{
+  public async setNotificationPrefs(prefs: {
+    primaryOnly?: boolean
+    notificationsEnabled?: boolean
+    notificationsAudioEnabled?: boolean
+    unreadWindowHours?: number
+  }): Promise<{
     primaryOnly: boolean
     notificationsEnabled: boolean
+    notificationsAudioEnabled: boolean
     unreadWindowHours: 24 | 48
   }> {
     const current = await this.getNotificationPrefs()
@@ -321,6 +344,10 @@ class AccountManager {
       primaryOnly: typeof prefs.primaryOnly === 'boolean' ? prefs.primaryOnly : current.primaryOnly,
       notificationsEnabled:
         typeof prefs.notificationsEnabled === 'boolean' ? prefs.notificationsEnabled : current.notificationsEnabled,
+      notificationsAudioEnabled:
+        typeof prefs.notificationsAudioEnabled === 'boolean'
+          ? prefs.notificationsAudioEnabled
+          : current.notificationsAudioEnabled,
       unreadWindowHours: (prefs.unreadWindowHours === 24 ? 24 : prefs.unreadWindowHours === 48 ? 48 : current.unreadWindowHours) as 24 | 48
     }
     try {
@@ -513,11 +540,32 @@ class AccountManager {
     }
   }
 
+  public isAccountsLoaded(): boolean {
+    return this.accountsLoaded
+  }
+
+  public async ensureAccountsLoaded(): Promise<void> {
+    if (this.accountsLoaded) return
+    if (this.initialLoadPromise) {
+      await this.initialLoadPromise
+      return
+    }
+    this.initialLoadPromise = (async () => {
+      try {
+        await this.loadAccounts()
+        await this.loadRememberedPasswords()
+      } finally {
+        this.accountsLoaded = true
+        this.initialLoadPromise = null
+      }
+    })()
+    await this.initialLoadPromise
+  }
+
   public async initialize(): Promise<void> {
-    await this.loadAccounts()
-    await this.loadRememberedPasswords()
-    await this.primeInitialUids()
+    await this.ensureAccountsLoaded()
     this.startBackgroundPoller()
+    await this.primeInitialUids()
     // Disk cleanup runs after startup so a large cache never delays the worker.
     const pruneTimer = setTimeout(() => {
       try {
@@ -601,33 +649,36 @@ class AccountManager {
         this.noteQuotaHit(accId, acc.email)
       }
 
+      const hasValidUidNext = status.ok && typeof status.uidNext === 'number' && status.uidNext > 1
       let validUids: number[] = []
       let hadConnectivityIssue = !status.ok
-      try {
-        // 2. Fetch recent messages (up to 50) to seed the already-seen set.
-        const res = await emailClient.fetchMessages(acc, 'INBOX', 50, false)
-        const messages = Array.isArray(res) ? res : (res?.messages || [])
-        validUids = messages.map((m: any) => m.uid || 0).filter((u: number) => u > 0)
-        for (const u of validUids) {
-          accountSeen.add(u)
-        }
-      } catch (fetchErr: any) {
-        hadConnectivityIssue = true
-        const kind = connectionPolicy.classifyImapError(fetchErr)
-        const detail = fetchErr?.message || String(fetchErr)
-        if (kind === 'quota') {
-          this.noteQuotaHit(accId, acc.email)
-        } else if (kind === 'network') {
-          this.noteNetworkBlip(accId, acc.email, detail)
-        } else {
-          console.warn(`[AccountManager] Prime fetch warning for ${acc.email}:`, detail)
+      if (!hasValidUidNext) {
+        try {
+          // 2. Fallback: fetch recent messages only when STATUS did not provide uidNext.
+          const res = await emailClient.fetchMessages(acc, 'INBOX', 50, false)
+          const messages = Array.isArray(res) ? res : (res?.messages || [])
+          validUids = messages.map((m: any) => m.uid || 0).filter((u: number) => u > 0)
+          for (const u of validUids) {
+            accountSeen.add(u)
+          }
+        } catch (fetchErr: any) {
+          hadConnectivityIssue = true
+          const kind = connectionPolicy.classifyImapError(fetchErr)
+          const detail = fetchErr?.message || String(fetchErr)
+          if (kind === 'quota') {
+            this.noteQuotaHit(accId, acc.email)
+          } else if (kind === 'network') {
+            this.noteNetworkBlip(accId, acc.email, detail)
+          } else {
+            console.warn(`[AccountManager] Prime fetch warning for ${acc.email}:`, detail)
+          }
         }
       }
 
       // 3. Resolve the UID baseline:
       // Per RFC 3501, uidNext is strictly greater than any existing UID.
       let latestUid = 0
-      if (status.ok && typeof status.uidNext === 'number' && status.uidNext > 1) {
+      if (hasValidUidNext) {
         latestUid = status.uidNext - 1
       } else if (validUids.length > 0) {
         latestUid = Math.max(...validUids)
@@ -896,7 +947,72 @@ class AccountManager {
     if (this.pollInterval) clearInterval(this.pollInterval)
     this.pollInterval = setInterval(async () => {
       await this.checkAllAccountsForNewEmails()
-    }, 15000)
+    }, 8000)
+  }
+
+  public scheduleImmediateCheck(delayMs = 300): void {
+    if (this.immediateCheckTimer) return
+    this.immediateCheckTimer = setTimeout(() => {
+      this.immediateCheckTimer = null
+      void this.checkAllAccountsForNewEmails()
+    }, delayMs)
+    if (typeof this.immediateCheckTimer.unref === 'function') {
+      this.immediateCheckTimer.unref()
+    }
+  }
+
+  /**
+   * Observes messages fetched by foreground INBOX listings so new arrivals are
+   * announced immediately without waiting for the next background poll cycle.
+   */
+  public async observeFetchedInboxMessages(accId: string, messages: any[]): Promise<void> {
+    if (!accId || !Array.isArray(messages) || messages.length === 0) return
+    const acc = this.accounts.get(accId)
+    if (!acc) return
+
+    if (!this.seenUids.has(accId)) this.seenUids.set(accId, new Set())
+    const accountSeen = this.seenUids.get(accId)!
+
+    const validUids = messages.map((m: any) => Number(m?.uid || 0)).filter((u: number) => u > 0)
+    if (validUids.length === 0) return
+
+    const latestUid = Math.max(...validUids)
+    if (!this.lastSeenUids.has(accId)) {
+      for (const u of validUids) accountSeen.add(u)
+      this.lastSeenUids.set(accId, latestUid)
+      return
+    }
+
+    const prevSeen = this.lastSeenUids.get(accId)!
+    if (latestUid <= prevSeen) {
+      for (const u of validUids) accountSeen.add(u)
+      return
+    }
+
+    const newMessages = messages
+      .filter((m: any) => {
+        const uid = Number(m?.uid || 0)
+        return uid > prevSeen && !accountSeen.has(uid)
+      })
+      .sort((a: any, b: any) => (Number(a?.uid || 0)) - (Number(b?.uid || 0)))
+
+    this.lastSeenUids.set(accId, latestUid)
+
+    for (const msg of newMessages) {
+      const uid = Number(msg?.uid || 0)
+      accountSeen.add(uid)
+      if (accountSeen.size > 500) {
+        const first = accountSeen.values().next().value
+        if (first !== undefined) accountSeen.delete(first)
+      }
+      if (this.onNewEmailCallback) {
+        this.onNewEmailCallback({
+          accountId: accId,
+          email: msg,
+          totalUnread: this.getTotalUnreadCount()
+        })
+      }
+    }
   }
 
   public async checkAllAccountsForNewEmails(): Promise<void> {

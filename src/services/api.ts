@@ -87,11 +87,19 @@ export const emailApi = {
 
   // Notification preferences (Primary-only gate + badge window shared with the background worker)
   getNotificationPrefs: () =>
-    executeCommand<{ ok: boolean; primaryOnly?: boolean; notificationsEnabled?: boolean; unreadWindowHours?: number }>(
-      'get_notification_prefs'
-    ),
-  setNotificationPrefs: (prefs: { primaryOnly?: boolean; notificationsEnabled?: boolean; unreadWindowHours?: number }) =>
-    executeCommand<{ ok: boolean }>('set_notification_prefs', prefs),
+    executeCommand<{
+      ok: boolean
+      primaryOnly?: boolean
+      notificationsEnabled?: boolean
+      notificationsAudioEnabled?: boolean
+      unreadWindowHours?: number
+    }>('get_notification_prefs'),
+  setNotificationPrefs: (prefs: {
+    primaryOnly?: boolean
+    notificationsEnabled?: boolean
+    notificationsAudioEnabled?: boolean
+    unreadWindowHours?: number
+  }) => executeCommand<{ ok: boolean }>('set_notification_prefs', prefs),
 
   // Custom profile photos (persisted in host storage so they survive restarts)
   getAvatar: (accountId: string, email?: string) =>
