@@ -1,33 +1,35 @@
-# MomAI E-mails
+# MomAI Emails
 
-Leia, envie e organize seus e-mails pelo MomAI, por voz ou texto. A extensão funciona com Gmail, Outlook, Yahoo, iCloud e servidores IMAP personalizados.
+**English** · [Português](README.pt-BR.md) · [Español](README.es.md) · [Français](README.fr.md) · [Italiano](README.it.md) · [Deutsch](README.de.md)
 
-## O que você pode fazer
+Read, send, and organize your email through MomAI, by voice or text. The extension works with Gmail, Outlook, Yahoo, iCloud, and custom IMAP servers.
 
-- Conectar várias contas e alternar entre elas.
-- Receber avisos de mensagens novas na área de trabalho e no menu lateral.
-- Ver os e-mails separados em Principal, Promoções, Atualizações e Social quando o provedor oferecer.
-- Ouvir a MomAI ler uma mensagem ou resumir uma conversa longa.
-- Responder sem abrir o navegador.
-- Guardar as credenciais no seu computador, protegidas pelo cofre do sistema.
+## What you can do
 
-## Exemplos
+- Connect several accounts and switch between them.
+- Get new-message alerts on the desktop and in the sidebar.
+- See email sorted into Primary, Promotions, Updates, and Social when your provider supports it.
+- Have MomAI read a message aloud or summarize a long thread.
+- Reply without opening the browser.
+- Keep your credentials on your computer, protected by the system vault.
 
-- "Tenho algum e-mail novo?"
-- "Leia o último e-mail da equipe."
-- "Envie um e-mail para contato@empresa.com avisando que o relatório foi aprovado."
-- "Responda confirmando a reunião de amanhã às 14h."
-- "Marque os e-mails promocionais como lidos."
+## Examples
 
-## Como configurar
+- "Do I have any new email?"
+- "Read the latest email from the team."
+- "Send an email to contact@company.com saying the report was approved."
+- "Reply confirming tomorrow's meeting at 2 pm."
+- "Mark the promotional emails as read."
 
-1. Abra o MomAI e clique no ícone de E-mails.
-2. Escolha conectar conta e selecione o provedor.
-3. Informe o endereço e a senha de aplicativo da conta.
-4. Espere a sincronização. Depois disso, use o painel ou peça direto à MomAI.
+## How to set up
 
-## Permissões
+1. Open MomAI and click the Emails icon.
+2. Choose to connect an account and select your provider.
+3. Enter the address and the app password for the account.
+4. Wait for the sync. After that, use the panel or ask MomAI directly.
 
-- **Rede:** para buscar e enviar mensagens.
-- **Arquivos (leitura e escrita):** para abrir e salvar anexos.
-- **Sistema:** para abrir anexos no aplicativo padrão do computador.
+## Permissions
+
+- **Network:** to fetch and send messages.
+- **Files (read and write):** to open and save attachments.
+- **System:** to open attachments in the default app on your computer.

@@ -1,5 +1,7 @@
 # MomAI Correos
 
+[English](README.md) · [Português](README.pt-BR.md) · **Español** · [Français](README.fr.md) · [Italiano](README.it.md) · [Deutsch](README.de.md)
+
 Lee, envía y organiza tus correos desde MomAI, por voz o texto. La extensión funciona con Gmail, Outlook, Yahoo, iCloud y servidores IMAP personalizados.
 
 ## Qué puedes hacer

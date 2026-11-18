@@ -1,5 +1,7 @@
 # MomAI E-mails
 
+[English](README.md) · [Português](README.pt-BR.md) · [Español](README.es.md) · **Français** · [Italiano](README.it.md) · [Deutsch](README.de.md)
+
 Lisez, envoyez et organisez vos e-mails depuis MomAI, à la voix ou par texte. L'extension fonctionne avec Gmail, Outlook, Yahoo, iCloud et des serveurs IMAP personnalisés.
 
 ## Ce que vous pouvez faire
